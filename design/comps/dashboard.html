@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Teacher dashboard</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" integrity="sha384-nB0miv6/jRmo5UMMR1wu3Gz6NLsoTkbqJghGIsx//Rlm+ZU03BU6SQNC66uf4l5+" crossorigin="anonymous">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/light/style.css" integrity="sha384-GzhNOdwUkh38xzoNEY1vRdLr+w8q+bXEJsd/km6Ef61w1Kfk+lself6cn14ilrpO" crossorigin="anonymous">
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="comp.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" integrity="sha384-7zkQWkzuo3B5mTepMUcHkMB5jZaolc2xDwL6VFqjFALcbeS9Ggm/Yr2r3Dy4lfFg" crossorigin="anonymous"></script>
+<script src="comp.js"></script>
+<style>
+  .hdr{display:flex;align-items:flex-end;gap:12px;padding-top:14px}
+  .hdr .kick{margin-bottom:6px}
+  /* asymmetric stat grid (guide §5): 1.32fr / 1fr, one dominant figure */
+  .grid{display:grid;grid-template-columns:1.32fr 1fr;gap:10px;margin-top:22px}
+  .tall{padding:17px 18px 16px;display:flex;flex-direction:column}
+  .tall .fig{font-size:46px;font-weight:700;letter-spacing:-.04em;line-height:1;margin-top:auto}
+  .tall .meta{margin-top:8px}
+  .col{display:flex;flex-direction:column;gap:10px}
+  .small{padding:14px 16px 14px}
+  .small .fig{font-size:26px;font-weight:700;letter-spacing:-.04em;line-height:1;margin-top:10px}
+  .srule{margin:26px 20px 11px}
+  .rows{display:flex;flex-direction:column;gap:10px}
+  .row .rowt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .trail{text-align:right;flex:none}
+  .trail .num{font-size:15px;font-weight:700;letter-spacing:-.04em;color:var(--ink)}
+  .trail .meta{margin-top:3px}
+  .pad-nav{height:110px}
+  /* floating navigation — a solid surface, no blur */
+  .navbar{position:absolute;left:16px;right:16px;bottom:34px;height:64px;border-radius:999px;
+          background:var(--surface);box-shadow:var(--e4);display:flex;align-items:center;justify-content:space-around;padding:0 8px}
+  .ni{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:10.5px;font-weight:600;
+      letter-spacing:-.01em;color:var(--muted);width:58px}
+  .ni i{font-size:22px}
+  .ni.on{color:var(--ink)}
+  .ni.ai i{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="device"><div class="screen">
+  <div class="sbar"><span class="num">5:42</span><span class="ic"><i class="ph-light ph-cell-signal-full"></i><i class="ph-light ph-wifi-high"></i><i class="ph-light ph-battery-full"></i></span></div>
+
+  <div class="body">
+    <div class="hdr gut">
+      <div class="grow">
+        <div class="kick">Core Academy · <span class="num">4</span> October</div>
+        <h1 class="display">Sunday</h1>
+      </div>
+      <span class="av" style="--pc:#4F6D8A">CA</span>
+    </div>
+
+    <div class="grid gut">
+      <div class="surf tall">
+        <div class="lab">Submitted today</div>
+        <div class="fig num">14</div>
+        <div class="meta">of <span class="num">23</span> students given a test</div>
+      </div>
+      <div class="col">
+        <div class="surf small"><div class="lab">Writing now</div><div class="fig num">3</div></div>
+        <div class="surf small"><div class="lab">Missed this week</div><div class="fig num">4</div></div>
+      </div>
+    </div>
+
+    <div class="srule"><span class="kick">Live now</span><span class="cnt">2</span><span class="ln"></span></div>
+    <div class="rows gut">
+      <div class="row">
+        <div class="grow">
+          <div class="rowt">Unit test <span class="num">3</span> · Linear equations</div>
+          <div class="meta">Class <span class="num">9</span> · closes <span class="num">7:00</span> pm</div>
+        </div>
+        <div class="trail"><div class="num">5/8</div><div class="meta">submitted</div></div>
+      </div>
+      <div class="row">
+        <div class="grow">
+          <div class="rowt">Mensuration practice</div>
+          <div class="meta">Class <span class="num">8</span> · <span class="wn">closes in <span class="num">18</span> min</span></div>
+        </div>
+        <div class="trail"><div class="num">2/6</div><div class="meta">submitted</div></div>
+      </div>
+    </div>
+
+    <div class="srule od"><span class="kick">Needs attention</span><span class="cnt">2</span><span class="ln"></span></div>
+    <div class="rows gut">
+      <div class="row">
+        <span class="av" style="--pc:#8B5E3C">SM</span>
+        <div class="grow">
+          <div class="rowt">Sanjay Murali</div>
+          <div class="meta">Class <span class="num">10</span> · missed <span class="num">2</span> tests this week</div>
+        </div>
+        <i class="ph-light ph-caret-right chev"></i>
+      </div>
+      <div class="row">
+        <span class="av" style="--pc:#6B7F1A">NP</span>
+        <div class="grow">
+          <div class="rowt">Nila Prakash</div>
+          <div class="meta">Class <span class="num">7</span> · below <span class="num">40%</span> in the last <span class="num">3</span> tests</div>
+        </div>
+        <i class="ph-light ph-caret-right chev"></i>
+      </div>
+    </div>
+
+    <div class="srule"><span class="kick">Activity</span><span class="ln"></span></div>
+    <div class="rows gut">
+      <div class="row">
+        <span class="av" style="--pc:#0F8B8D">HV</span>
+        <div class="grow">
+          <div class="rowt">Harini Venkatesh</div>
+          <div class="meta">Submitted Unit test <span class="num">3</span> · <span class="num">5:31</span> pm</div>
+        </div>
+        <div class="trail"><div class="num">17/20</div></div>
+      </div>
+    </div>
+    <div class="pad-nav"></div>
+  </div>
+
+  <nav class="navbar">
+    <span class="ni on"><i class="ph-light ph-house"></i>Today</span>
+    <span class="ni"><i class="ph-light ph-users"></i>Students</span>
+    <span class="ni ai"><i class="ph-light ph-scan"></i>Papers</span>
+    <span class="ni"><i class="ph-light ph-books"></i>Questions</span>
+    <span class="ni"><i class="ph-light ph-exam"></i>Tests</span>
+  </nav>
+  <div class="gest" style="margin-top:auto"><i></i></div>
+</div></div>
+</body>
+</html>

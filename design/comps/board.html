@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Comp board</title>
+<style>
+  html,body{margin:0;padding:0;background:#E2E2E8}
+  .board{display:flex}
+  iframe{width:449px;height:894px;border:0;display:block}
+</style>
+</head>
+<body>
+<div class="board">
+  <iframe id="light" title="Light"></iframe>
+  <iframe id="dark" title="Dark"></iframe>
+</div>
+<script>
+  var s = new URLSearchParams(location.search).get('screen') || 'test-a';
+  document.getElementById('light').src = s + '.html';
+  document.getElementById('dark').src = s + '.html?theme=dark';
+</script>
+</body>
+</html>

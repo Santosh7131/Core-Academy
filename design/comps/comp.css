@@ -1,0 +1,71 @@
+/* Comp scaffolding on top of tokens.css (which is verbatim from the guide). */
+@font-face{font-family:"Geist";src:url(fonts/Geist.ttf) format("truetype");font-weight:100 900;font-display:block}
+@font-face{font-family:"Geist Mono";src:url(fonts/GeistMono.ttf) format("truetype");font-weight:100 900;font-display:block}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html{background:#E2E2E8}
+:root[data-theme="dark"]{background:#050507}
+html:is([data-theme="dark"]){background:#050507}
+body{font-family:var(--sans);-webkit-font-smoothing:antialiased;padding:24px;color:var(--ink)}
+button{font:inherit;color:inherit;background:none;border:0}
+
+/* ---- device: 401x846 shell, 4px bezel, 393x838 screen (guide §8) */
+.device{width:401px;height:846px;padding:4px;border-radius:46px;background:#0E0E11}
+:root[data-theme="dark"] .device{background:#2C2C33}
+.screen{width:393px;height:838px;border-radius:42px;overflow:hidden;background:var(--bg);
+        position:relative;display:flex;flex-direction:column}
+.sbar{height:34px;flex:none;display:flex;align-items:center;justify-content:space-between;
+      padding:6px 26px 0;font-size:12.5px;color:var(--ink)}
+.sbar .num{font-weight:600;letter-spacing:-.02em}
+.sbar .ic{display:flex;gap:5px;font-size:15px}
+.gest{height:22px;flex:none;display:grid;place-items:center}
+.gest i{display:block;width:108px;height:4px;border-radius:4px;background:var(--ink);opacity:.82}
+.body{flex:1;min-height:0;overflow:hidden;position:relative}
+.body > *{flex:none}
+.gut{padding:0 20px}
+
+/* ---- dark mode: hairlines instead of shadow on every floating surface */
+:root[data-theme="dark"] :is(.card,.row,.surf,.pill:not(.on),.circ,.opt,.mcard,.navbar,.pgthumb){border:1px solid var(--hair)}
+
+/* ---- shared atoms */
+.surf{background:var(--surface);border-radius:20px;box-shadow:var(--e2)}
+.circ{width:40px;height:40px;border-radius:999px;background:var(--surface);box-shadow:var(--e1);
+      display:grid;place-items:center;font-size:19px;color:var(--ink);flex:none}
+.circ.lg{width:52px;height:52px;font-size:21px}
+.circ.on{background:var(--action);color:var(--action-ink);box-shadow:var(--e2)}
+.pill i{font-size:15px;margin-right:6px}
+.num.u{font-weight:600;color:var(--muted);margin-left:4px}
+.btn{width:100%;gap:8px;display:flex;align-items:center;justify-content:center}
+.btn i{font-size:18px}
+.reason{font-size:11.5px;font-weight:600;color:var(--muted);text-align:center;margin-top:9px;letter-spacing:-.005em}
+.tag.wn{background:var(--wn-soft);color:var(--wn)}
+.tag.ai{background:var(--accent-soft);color:var(--accent)}
+.kick .num{letter-spacing:.02em}
+.srule .kick{white-space:nowrap}
+.srule .cnt{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--faint);letter-spacing:-.02em}
+.srule.od .kick,.srule.od .cnt{color:var(--od)}
+.meta{font-size:11.5px;font-weight:600;color:var(--muted);letter-spacing:-.005em;margin-top:2px}
+.meta .num{font-weight:600}
+.meta .wn{color:var(--wn)}
+.grow{flex:1;min-width:0}
+.chev{color:var(--faint);font-size:16px}
+
+/* completion ring (guide §5) — also used as the answer marker */
+.ring{width:21px;height:21px;border-radius:999px;border:1.8px solid #DEDEE6;flex:none;display:grid;place-items:center}
+:root[data-theme="dark"] .ring{border-color:#3A3A44}
+.ring.ok{background:var(--ok);border-color:var(--ok);color:#fff;font-size:12px}
+
+/* avatar (guide §5): person colour at 12% / 24%, initials in that colour */
+.av{width:34px;height:34px;border-radius:999px;display:grid;place-items:center;flex:none;
+    font-size:11.5px;font-weight:700;letter-spacing:-.01em;color:var(--pc);
+    background:color-mix(in srgb,var(--pc) 12%,transparent)}
+:root[data-theme="dark"] .av{background:color-mix(in srgb,var(--pc) 24%,transparent)}
+.av.sm{width:24px;height:24px;font-size:9.5px}
+
+/* maths */
+.m .katex{font-size:1.08em}
+
+/* board: light + dark side by side */
+.board{display:flex;gap:24px}
+.board iframe{width:449px;height:894px;border:0;display:block}
+body.bare{padding:0}

@@ -1,0 +1,24 @@
+name: core_academy
+description: "Core Academy: MCQ tests for a maths tuition, with teacher-managed logins."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.13.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  fonts:
+    - family: Geist
+      fonts: [{asset: assets/fonts/Geist.ttf}]
+    - family: GeistMono
+      fonts: [{asset: assets/fonts/GeistMono.ttf}]

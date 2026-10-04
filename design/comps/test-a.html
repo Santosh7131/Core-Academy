@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Test screen A</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" integrity="sha384-nB0miv6/jRmo5UMMR1wu3Gz6NLsoTkbqJghGIsx//Rlm+ZU03BU6SQNC66uf4l5+" crossorigin="anonymous">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/light/style.css" integrity="sha384-GzhNOdwUkh38xzoNEY1vRdLr+w8q+bXEJsd/km6Ef61w1Kfk+lself6cn14ilrpO" crossorigin="anonymous">
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="comp.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" integrity="sha384-7zkQWkzuo3B5mTepMUcHkMB5jZaolc2xDwL6VFqjFALcbeS9Ggm/Yr2r3Dy4lfFg" crossorigin="anonymous"></script>
+<script src="comp.js"></script>
+<style>
+  /* Direction A, "Paper": the question owns the page; time is a quiet pill. */
+  .top{display:flex;align-items:center;gap:10px;padding-top:8px}
+  .timer{gap:2px;color:var(--ink)}
+  .timer .num{font-size:14px;font-weight:700}
+  .srule{margin:22px 20px 14px}
+  .display .num{letter-spacing:-.04em;font-weight:700}
+  .display .of{font-size:20px;color:var(--faint);margin-left:3px;font-weight:600}
+  .prog{margin-top:10px}
+  .prog .num{color:var(--ink)}
+  .qtext{font-size:17px;font-weight:600;letter-spacing:-.022em;line-height:1.48;color:var(--ink);margin:26px 0 22px}
+  .opts{display:flex;flex-direction:column;gap:10px}
+  .opt{display:flex;align-items:center;gap:14px;padding:15px 17px;background:var(--surface);
+       border-radius:20px;box-shadow:var(--e1);font-size:16px;color:var(--ink);min-height:58px}
+  .opt.sel{box-shadow:var(--e2)}
+  :root[data-theme="dark"] .opt.sel{border-color:var(--faint)}
+  .ltr{width:28px;height:28px;border-radius:999px;border:1.8px solid #DEDEE6;display:grid;place-items:center;
+       font-size:12px;font-weight:700;color:var(--muted);flex:none}
+  :root[data-theme="dark"] .ltr{border-color:#3A3A44}
+  .opt.sel .ltr{background:var(--action);border-color:var(--action);color:var(--action-ink)}
+  .clear{display:block;margin:14px 2px 0 auto;font-size:12.5px;font-weight:600;color:var(--muted);letter-spacing:-.02em}
+  .foot{flex:none;display:flex;gap:10px;align-items:center;padding:12px 20px 10px}
+  .foot .btn{flex:1}
+</style>
+</head>
+<body>
+<div class="device"><div class="screen">
+  <div class="sbar"><span class="num">5:42</span><span class="ic"><i class="ph-light ph-cell-signal-full"></i><i class="ph-light ph-wifi-high"></i><i class="ph-light ph-battery-full"></i></span></div>
+
+  <div class="body">
+    <div class="top gut">
+      <button class="circ" aria-label="Leave test"><i class="ph-light ph-x"></i></button>
+      <div class="grow"></div>
+      <div class="pill timer"><i class="ph-light ph-timer"></i><span class="num">18:42</span></div>
+      <button class="circ" aria-label="All questions"><i class="ph-light ph-list-numbers"></i></button>
+    </div>
+
+    <div class="srule"><span class="kick">Unit test <span class="num">3</span> · Linear equations</span><span class="ln"></span></div>
+
+    <div class="gut">
+      <h1 class="display">Question <span class="num">07</span><span class="of num">/20</span></h1>
+      <p class="lab prog"><span class="num">6</span> answered · <span class="num">1</span> flagged · <span class="num">13</span> to go</p>
+
+      <p class="qtext">If <span class="m">x = 2,\ y = -1</span> is a solution of <span class="m">3x + ky = 4</span>, what is the value of <span class="m">k</span>?</p>
+
+      <div class="opts">
+        <div class="opt"><span class="ltr">A</span><span class="m">-2</span></div>
+        <div class="opt sel"><span class="ltr">B</span><span class="m">2</span></div>
+        <div class="opt"><span class="ltr">C</span><span class="m">\tfrac{1}{2}</span></div>
+        <div class="opt"><span class="ltr">D</span><span class="m">10</span></div>
+      </div>
+      <button class="clear">Clear my answer</button>
+    </div>
+  </div>
+
+  <div class="foot">
+    <button class="circ lg" aria-label="Previous question"><i class="ph-light ph-arrow-left"></i></button>
+    <button class="circ lg" aria-label="Flag for review"><i class="ph-light ph-flag"></i></button>
+    <button class="btn">Next question<i class="ph-light ph-arrow-right"></i></button>
+  </div>
+  <div class="gest"><i></i></div>
+</div></div>
+</body>
+</html>

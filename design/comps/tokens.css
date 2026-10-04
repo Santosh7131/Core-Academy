@@ -1,0 +1,63 @@
+/* Soft Structuralism tokens — copied verbatim from the design guide §7
+   by tools/extract-tokens.mjs. */
+:root{
+  --bg:#FAFAFB; --surface:#FFF; --sunk:#F3F3F6;
+  --ink:#0E0E11; --body:#3A3A42; --muted:#8E8E99; --faint:#B8B8C2;
+  --hair:#EDEDF1;
+  --action:#0E0E11; --action-ink:#FAFAFB;
+  --od:#E4483D; --od-soft:#FEF0EE;
+  --ok:#1A9E62; --ok-soft:#EBF8F1;
+  --wn:#C77B1E; --wn-soft:#FDF4E7;
+  --accent:#5B3DF5; --accent-soft:#F0EDFF;    /* ONE purpose only: the AI paper reader */
+  --sans:"Geist",system-ui,sans-serif;
+  --mono:"Geist Mono",ui-monospace,monospace;
+  --e1:0 1px 1px rgba(14,14,17,.018), 0 4px 10px -6px rgba(14,14,17,.06);
+  --e2:0 1px 1px rgba(14,14,17,.02),  0 8px 20px -12px rgba(14,14,17,.09);
+  --e3:0 1px 1px rgba(14,14,17,.02),  0 12px 26px -12px rgba(14,14,17,.09),
+       0 40px 70px -30px rgba(14,14,17,.12);
+  --e4:0 2px 4px rgba(14,14,17,.04),  0 18px 40px -14px rgba(14,14,17,.16);
+}
+:root[data-theme="dark"]{
+  --bg:#0C0C0F; --surface:#16161A; --sunk:#1E1E24;
+  --ink:#F4F4F7; --body:#C3C3CE; --muted:#90909C; --faint:#63636F;
+  --hair:#24242C;
+  --action:#2E2E38; --action-ink:#F4F4F7;
+  --od:#FF6B5E; --od-soft:#3A1A18;
+  --ok:#3FCC8B; --ok-soft:#12301F;
+  --wn:#E5A44E; --wn-soft:#33240E;
+  --accent-soft:#1E1940;
+  --e1:none; --e2:none; --e3:none; --e4:none;   /* shadows do nothing on black */
+}
+
+.display{font-size:38px;font-weight:800;letter-spacing:-.052em;line-height:1.04;color:var(--ink)}
+.title  {font-size:27px;font-weight:800;letter-spacing:-.042em;line-height:1.1;color:var(--ink)}
+.sect   {font-size:17px;font-weight:700;letter-spacing:-.036em;color:var(--ink)}
+.rowt   {font-size:14.5px;font-weight:600;letter-spacing:-.026em;line-height:1.33;color:var(--ink)}
+.bod    {font-size:13.8px;font-weight:500;letter-spacing:-.022em;line-height:1.54;color:var(--body)}
+.lab    {font-size:11.5px;font-weight:600;letter-spacing:-.005em;color:var(--muted)}
+.kick   {font-size:11px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--faint)}
+.num    {font-family:var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-.04em}
+
+.card{background:var(--surface);border-radius:20px;box-shadow:var(--e2)}
+.row {background:var(--surface);border-radius:20px;box-shadow:var(--e1);
+      display:flex;gap:14px;align-items:center;padding:15px 17px}
+.btn {height:52px;border-radius:14px;display:grid;place-items:center;
+      font-size:14.5px;font-weight:700;letter-spacing:-.03em;
+      background:var(--action);color:var(--action-ink);box-shadow:var(--e4)}
+.btn.off{background:var(--sunk);color:var(--faint);box-shadow:none}
+.pill{height:34px;padding:0 14px;border-radius:999px;display:inline-flex;align-items:center;
+      font-size:12.5px;font-weight:600;letter-spacing:-.025em;
+      background:var(--surface);color:var(--body);box-shadow:var(--e1)}
+.pill.on{background:var(--action);color:var(--action-ink);box-shadow:var(--e2)}
+.tag {height:22px;padding:0 9px;border-radius:999px;display:inline-flex;align-items:center;
+      font-size:10.5px;font-weight:700;background:var(--sunk);color:var(--muted)}
+.tag.od{background:var(--od-soft);color:var(--od)}
+.tag.ok{background:var(--ok-soft);color:var(--ok)}
+.track{height:7px;border-radius:5px;background:var(--sunk);overflow:hidden}
+.track i{display:block;height:100%;border-radius:5px;background:var(--ink)}
+.srule{display:flex;align-items:center;gap:10px;margin:22px 20px 11px}
+.srule .ln{flex:1;height:1px;background:var(--hair)}
+
+/* Without this a grid child inside an overflowing column flex container
+   collapses to height 0. See Traps. */
+.scrollbody > *{flex:none}

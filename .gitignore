@@ -1,0 +1,46 @@
+# Secrets — never commit
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+.env
+.env.*
+!.env.example
+*.keystore
+*.jks
+key.properties
+
+# Design guide snapshot (kept local only)
+design/soft-structuralism-ui-guide.md
+
+# Node / Neon
+node_modules/
+.wrangler/
+dist/
+.neon
+.neon-dev/
+
+# Agent tooling installed by `neon skills` (regenerate with `neon skills -y`)
+.claude/skills/
+skills-lock.json
+
+# Flutter / Dart / Android
+.dart_tool/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+*.iml
+.gradle/
+local.properties
+.idea/
+.cxx/
+
+# Tool output
+tools/out/
+design/screenshots/*.tmp.png
+
+# OS
+Thumbs.db
+.DS_Store

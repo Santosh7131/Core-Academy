@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Paper review</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" integrity="sha384-nB0miv6/jRmo5UMMR1wu3Gz6NLsoTkbqJghGIsx//Rlm+ZU03BU6SQNC66uf4l5+" crossorigin="anonymous">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/light/style.css" integrity="sha384-GzhNOdwUkh38xzoNEY1vRdLr+w8q+bXEJsd/km6Ef61w1Kfk+lself6cn14ilrpO" crossorigin="anonymous">
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="comp.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" integrity="sha384-7zkQWkzuo3B5mTepMUcHkMB5jZaolc2xDwL6VFqjFALcbeS9Ggm/Yr2r3Dy4lfFg" crossorigin="anonymous"></script>
+<script src="comp.js"></script>
+<style>
+  /* Pushed panel (guide §5): back button alone on its row, 22px gap, kicker, headline. */
+  .backrow{padding-top:8px}
+  .head{margin-top:22px;display:flex;gap:14px;align-items:flex-end}
+  .head .kick{margin-bottom:6px}
+  .display .num{letter-spacing:-.04em;font-weight:700}
+  .head .meta{margin-top:8px}
+  .pages{display:flex;gap:8px;flex:none;padding-bottom:2px}
+  .pgthumb{width:42px;height:56px;border-radius:9px;background:var(--surface);box-shadow:var(--e1);
+           padding:7px 6px;display:flex;flex-direction:column;gap:3px;position:relative}
+  .pgthumb i{display:block;height:2px;border-radius:2px;background:var(--hair)}
+  .pgthumb i.s{width:60%}
+  .pgthumb b{position:absolute;right:5px;bottom:4px;font-family:var(--mono);font-size:9.5px;font-weight:700;color:var(--muted)}
+  .aibar{margin-top:18px;display:flex;gap:12px;align-items:flex-start;background:var(--accent-soft);
+         border-radius:20px;padding:13px 16px}
+  .aibar > i{font-size:20px;color:var(--accent);margin-top:1px}
+  .aibar .rowt{color:var(--accent)}
+  .aibar .bod{color:var(--body)}
+  .chips{display:flex;gap:8px;padding:18px 20px 0;overflow:hidden}
+  .chips .pill{flex:none}
+  .chips .pill .num{margin-left:6px;font-weight:700;opacity:.75}
+  .cards{display:flex;flex-direction:column;gap:10px;margin-top:16px}
+  .dq{background:var(--surface);border-radius:20px;box-shadow:var(--e2);padding:15px 17px 13px}
+  .dq .top{display:flex;align-items:center;gap:8px}
+  .dq .top .kick .num{letter-spacing:.02em}
+  .dq .q{font-size:15px;font-weight:600;letter-spacing:-.022em;line-height:1.45;color:var(--ink);margin:10px 0 8px}
+  .ans{display:flex;align-items:center;gap:12px;padding:7px 0;font-size:14.5px;color:var(--body)}
+  .ans.ok{color:var(--ink);font-weight:600}
+  .dq .bot{display:flex;align-items:center;gap:8px;border-top:1px solid var(--hair);margin-top:8px;padding-top:11px}
+  .dq .bot .lab{color:var(--faint)}
+  .edit{margin-left:auto;font-size:17px;color:var(--muted)}
+  .foot{flex:none;padding:12px 20px 8px}
+</style>
+</head>
+<body>
+<div class="device"><div class="screen">
+  <div class="sbar"><span class="num">5:42</span><span class="ic"><i class="ph-light ph-cell-signal-full"></i><i class="ph-light ph-wifi-high"></i><i class="ph-light ph-battery-full"></i></span></div>
+
+  <div class="body">
+    <div class="gut backrow"><button class="circ" aria-label="Back"><i class="ph-light ph-arrow-left"></i></button></div>
+
+    <div class="gut head">
+      <div class="grow">
+        <div class="kick">Question paper · Class <span class="num">10</span></div>
+        <h1 class="display"><span class="num">12</span> questions</h1>
+        <p class="meta">Practice paper · read <span class="num">5:12</span> pm</p>
+      </div>
+      <div class="pages">
+        <span class="pgthumb"><i></i><i></i><i class="s"></i><i></i><i></i><i class="s"></i><b>1</b></span>
+        <span class="pgthumb"><i></i><i class="s"></i><i></i><i></i><i class="s"></i><b>2</b></span>
+      </div>
+    </div>
+
+    <div class="gut">
+      <div class="aibar">
+        <i class="ph-light ph-scan"></i>
+        <div>
+          <div class="rowt">Read by AI</div>
+          <div class="bod">Check each question and mark the right option before saving.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="chips">
+      <span class="pill on">To check<span class="num">7</span></span>
+      <span class="pill">Ready<span class="num">5</span></span>
+      <span class="pill">Not MCQ<span class="num">1</span></span>
+      <span class="pill">All<span class="num">12</span></span>
+    </div>
+
+    <div class="gut cards">
+      <div class="dq">
+        <div class="top">
+          <span class="kick">Q <span class="num">4</span> · page <span class="num">1</span></span>
+          <span class="tag ai">AI draft</span>
+          <span class="grow"></span>
+          <span class="tag wn">Mark the answer</span>
+        </div>
+        <p class="q">If <span class="m">\alpha</span> and <span class="m">\beta</span> are the zeroes of <span class="m">x^2 - 5x + 6</span>, then <span class="m">\alpha + \beta</span> equals</p>
+        <div class="ans"><span class="ring"></span><span class="m">-5</span></div>
+        <div class="ans"><span class="ring"></span><span class="m">5</span></div>
+        <div class="ans"><span class="ring"></span><span class="m">6</span></div>
+        <div class="ans"><span class="ring"></span><span class="m">-6</span></div>
+        <div class="bot">
+          <span class="tag">Polynomials</span><span class="lab">chapter guessed by AI</span>
+          <i class="ph-light ph-pencil-simple edit"></i>
+        </div>
+      </div>
+
+      <div class="dq">
+        <div class="top">
+          <span class="kick">Q <span class="num">5</span> · page <span class="num">1</span></span>
+          <span class="grow"></span>
+          <span class="tag ok">Ready</span>
+        </div>
+        <p class="q">The HCF of <span class="m">96</span> and <span class="m">404</span> is</p>
+        <div class="ans ok"><span class="ring ok"><i class="ph-light ph-check"></i></span><span class="m">4</span></div>
+        <div class="ans"><span class="ring"></span><span class="m">8</span></div>
+        <div class="ans"><span class="ring"></span><span class="m">12</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <button class="btn">Save <span class="num">5</span> ready questions</button>
+    <p class="reason"><span class="num">7</span> still need the right option marked</p>
+  </div>
+  <div class="gest"><i></i></div>
+</div></div>
+</body>
+</html>

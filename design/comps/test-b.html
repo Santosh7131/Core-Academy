@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Test screen B</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" integrity="sha384-nB0miv6/jRmo5UMMR1wu3Gz6NLsoTkbqJghGIsx//Rlm+ZU03BU6SQNC66uf4l5+" crossorigin="anonymous">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/light/style.css" integrity="sha384-GzhNOdwUkh38xzoNEY1vRdLr+w8q+bXEJsd/km6Ef61w1Kfk+lself6cn14ilrpO" crossorigin="anonymous">
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="comp.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" integrity="sha384-7zkQWkzuo3B5mTepMUcHkMB5jZaolc2xDwL6VFqjFALcbeS9Ggm/Yr2r3Dy4lfFg" crossorigin="anonymous"></script>
+<script src="comp.js"></script>
+<style>
+  /* Direction B, "Instrument": time is the measurement; the paper is a strip. */
+  .top{display:flex;align-items:center;gap:12px;padding-top:8px}
+  .top .rowt .num{font-weight:600}
+  .mcard{margin-top:16px;background:var(--surface);border-radius:26px;box-shadow:var(--e3);padding:18px 20px 17px}
+  .mv{display:flex;align-items:baseline;margin:8px 0 13px}
+  .mv .big{font-size:36px;font-weight:700;letter-spacing:-.04em;line-height:1}
+  .mv .u{font-size:14px}
+  .mcard .bod{margin-top:11px;color:var(--muted)}
+  .mcard .bod .num{color:var(--body);font-weight:600}
+  .strip{display:flex;gap:8px;padding:20px 20px 0;overflow:hidden}
+  .strip .pill{flex:none;width:44px;justify-content:center;padding:0;font-family:var(--mono);
+               font-size:12.5px;font-weight:600;letter-spacing:-.03em}
+  .strip .pill.todo{color:var(--faint)}
+  .strip .pill.ans{color:var(--ink)}
+  .strip .pill.flag{background:var(--wn-soft);color:var(--wn);box-shadow:none}
+  .qhead{margin-top:24px}
+  .display .num{letter-spacing:-.04em;font-weight:700}
+  .qtext{font-size:17px;font-weight:600;letter-spacing:-.022em;line-height:1.48;color:var(--ink);margin:14px 0 18px}
+  .group{background:var(--surface);border-radius:20px;box-shadow:var(--e2);overflow:hidden}
+  .gopt{display:flex;align-items:center;gap:14px;padding:14px 17px;font-size:16px;color:var(--ink);min-height:54px}
+  .gopt + .gopt{border-top:1px solid var(--hair)}
+  .ltr{width:28px;height:28px;border-radius:999px;border:1.8px solid #DEDEE6;display:grid;place-items:center;
+       font-size:12px;font-weight:700;color:var(--muted);flex:none}
+  :root[data-theme="dark"] .ltr{border-color:#3A3A44}
+  .gopt.sel .ltr{background:var(--action);border-color:var(--action);color:var(--action-ink)}
+  .gopt.sel{font-weight:600}
+  :root[data-theme="dark"] .gopt.sel{background:var(--sunk)}
+  .foot{flex:none;display:flex;gap:10px;align-items:center;padding:12px 20px 10px}
+  .sec{height:52px;padding:0 18px;border-radius:14px;background:var(--surface);box-shadow:var(--e1);
+       display:flex;align-items:center;gap:8px;font-size:14.5px;font-weight:700;letter-spacing:-.03em;color:var(--ink)}
+  :root[data-theme="dark"] .sec{border:1px solid var(--hair)}
+  .sec i{font-size:18px}
+  .foot .btn{flex:1}
+</style>
+</head>
+<body>
+<div class="device"><div class="screen">
+  <div class="sbar"><span class="num">5:42</span><span class="ic"><i class="ph-light ph-cell-signal-full"></i><i class="ph-light ph-wifi-high"></i><i class="ph-light ph-battery-full"></i></span></div>
+
+  <div class="body">
+    <div class="top gut">
+      <button class="circ" aria-label="Leave test"><i class="ph-light ph-x"></i></button>
+      <div class="grow">
+        <div class="rowt">Unit test <span class="num">3</span></div>
+        <div class="meta">Linear equations · Class <span class="num">9</span></div>
+      </div>
+      <button class="pill">Submit</button>
+    </div>
+
+    <div class="gut">
+      <div class="mcard">
+        <div class="lab">Time left</div>
+        <div class="mv"><span class="num big">18:42</span><span class="num u">min</span></div>
+        <div class="track"><i style="width:62%"></i></div>
+        <p class="bod"><span class="num">6</span> of <span class="num">20</span> answered, <span class="num">1</span> flagged for review</p>
+      </div>
+    </div>
+
+    <div class="strip">
+      <span class="pill ans">01</span><span class="pill ans">02</span><span class="pill ans">03</span>
+      <span class="pill flag">04</span><span class="pill ans">05</span><span class="pill ans">06</span>
+      <span class="pill on">07</span><span class="pill todo">08</span><span class="pill todo">09</span>
+    </div>
+
+    <div class="gut qhead">
+      <h1 class="display">Question <span class="num">07</span></h1>
+      <p class="qtext">If <span class="m">x = 2,\ y = -1</span> is a solution of <span class="m">3x + ky = 4</span>, what is the value of <span class="m">k</span>?</p>
+      <div class="group">
+        <div class="gopt"><span class="ltr">A</span><span class="m">-2</span></div>
+        <div class="gopt sel"><span class="ltr">B</span><span class="m">2</span></div>
+        <div class="gopt"><span class="ltr">C</span><span class="m">\tfrac{1}{2}</span></div>
+        <div class="gopt"><span class="ltr">D</span><span class="m">10</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <button class="sec"><i class="ph-light ph-arrow-left"></i>Back</button>
+    <button class="btn">Next question<i class="ph-light ph-arrow-right"></i></button>
+  </div>
+  <div class="gest"><i></i></div>
+</div></div>
+</body>
+</html>
