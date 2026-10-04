@@ -132,7 +132,7 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
                     if (q['chapter'] != null) '${q['chapter']}',
                     if ((q['used_in'] as int) > 0) 'in ${q['used_in']} test${q['used_in'] == 1 ? '' : 's'}',
                   ].join(' · '),
-                  trailing: q['source'] == 'paper' ? const TagChip('From paper') : null,
+                  trailing: switch (q['source']) { 'paper' => const TagChip('From paper'), 'library' => const TagChip('Ready-made'), _ => null },
                   onTap: () => _open('/t/questions/${q['id']}'),
                 ),
               ],
