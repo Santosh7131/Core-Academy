@@ -62,7 +62,7 @@ anything happened.
 The app registers the phone after logging in and on every start. The registration belongs to
 that login, so logging out, or a PIN reset, stops the notifications. Publishing an open test
 announces it straight away. Everything else comes from `/cron/notify`, which a Neon trigger
-(declared in `neon.ts`) calls every five minutes. That run reads the time of the next
+calls every five minutes. That run reads the time of the next
 notification from `notify/next.json` in the bucket and only queries the database when it is
 due. If it queried every time, the 0.25 CU compute would never scale to zero: 186
 compute-hours a month, and the free plan has 100.
@@ -80,7 +80,16 @@ To set it up, once:
    powershell -ExecutionPolicy Bypass -File tools/upload-firebase-key.ps1 -Branch dev
    ```
 
+3. Create the trigger on that branch. The cron is in UTC; every five minutes lines up with
+   India's :00 and :30.
+
+   ```bash
+   neon triggers create --branch dev --function-slug api --name notify --cron '*/5 * * * *' --function-path /cron/notify
+   ```
+
 Until the key is on a branch, the API there reports `"push": false` at `/` and sends nothing.
+The trigger is not declared in `neon.ts`: `neon dev` refuses to run against a branch that is
+missing a declared trigger, and `neon deploy` leaves triggers made with the CLI alone.
 
 ## Running it
 
