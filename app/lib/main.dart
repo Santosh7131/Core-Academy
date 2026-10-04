@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'core/screen_guard.dart';
 import 'core/session.dart';
 import 'router.dart';
 import 'theme.dart';
@@ -73,6 +74,7 @@ class _CoreAcademyAppState extends State<CoreAcademyApp> with WidgetsBindingObse
   }
 
   void _onSession() {
+    ScreenGuard.forRole(session.user?['role'] as String?);
     if (_resolveDark()) _rebuildEverything();
   }
 
