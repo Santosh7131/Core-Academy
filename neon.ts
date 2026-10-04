@@ -9,8 +9,9 @@ export default defineConfig({
     uploads: { access: "private" },
   },
   functions: {
-    // Smoke test first; becomes ./api/src/index.ts once the API exists.
-    api: { name: "api", source: "./hello.ts" },
+    // The whole app API (Hono). GROQ_API_KEYS is set on the function once,
+    // outside this file, so deploys never carry the keys.
+    api: { name: "api", source: "./api/src/index.ts" },
   },
   // Branch policy: per-branch tuning
   branch: (branch) => {
