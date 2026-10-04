@@ -10,6 +10,7 @@ import '../../core/session.dart';
 import '../../theme.dart';
 import '../../ui/kit.dart';
 import 'common.dart';
+import 'subjects.dart';
 
 /// The teacher's home: today's figures, live tests, who needs attention, recent activity.
 class TodayScreen extends StatefulWidget {
@@ -135,7 +136,7 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
         rows([
           for (final t in live.take(3))
             RowTile(
-              title: '${t['title']} · Class ${t['class_level']}',
+              title: '${t['title']} · ${t['subject'] == null ? 'Class ${t['class_level']}' : groupName(t['class_level'] as int, '${t['subject']}')}',
               meta: _liveMeta(t),
               metaColor: _closingSoon(t) ? warning : null,
               trailing: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [

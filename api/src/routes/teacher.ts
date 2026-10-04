@@ -54,7 +54,7 @@ teacherRoutes.get('/dashboard', async (c) => {
   );
   const live = await q(
     `with ${ASSIGNED_CTE}
-     select t.id, t.title, t.class_level, t.opens_at, t.closes_at,
+     select t.id, t.title, t.class_level, t.opens_at, t.closes_at, (select name from subjects where id = t.subject_id) as subject,
             (select count(*) from assigned a where a.test_id = t.id) as assigned,
             (select count(distinct x.student_id) from attempts x where x.test_id = t.id and x.submitted_at is not null) as submitted,
             (select count(*) from attempts x where x.test_id = t.id and x.submitted_at is null) as writing

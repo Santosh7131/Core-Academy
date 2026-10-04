@@ -13,6 +13,7 @@ import '../../ui/kit.dart';
 import '../../ui/math_text.dart';
 import '../../ui/tokens.dart';
 import 'common.dart';
+import 'subjects.dart';
 import 'questions_screens.dart' show MathToolbar, insertInto, pickAndUploadImage;
 
 Route<T> _instant<T>(Widget page) => PageRouteBuilder<T>(
@@ -99,7 +100,7 @@ class _PapersScreenState extends State<PapersScreen> {
                 RowTile(
                   title: '${p['exam_name']}${p['year'] == null ? '' : ' ${p['year']}'}',
                   meta: [
-                    'Class ${p['class_level']}',
+                    p['subject'] == null ? 'Class ${p['class_level']}' : groupName(p['class_level'] as int, '${p['subject']}'),
                     if (p['school'] != null) '${p['school']}',
                     '${p['page_count']} page${p['page_count'] == 1 ? '' : 's'}',
                   ].join(' · '),
@@ -134,6 +135,8 @@ class UploadPaperScreen extends StatefulWidget {
 class _UploadPaperScreenState extends State<UploadPaperScreen> {
   final _exam = TextEditingController();
   int? _class;
+  String? _subjectId;
+  List<Subject> _subjects = [];
   String? _schoolId;
   int? _year = DateTime.now().year;
   List<Map<String, dynamic>> _schools = [];
@@ -147,6 +150,14 @@ class _UploadPaperScreenState extends State<UploadPaperScreen> {
     _exam.addListener(() => setState(() {}));
     api.get('/teacher/schools').then((r) {
       if (mounted) setState(() => _schools = (r['schools'] as List).cast<Map<String, dynamic>>());
+    }).catchError((_) {});
+    loadSubjects().then((subjects) {
+      if (mounted) {
+        setState(() {
+          _subjects = subjects;
+          _subjectId ??= subjects.where((x) => x.isDefault).map((x) => x.id).firstOrNull;
+        });
+      }
     }).catchError((_) {});
   }
 
@@ -212,6 +223,7 @@ class _UploadPaperScreenState extends State<UploadPaperScreen> {
 
   String? get _missing {
     if (_class == null) return 'Choose the class.';
+    if (_subjectId == null) return 'Choose the subject.';
     if (_exam.text.trim().isEmpty) return 'Name the paper, e.g. Half-yearly exam.';
     if (_pages.isEmpty) return 'Add at least one page.';
     return null;
@@ -225,6 +237,7 @@ class _UploadPaperScreenState extends State<UploadPaperScreen> {
     try {
       final r = await api.post('/teacher/papers', {
         'class_level': _class,
+        'subject_id': _subjectId,
         'school_id': _schoolId,
         'exam_name': _exam.text.trim(),
         'year': _year,
@@ -266,6 +279,8 @@ class _UploadPaperScreenState extends State<UploadPaperScreen> {
       children: [
         const FormLabel('Class'),
         ClassChips(value: _class, padding: EdgeInsets.zero, onChanged: (c) => setState(() => _class = c)),
+        const FormLabel('Subject'),
+        SubjectChips(subjects: _subjects, value: _subjectId, padding: EdgeInsets.zero, onChanged: (v) => setState(() => _subjectId = v)),
         const FormLabel('School'),
         ChipRow(padding: EdgeInsets.zero, children: [
           SegChip('Not from a school', selected: _schoolId == null, onTap: () => setState(() => _schoolId = null)),
@@ -485,7 +500,7 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> {
     final lastRead = _pages.map((x) => f.parseTime(x['read_at'])).whereType<DateTime>().fold<DateTime?>(null, (a, b) => a == null || b.isAfter(a) ? b : a);
 
     return PushedPanel(
-      kicker: 'Question paper · Class ${p['class_level']}',
+      kicker: 'Question paper · ${p['subject'] == null ? 'Class ${p['class_level']}' : groupName(p['class_level'] as int, '${p['subject']}')}',
       title: _reading != null && live.isEmpty ? 'Reading' : '${live.length} questions',
       footer: PrimaryButton(
         _saving ? 'Saving' : (ready == 0 ? 'Save ready questions' : 'Save $ready ready question${ready == 1 ? '' : 's'}'),

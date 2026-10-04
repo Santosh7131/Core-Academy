@@ -126,7 +126,7 @@ class _StudentHomeState extends State<StudentHome> with WidgetsBindingObserver {
         ]);
 
     String facts(Map<String, dynamic> t) {
-      final parts = <String>['${t['question_count']} questions'];
+      final parts = <String>[f.count(t['question_count'] as int, 'question')];
       if (t['time_limit_min'] != null) parts.add('${t['time_limit_min']} min');
       return parts.join(' · ');
     }

@@ -8,6 +8,7 @@ import '../../core/format.dart' as f;
 import '../../theme.dart';
 import '../../ui/kit.dart';
 import 'common.dart';
+import 'subjects.dart';
 
 // ---------------------------------------------------------------- list
 
@@ -20,8 +21,10 @@ class StudentsScreen extends StatefulWidget {
 
 class _StudentsScreenState extends State<StudentsScreen> {
   List<Map<String, dynamic>>? _rows;
+  List<Subject> _subjects = [];
   String? _error;
   int? _class;
+  String? _subject;
 
   @override
   void initState() {
@@ -32,11 +35,14 @@ class _StudentsScreenState extends State<StudentsScreen> {
   Future<void> _load() async {
     try {
       final r = await api.get('/teacher/students');
+      final subjects = await loadSubjects();
       if (mounted) {
         setState(() {
-        _rows = (r['students'] as List).cast<Map<String, dynamic>>();
-        _error = null;
-      });
+          _rows = (r['students'] as List).cast<Map<String, dynamic>>();
+          _subjects = subjects;
+          if (!subjects.any((x) => x.id == _subject)) _subject = null;
+          _error = null;
+        });
       }
     } on ApiException catch (e) {
       if (mounted) setState(() => _error = e.message);
@@ -48,21 +54,41 @@ class _StudentsScreenState extends State<StudentsScreen> {
     _load();
   }
 
+  static bool _studies(Map<String, dynamic> s, String subjectId) =>
+      (s['subjects'] as List? ?? const []).any((x) => (x as Map)['id'] == subjectId);
+
   @override
   Widget build(BuildContext context) {
     final all = _rows;
-    final rows = all?.where((s) => _class == null || s['class_level'] == _class).toList();
+    final inClass = all?.where((s) => _class == null || s['class_level'] == _class).toList();
+    final rows = inClass?.where((s) => _subject == null || _studies(s, _subject!)).toList();
     final active = all?.where((s) => s['active'] == true).length ?? 0;
+    String? subjectName;
+    for (final x in _subjects) {
+      if (x.id == _subject) subjectName = x.name;
+    }
+    // A class and a subject together are a group, e.g. "9th Science".
+    final group = _class != null && subjectName != null ? groupName(_class!, subjectName) : null;
     return SafeArea(
       bottom: false,
       child: ListView(padding: EdgeInsets.zero, children: [
         TabHeader(
-          kicker: all == null ? 'Students' : '$active active',
+          kicker: all == null ? 'Students' : (group != null ? '$group · ${rows!.length}' : '$active active'),
           title: 'Students',
           actions: [CircleBtn(icon: Ph.userPlus, filled: true, label: 'Add student', onTap: () => _open('/t/students/new'))],
         ),
         const SizedBox(height: 18),
         ClassChips(value: _class, allowAll: true, onChanged: (c) => setState(() => _class = c)),
+        if (_subjects.length > 1) ...[
+          const SizedBox(height: 8),
+          SubjectChips(
+            subjects: _subjects,
+            value: _subject,
+            allowAll: true,
+            counts: inClass == null ? null : {for (final x in _subjects) x.id: inClass.where((s) => _studies(s, x.id)).length},
+            onChanged: (v) => setState(() => _subject = v),
+          ),
+        ],
         const SizedBox(height: 16),
         if (all == null && _error != null)
           ErrorState(message: _error!, onRetry: _load)
@@ -71,8 +97,16 @@ class _StudentsScreenState extends State<StudentsScreen> {
         else if (rows!.isEmpty)
           EmptyState(
             icon: Ph.users,
-            title: all.isEmpty ? 'No students yet' : 'No students in Class $_class',
-            body: 'Add a student to create their username and PIN.',
+            title: all.isEmpty
+                ? 'No students yet'
+                : group != null
+                    ? 'No students in $group'
+                    : _class != null
+                        ? 'No students in Class $_class'
+                        : 'No students take $subjectName',
+            body: group != null
+                ? 'Open a Class $_class student and add $subjectName to put them in this group.'
+                : 'Add a student to create their username and PIN.',
             action: SizedBox(width: 200, child: PrimaryButton('Add a student', onTap: () => _open('/t/students/new'))),
           )
         else
@@ -86,6 +120,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
                   title: '${s['display_name']}',
                   meta: [
                     'Class ${s['class_level']}',
+                    if (subjectNames(s['subjects']).isNotEmpty) subjectNames(s['subjects']).join(', '),
                     if (s['school'] != null) '${s['school']}',
                     if (s['active'] != true) 'login off',
                   ].join(' · '),
@@ -119,6 +154,8 @@ class _AddStudentScreenState extends State<AddStudentScreen> {
   int? _class;
   String? _schoolId;
   List<Map<String, dynamic>> _schools = [];
+  List<Subject> _subjects = [];
+  Set<String> _subjectIds = {};
   String _pin = _randomPin();
   bool _busy = false;
 
@@ -128,6 +165,22 @@ class _AddStudentScreenState extends State<AddStudentScreen> {
   void initState() {
     super.initState();
     _loadSchools();
+    _loadSubjects();
+  }
+
+  Future<void> _loadSubjects() async {
+    try {
+      final subjects = await loadSubjects();
+      if (mounted) {
+        setState(() {
+          _subjects = subjects;
+          // Most students take maths.
+          _subjectIds = {for (final x in subjects) if (x.isDefault) x.id};
+        });
+      }
+    } on ApiException catch (e) {
+      if (mounted) showProblem(context, e);
+    }
   }
 
   @override
@@ -186,6 +239,7 @@ class _AddStudentScreenState extends State<AddStudentScreen> {
   String? get _missing {
     if (_name.text.trim().isEmpty) return 'Type the student\'s name.';
     if (_class == null) return 'Choose a class.';
+    if (_subjectIds.isEmpty) return 'Choose at least one subject.';
     if (!RegExp(r'^[a-z0-9._]{3,24}$').hasMatch(_username.text.trim())) return 'Usernames need 3 to 24 lowercase letters, numbers or dots.';
     return null;
   }
@@ -199,6 +253,7 @@ class _AddStudentScreenState extends State<AddStudentScreen> {
         'school_id': _schoolId,
         'username': _username.text.trim(),
         'pin': _pin,
+        'subject_ids': _subjectIds.toList(),
       });
       if (!mounted) return;
       final login = r['login'] as Map<String, dynamic>;
@@ -235,6 +290,12 @@ class _AddStudentScreenState extends State<AddStudentScreen> {
         ]),
         const FormLabel('Class'),
         ClassChips(value: _class, padding: EdgeInsets.zero, onChanged: (c) => setState(() => _class = c)),
+        const FormLabel('Subjects'),
+        SubjectToggles(subjects: _subjects, value: _subjectIds, onChanged: (v) => setState(() => _subjectIds = v)),
+        if (_class != null && _subjectIds.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Fig('Joins ${[for (final x in _subjects) if (_subjectIds.contains(x.id)) groupName(_class!, x.name)].join(' and ')}.', style: labelStyle),
+        ],
         const FormLabel('School'),
         ChipRow(padding: EdgeInsets.zero, children: [
           for (final s in _schools) SegChip('${s['name']}', selected: _schoolId == s['id'], onTap: () => setState(() => _schoolId = '${s['id']}')),
@@ -319,6 +380,42 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
     }
   }
 
+  Future<void> _editSubjects(Map<String, dynamic> s) async {
+    final List<Subject> subjects;
+    try {
+      subjects = await loadSubjects();
+    } on ApiException catch (e) {
+      if (mounted) showProblem(context, e);
+      return;
+    }
+    if (!mounted) return;
+    var chosen = {for (final x in (s['subjects'] as List? ?? const [])) '${(x as Map)['id']}'};
+    final result = await showCentredCard<Set<String>>(
+      context,
+      title: 'Subjects',
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setCard) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Fig('${s['display_name']} gets the tests of each group they are in.', style: bodyStyle.copyWith(color: muted)),
+          const SizedBox(height: 14),
+          SubjectToggles(subjects: subjects, value: chosen, onChanged: (v) => setCard(() => chosen = v)),
+          const SizedBox(height: 18),
+          PrimaryButton(
+            'Save',
+            onTap: chosen.isEmpty ? null : () => Navigator.of(ctx).pop(chosen),
+            disabledReason: chosen.isEmpty ? 'Choose at least one subject.' : null,
+          ),
+        ]),
+      ),
+    );
+    if (result == null) return;
+    try {
+      await api.patch('/teacher/students/${widget.id}', {'subject_ids': result.toList()});
+      _load();
+    } on ApiException catch (e) {
+      if (mounted) showProblem(context, e);
+    }
+  }
+
   Future<void> _toggleActive(Map<String, dynamic> s) async {
     final active = s['active'] == true;
     final ok = await confirmCard(
@@ -393,6 +490,14 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
             ]),
           ),
         ],
+        SectionRule('Groups', count: subjectNames(s['subjects']).length, padding: const EdgeInsets.fromLTRB(0, 26, 0, 11)),
+        if (subjectNames(s['subjects']).isNotEmpty) ...[
+          Wrap(spacing: 8, runSpacing: 8, children: [
+            for (final n in subjectNames(s['subjects'])) TagChip(groupName(s['class_level'] as int, n)),
+          ]),
+          const SizedBox(height: 12),
+        ],
+        SecondaryButton('Change subjects', icon: Ph.pencilSimple, onTap: () => _editSubjects(s)),
         SectionRule('Tests', count: attempts.length, padding: const EdgeInsets.fromLTRB(0, 26, 0, 11)),
         if (attempts.isEmpty)
           Text('No tests written yet.', style: bodyStyle.copyWith(color: muted))

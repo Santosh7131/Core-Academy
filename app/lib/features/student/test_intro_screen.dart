@@ -68,7 +68,7 @@ class _TestIntroScreenState extends State<TestIntroScreen> {
         );
 
     return PushedPanel(
-      kicker: 'Class ${t['class_level']} · ${t['question_count']} questions',
+      kicker: 'Class ${t['class_level']} · ${f.count(t['question_count'] as int, 'question')}',
       title: '${t['title']}',
       footer: PrimaryButton(
         state == 'in_progress' ? 'Continue test' : 'Start test',

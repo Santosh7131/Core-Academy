@@ -10,6 +10,7 @@ import '../../theme.dart';
 import '../../ui/kit.dart';
 import '../../ui/math_text.dart';
 import 'common.dart';
+import 'subjects.dart';
 
 String testState(Map<String, dynamic> t) {
   if (t['status'] != 'published') return 'draft';
@@ -22,7 +23,10 @@ String testState(Map<String, dynamic> t) {
 }
 
 String testMeta(Map<String, dynamic> t) {
-  final parts = ['Class ${t['class_level']}', '${t['question_count']} questions'];
+  final parts = [
+    t['subject'] == null ? 'Class ${t['class_level']}' : groupName(t['class_level'] as int, '${t['subject']}'),
+    f.count(t['question_count'] as int, 'question'),
+  ];
   final opens = f.parseTime(t['opens_at']);
   final closes = f.parseTime(t['closes_at']);
   switch (testState(t)) {
@@ -146,12 +150,16 @@ class TestEditor extends StatefulWidget {
 class _TestEditorState extends State<TestEditor> {
   final _title = TextEditingController();
   int? _class;
+  String? _subjectId;
+  List<Subject> _subjects = [];
   List<Map<String, dynamic>> _questions = [];
   int? _limit = 20;
   DateTime? _opens;
   DateTime? _closes;
   bool _shuffle = true;
-  bool _assignAll = true;
+
+  /// Who writes it: 'group' (the class's students who take the subject), 'class' or 'students'.
+  String _audience = 'group';
   Set<String> _studentIds = {};
   List<Map<String, dynamic>> _classStudents = [];
   bool _published = false;
@@ -163,8 +171,35 @@ class _TestEditorState extends State<TestEditor> {
   void initState() {
     super.initState();
     _title.addListener(() => setState(() {}));
+    _loadSubjects();
     if (widget.id != null) _load();
   }
+
+  Future<void> _loadSubjects() async {
+    try {
+      final subjects = await loadSubjects();
+      if (!mounted) return;
+      setState(() {
+        _subjects = subjects;
+        // New tests start in Maths; an existing test keeps its subject from _load.
+        _subjectId ??= subjects.where((x) => x.isDefault).map((x) => x.id).firstOrNull;
+      });
+    } on ApiException catch (e) {
+      if (mounted) showProblem(context, e);
+    }
+  }
+
+  String? get _subjectName {
+    for (final x in _subjects) {
+      if (x.id == _subjectId) return x.name;
+    }
+    return null;
+  }
+
+  /// Active students of the class who take the test's subject.
+  int get _groupSize => _classStudents
+      .where((s) => (s['subjects'] as List? ?? const []).any((x) => (x as Map)['id'] == _subjectId))
+      .length;
 
   @override
   void dispose() {
@@ -179,11 +214,12 @@ class _TestEditorState extends State<TestEditor> {
       final t = Map<String, dynamic>.from(r['test']);
       _title.text = '${t['title']}';
       _class = t['class_level'] as int;
+      _subjectId = t['subject_id'] as String?;
       _limit = t['time_limit_min'] as int?;
       _opens = f.parseTime(t['opens_at']);
       _closes = f.parseTime(t['closes_at']);
       _shuffle = t['shuffle'] == true;
-      _assignAll = t['assign_all'] == true;
+      _audience = t['assign_group'] == true ? 'group' : (t['assign_all'] == true ? 'class' : 'students');
       _published = t['status'] == 'published';
       _attempts = t['attempts'] as int;
       _questions = (r['questions'] as List).cast<Map<String, dynamic>>();
@@ -205,11 +241,11 @@ class _TestEditorState extends State<TestEditor> {
   }
 
   Future<void> _pickQuestions() async {
-    if (_class == null) return;
+    if (_class == null || _subjectId == null) return;
     final picked = await Navigator.of(context).push<List<Map<String, dynamic>>>(PageRouteBuilder(
       transitionDuration: Duration.zero,
       reverseTransitionDuration: Duration.zero,
-      pageBuilder: (_, _, _) => QuestionPicker(classLevel: _class!, selected: _questions),
+      pageBuilder: (_, _, _) => QuestionPicker(classLevel: _class!, subjectId: _subjectId!, subjectName: _subjectName ?? '', selected: _questions),
     ));
     if (picked != null) setState(() => _questions = picked);
   }
@@ -217,9 +253,10 @@ class _TestEditorState extends State<TestEditor> {
   String? get _missing {
     if (_title.text.trim().isEmpty) return 'Give the test a name.';
     if (_class == null) return 'Choose a class.';
+    if (_subjectId == null) return 'Choose a subject.';
     if (_questions.isEmpty) return 'Choose at least one question.';
     if (_opens != null && _closes != null && !_closes!.isAfter(_opens!)) return 'The closing time must be after the opening time.';
-    if (!_assignAll && _studentIds.isEmpty) return 'Choose at least one student.';
+    if (_audience == 'students' && _studentIds.isEmpty) return 'Choose at least one student.';
     return null;
   }
 
@@ -233,8 +270,10 @@ class _TestEditorState extends State<TestEditor> {
       'opens_at': _opens?.toUtc().toIso8601String(),
       'closes_at': _closes?.toUtc().toIso8601String(),
       'shuffle': _shuffle,
-      'assign_all': _assignAll,
-      'student_ids': _assignAll ? <String>[] : _studentIds.toList(),
+      'subject_id': _subjectId,
+      'assign_all': _audience == 'class',
+      'assign_group': _audience == 'group',
+      'student_ids': _audience == 'students' ? _studentIds.toList() : <String>[],
     };
     try {
       final id = widget.id ?? '${(await api.post('/teacher/tests', body))['id']}';
@@ -287,6 +326,18 @@ class _TestEditorState extends State<TestEditor> {
                   _loadStudents();
                 },
         ),
+        const FormLabel('Subject'),
+        SubjectChips(
+          subjects: _subjects,
+          value: _subjectId,
+          padding: EdgeInsets.zero,
+          onChanged: locked
+              ? (_) {}
+              : (v) => setState(() {
+                    if (v != _subjectId) _questions = [];
+                    _subjectId = v;
+                  }),
+        ),
         FormLabel(_questions.isEmpty ? 'Questions' : 'Questions · ${_questions.length} chosen'),
         if (locked)
           Padding(
@@ -306,7 +357,7 @@ class _TestEditorState extends State<TestEditor> {
           SecondaryButton(
             _questions.isEmpty ? 'Choose questions' : 'Change questions',
             icon: Ph.listChecks,
-            onTap: _class == null ? null : _pickQuestions,
+            onTap: _class == null || _subjectId == null ? null : _pickQuestions,
           ),
           if (_class == null) Padding(padding: const EdgeInsets.only(top: 8), child: Text('Choose a class first.', style: labelStyle)),
         ],
@@ -337,10 +388,23 @@ class _TestEditorState extends State<TestEditor> {
         ]),
         const FormLabel('Who writes it'),
         ChipRow(padding: EdgeInsets.zero, children: [
-          SegChip(_class == null ? 'Whole class' : 'All of Class $_class', selected: _assignAll, onTap: () => setState(() => _assignAll = true)),
-          SegChip('Chosen students', selected: !_assignAll, onTap: () => setState(() => _assignAll = false)),
+          SegChip(
+            _class == null || _subjectName == null ? 'The group' : '${groupName(_class!, _subjectName!)} group',
+            count: _class == null ? null : _groupSize,
+            selected: _audience == 'group',
+            onTap: () => setState(() => _audience = 'group'),
+          ),
+          SegChip(_class == null ? 'Whole class' : 'All of Class $_class', selected: _audience == 'class', onTap: () => setState(() => _audience = 'class')),
+          SegChip('Chosen students', selected: _audience == 'students', onTap: () => setState(() => _audience = 'students')),
         ]),
-        if (!_assignAll) ...[
+        if (_audience == 'group' && _class != null && _subjectName != null && _groupSize == 0) ...[
+          const SizedBox(height: 10),
+          InlineNotice(
+            'No Class $_class student takes $_subjectName yet, so nobody will see this test. Add $_subjectName to students in Students.',
+            icon: Ph.warning,
+          ),
+        ],
+        if (_audience == 'students') ...[
           const SizedBox(height: 10),
           if (_classStudents.isEmpty)
             Text(_class == null ? 'Choose a class first.' : 'No active students in Class $_class.', style: labelStyle)
@@ -382,8 +446,10 @@ class _Tick extends StatelessWidget {
 }
 
 class QuestionPicker extends StatefulWidget {
-  const QuestionPicker({super.key, required this.classLevel, required this.selected});
+  const QuestionPicker({super.key, required this.classLevel, required this.subjectId, required this.subjectName, required this.selected});
   final int classLevel;
+  final String subjectId;
+  final String subjectName;
   final List<Map<String, dynamic>> selected;
 
   @override
@@ -404,7 +470,7 @@ class _QuestionPickerState extends State<QuestionPicker> {
 
   Future<void> _load() async {
     try {
-      final r = await api.get('/teacher/questions?class=${widget.classLevel}');
+      final r = await api.get('/teacher/questions?class=${widget.classLevel}&subject=${widget.subjectId}');
       if (mounted) setState(() => _all = (r['questions'] as List).cast<Map<String, dynamic>>());
     } on ApiException catch (e) {
       if (mounted) setState(() => _error = e.message);
@@ -419,7 +485,7 @@ class _QuestionPickerState extends State<QuestionPicker> {
     final chapters = <String>{for (final q in all ?? const <Map<String, dynamic>>[]) if (q['chapter'] != null) '${q['chapter']}'}.toList()..sort();
     final shown = all?.where((q) => _chapter == null || q['chapter'] == _chapter).toList();
     return PushedPanel(
-      kicker: 'Class ${widget.classLevel}',
+      kicker: groupName(widget.classLevel, widget.subjectName),
       title: 'Choose questions',
       footer: PrimaryButton(
         _picked.isEmpty ? 'Choose questions' : 'Use ${_picked.length} question${_picked.length == 1 ? '' : 's'}',
@@ -439,7 +505,7 @@ class _QuestionPickerState extends State<QuestionPicker> {
         else if (all == null)
           const LoadingState()
         else if (shown!.isEmpty)
-          EmptyState(icon: Ph.books, title: 'No questions for Class ${widget.classLevel}', body: 'Add some in Questions or from a question paper first.')
+          EmptyState(icon: Ph.books, title: 'No ${groupName(widget.classLevel, widget.subjectName)} questions', body: 'Add some in Questions or from a question paper first.')
         else
           for (final (i, q) in shown.indexed) ...[
             if (i > 0) const SizedBox(height: 8),
@@ -574,7 +640,7 @@ class _TestResultsScreenState extends State<TestResultsScreen> {
     final questions = (d['questions'] as List).cast<Map<String, dynamic>>();
     final published = t['status'] == 'published';
     final closes = f.parseTime(t['closes_at']);
-    final kicker = ['Class ${t['class_level']}', if (!published) 'unpublished' else if (closes != null) (closes.isAfter(DateTime.now()) ? 'closes ${f.when(closes)}' : 'closed ${f.when(closes)}')].join(' · ');
+    final kicker = [t['subject'] == null ? 'Class ${t['class_level']}' : groupName(t['class_level'] as int, '${t['subject']}'), if (!published) 'unpublished' else if (closes != null) (closes.isAfter(DateTime.now()) ? 'closes ${f.when(closes)}' : 'closed ${f.when(closes)}')].join(' · ');
 
     return PushedPanel(
       kicker: kicker,

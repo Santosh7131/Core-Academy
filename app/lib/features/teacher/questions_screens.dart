@@ -11,6 +11,7 @@ import '../../ui/kit.dart';
 import '../../ui/math_text.dart';
 import '../../ui/tokens.dart';
 import 'common.dart';
+import 'subjects.dart';
 
 // ---------------------------------------------------------------- bank
 
@@ -23,8 +24,10 @@ class QuestionsScreen extends StatefulWidget {
 
 class _QuestionsScreenState extends State<QuestionsScreen> {
   List<Map<String, dynamic>>? _rows;
+  List<Subject> _subjects = [];
   String? _error;
   int? _class;
+  String? _subject;
   final _search = TextEditingController();
   Timer? _debounce;
 
@@ -42,14 +45,20 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
   }
 
   Future<void> _load() async {
-    final params = [if (_class != null) 'class=$_class', if (_search.text.trim().isNotEmpty) 'q=${Uri.encodeQueryComponent(_search.text.trim())}'];
+    final params = [
+      if (_class != null) 'class=$_class',
+      if (_subject != null) 'subject=$_subject',
+      if (_search.text.trim().isNotEmpty) 'q=${Uri.encodeQueryComponent(_search.text.trim())}',
+    ];
     try {
       final r = await api.get('/teacher/questions${params.isEmpty ? '' : '?${params.join('&')}'}');
+      final subjects = _subjects.isEmpty ? await loadSubjects() : _subjects;
       if (mounted) {
         setState(() {
-        _rows = (r['questions'] as List).cast<Map<String, dynamic>>();
-        _error = null;
-      });
+          _rows = (r['questions'] as List).cast<Map<String, dynamic>>();
+          _subjects = subjects;
+          _error = null;
+        });
       }
     } on ApiException catch (e) {
       if (mounted) setState(() => _error = e.message);
@@ -77,6 +86,13 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
           setState(() => _class = c);
           _load();
         }),
+        if (_subjects.length > 1) ...[
+          const SizedBox(height: 8),
+          SubjectChips(subjects: _subjects, value: _subject, allowAll: true, onChanged: (v) {
+            setState(() => _subject = v);
+            _load();
+          }),
+        ],
         Padding(
           padding: const EdgeInsets.fromLTRB(gutter, 12, gutter, 0),
           child: GroupedInputs(children: [
@@ -112,7 +128,7 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
                 RowTile(
                   titleWidget: MathText('${q['text']}', style: rowTitleStyle, maxLines: 2),
                   meta: [
-                    'Class ${q['class_level']}',
+                    q['subject'] == null ? 'Class ${q['class_level']}' : groupName(q['class_level'] as int, '${q['subject']}'),
                     if (q['chapter'] != null) '${q['chapter']}',
                     if ((q['used_in'] as int) > 0) 'in ${q['used_in']} test${q['used_in'] == 1 ? '' : 's'}',
                   ].join(' · '),
@@ -202,6 +218,8 @@ class _QuestionEditorState extends State<QuestionEditor> {
   final _focus = List.generate(6, (_) => FocusNode());
   int _lastFocus = 0;
   int? _class;
+  String? _subjectId;
+  List<Subject> _subjects = [];
   String? _chapterId;
   int? _correct;
   num _marks = 1;
@@ -224,7 +242,23 @@ class _QuestionEditorState extends State<QuestionEditor> {
     for (final c in [_text, _solution, ..._options]) {
       c.addListener(() => setState(() {}));
     }
+    _loadSubjects();
     if (widget.id != null) _load();
+  }
+
+  Future<void> _loadSubjects() async {
+    try {
+      final subjects = await loadSubjects();
+      if (!mounted) return;
+      setState(() {
+        _subjects = subjects;
+        // New questions start in Maths; an existing one keeps its subject from _load.
+        _subjectId ??= subjects.where((x) => x.isDefault).map((x) => x.id).firstOrNull;
+      });
+      _loadChapters();
+    } on ApiException catch (e) {
+      if (mounted) showProblem(context, e);
+    }
   }
 
   @override
@@ -250,6 +284,7 @@ class _QuestionEditorState extends State<QuestionEditor> {
       }
       _solution.text = '${q['solution'] ?? ''}';
       _class = q['class_level'] as int;
+      _subjectId = q['subject_id'] as String?;
       _chapterId = q['chapter_id'] as String?;
       _correct = q['correct_option'] as int;
       _marks = q['marks'] as num;
@@ -265,8 +300,8 @@ class _QuestionEditorState extends State<QuestionEditor> {
   }
 
   Future<void> _loadChapters() async {
-    if (_class == null) return;
-    final r = await api.get('/teacher/chapters?class=$_class');
+    if (_class == null || _subjectId == null) return;
+    final r = await api.get('/teacher/chapters?class=$_class&subject=$_subjectId');
     if (mounted) setState(() => _chapters = (r['chapters'] as List).cast<Map<String, dynamic>>());
   }
 
@@ -291,7 +326,7 @@ class _QuestionEditorState extends State<QuestionEditor> {
     );
     if (name == null || name.trim().isEmpty || _class == null) return;
     try {
-      final r = await api.post('/teacher/chapters', {'class_level': _class, 'name': name.trim()});
+      final r = await api.post('/teacher/chapters', {'class_level': _class, 'subject_id': _subjectId, 'name': name.trim()});
       await _loadChapters();
       setState(() => _chapterId = '${r['chapter']['id']}');
     } on ApiException catch (e) {
@@ -329,6 +364,7 @@ class _QuestionEditorState extends State<QuestionEditor> {
 
   String? get _missing {
     if (_class == null) return 'Choose a class.';
+    if (_subjectId == null) return 'Choose a subject.';
     if (_text.text.trim().isEmpty) return 'Type the question.';
     if (_options.any((o) => o.text.trim().isEmpty)) return 'Fill in all four options.';
     if (_correct == null) return 'Tap the circle next to the right answer.';
@@ -339,6 +375,7 @@ class _QuestionEditorState extends State<QuestionEditor> {
     setState(() => _busy = true);
     final body = {
       'class_level': _class,
+      'subject_id': _subjectId,
       'chapter_id': _chapterId,
       'text': _text.text.trim(),
       'options': [for (final o in _options) o.text.trim()],
@@ -394,7 +431,21 @@ class _QuestionEditorState extends State<QuestionEditor> {
             _loadChapters();
           },
         ),
-        if (_class != null) ...[
+        const FormLabel('Subject'),
+        SubjectChips(
+          subjects: _subjects,
+          value: _subjectId,
+          padding: EdgeInsets.zero,
+          onChanged: (v) {
+            setState(() {
+              _subjectId = v;
+              _chapterId = null;
+              _chapters = [];
+            });
+            _loadChapters();
+          },
+        ),
+        if (_class != null && _subjectId != null) ...[
           const FormLabel('Chapter'),
           ChipRow(padding: EdgeInsets.zero, children: [
             for (final ch in _chapters) SegChip('${ch['name']}', selected: _chapterId == ch['id'], onTap: () => setState(() => _chapterId = '${ch['id']}')),

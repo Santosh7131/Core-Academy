@@ -5,6 +5,7 @@ import '../../core/session.dart';
 import '../../theme.dart';
 import '../../ui/kit.dart';
 import 'common.dart';
+import 'subjects.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -17,7 +18,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Map<String, dynamic>? _s;
   List<Map<String, dynamic>> _schools = [];
   List<Map<String, dynamic>> _chapters = [];
+  List<Map<String, dynamic>> _subjectRows = [];
+  List<Subject> _subjects = [];
   int _chapterClass = 9;
+  String? _chapterSubject;
   String? _error;
   final _tuition = TextEditingController();
   final _name = TextEditingController();
@@ -43,8 +47,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       final s = await api.get('/teacher/settings');
       final schools = await api.get('/teacher/schools');
+      final subjects = await api.get('/teacher/subjects');
       _s = Map<String, dynamic>.from(s);
       _schools = (schools['schools'] as List).cast<Map<String, dynamic>>();
+      _subjectRows = (subjects['subjects'] as List).cast<Map<String, dynamic>>();
+      _subjects = [for (final r in _subjectRows) Subject.fromJson(r)];
+      if (!_subjects.any((x) => x.id == _chapterSubject)) {
+        _chapterSubject = _subjects.where((x) => x.isDefault).map((x) => x.id).firstOrNull ?? _subjects.firstOrNull?.id;
+      }
       _tuition.text = '${_s!['tuition_name']}';
       _name.text = '${_s!['me']['display_name']}';
       await _loadChapters();
@@ -54,8 +64,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  /// "9th Science" for the chapter list being shown.
+  String? get _chapterGroup {
+    for (final x in _subjects) {
+      if (x.id == _chapterSubject) return groupName(_chapterClass, x.name);
+    }
+    return null;
+  }
+
   Future<void> _loadChapters() async {
-    final r = await api.get('/teacher/chapters?class=$_chapterClass');
+    final r = await api.get('/teacher/chapters?class=$_chapterClass${_chapterSubject == null ? '' : '&subject=$_chapterSubject'}');
     if (mounted) setState(() => _chapters = (r['chapters'] as List).cast<Map<String, dynamic>>());
   }
 
@@ -84,17 +102,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _editRow(String kind, Map<String, dynamic> row) async {
+    // Maths is the main subject: it can be renamed but never deleted.
+    final canDelete = row['is_default'] != true;
     final choice = await showCentredCard<String>(
       context,
       title: '${row['name']}',
       builder: (ctx) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         SecondaryButton('Rename', icon: Ph.pencilSimple, onTap: () => Navigator.of(ctx).pop('rename')),
-        const SizedBox(height: 10),
-        SecondaryButton('Delete', icon: Ph.trash, tint: danger, onTap: () => Navigator.of(ctx).pop('delete')),
+        if (canDelete) ...[
+          const SizedBox(height: 10),
+          SecondaryButton('Delete', icon: Ph.trash, tint: danger, onTap: () => Navigator.of(ctx).pop('delete')),
+        ],
       ]),
     );
     if (choice == 'rename') {
-      final name = await _ask('Rename', kind == 'schools' ? 'School name' : 'Chapter name', initial: '${row['name']}');
+      final name = await _ask('Rename', switch (kind) { 'schools' => 'School name', 'subjects' => 'Subject name', _ => 'Chapter name' },
+          initial: '${row['name']}');
       if (name != null && name.trim().isNotEmpty) {
         await _run(() => api.patch('/teacher/$kind/${row['id']}', {'name': name.trim()}), 'Renamed.');
         _load();
@@ -103,7 +126,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final ok = await confirmCard(
         context,
         title: 'Delete ${row['name']}?',
-        body: kind == 'schools' ? 'Students from this school keep their logins; their school is just left blank.' : 'Questions in this chapter stay in the bank without a chapter.',
+        body: switch (kind) {
+          'schools' => 'Students from this school keep their logins; their school is just left blank.',
+          'subjects' => 'Students who take it are taken out of its groups. A subject with chapters, questions or tests cannot be deleted.',
+          _ => 'Questions in this chapter stay in the bank without a chapter.',
+        },
         confirm: 'Delete',
         destructive: true,
       );
@@ -155,21 +182,49 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _load();
           }
         }),
+        SectionRule('Subjects', count: _subjectRows.length, padding: rule),
+        for (final (i, sj) in _subjectRows.indexed) ...[
+          if (i > 0) const SizedBox(height: gapRow),
+          RowTile(
+            title: '${sj['name']}',
+            meta: '${sj['students']} students · ${sj['questions']} questions',
+            chevron: true,
+            onTap: () => _editRow('subjects', sj),
+          ),
+        ],
+        const SizedBox(height: gapRow),
+        SecondaryButton('Add subject', icon: Ph.plus, onTap: () async {
+          final name = await _ask('Add a subject', 'Subject name', action: 'Add');
+          if (name != null && name.trim().isNotEmpty) {
+            await _run(() => api.post('/teacher/subjects', {'name': name.trim()}), 'Subject added.');
+            _load();
+          }
+        }),
         const SectionRule('Chapters', padding: rule),
         ClassChips(value: _chapterClass, padding: EdgeInsets.zero, onChanged: (c) {
           setState(() => _chapterClass = c ?? 9);
           _loadChapters();
         }),
+        if (_subjects.length > 1) ...[
+          const SizedBox(height: 8),
+          SubjectChips(subjects: _subjects, value: _chapterSubject, padding: EdgeInsets.zero, onChanged: (v) {
+            setState(() => _chapterSubject = v);
+            _loadChapters();
+          }),
+        ],
         const SizedBox(height: 10),
         for (final (i, ch) in _chapters.indexed) ...[
           if (i > 0) const SizedBox(height: gapRow),
           RowTile(title: '${ch['name']}', meta: '${ch['questions']} questions', chevron: true, onTap: () => _editRow('chapters', ch)),
         ],
         const SizedBox(height: gapRow),
-        SecondaryButton('Add chapter to Class $_chapterClass', icon: Ph.plus, onTap: () async {
+        SecondaryButton('Add a ${_chapterGroup ?? 'Class $_chapterClass'} chapter', icon: Ph.plus, onTap: () async {
           final name = await _ask('Add a chapter', 'Chapter name', action: 'Add');
           if (name != null && name.trim().isNotEmpty) {
-            await _run(() => api.post('/teacher/chapters', {'class_level': _chapterClass, 'name': name.trim()}), 'Chapter added.');
+            await _run(
+              () => api.post('/teacher/chapters', {'class_level': _chapterClass, 'subject_id': _chapterSubject, 'name': name.trim()}),
+              'Chapter added.',
+            );
             _loadChapters();
           }
         }),
