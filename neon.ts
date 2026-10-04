@@ -13,6 +13,11 @@ export default defineConfig({
     // outside this file, so deploys never carry the keys.
     api: { name: "api", source: "./api/src/index.ts" },
   },
+  triggers: {
+    // Push notifications. Every five minutes (UTC cron, which lines up with India's :00 and :30),
+    // but the function only wakes the database when a notification is due: see api/src/lib/notify.ts.
+    notify: { type: "schedule", function: "api", cron: "*/5 * * * *", functionPath: "/cron/notify" },
+  },
   // Branch policy: per-branch tuning
   branch: (branch) => {
     if (branch.isDefault) {

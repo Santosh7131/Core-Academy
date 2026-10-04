@@ -22,6 +22,63 @@ can photograph a school question paper so Groq AI types its questions out for he
   server enforces it with 30 seconds of grace, and an attempt that runs out submits itself.
 - One attempt per test, unless the teacher allows a retake.
 - Five wrong PINs lock a login for five minutes.
+- While a student is logged in, release builds block screenshots and screen recording
+  (Android's FLAG_SECURE). The teacher's screens can still be captured.
+
+## Groups and subjects
+
+The tuition teaches more than one subject. Each student studies one or more subjects, and a
+group is a class and a subject together: "10th Science" is every Class 10 student who studies
+Science. Chapters, questions, papers and tests each belong to a subject, and a test goes to
+its group, its whole class, or chosen students. Maths and Science are built in, and more
+subjects can be added in Settings. Students added by the 1.0.0 app, and everything made
+before subjects existed, count as Maths.
+
+## Ready-made questions
+
+`tools/library/` holds original chapter-wise MCQs, with worked solutions, written for the
+NCERT 2026-27 books (nothing is copied from a paper or a book). Every answer is proved before
+it can be imported:
+
+```bash
+node tools/check-library.ts
+node tools/seed-library.ts --env .env.local
+```
+
+The import adds each book's chapters, its questions (tagged Ready-made in the app) and one
+draft chapter test per chapter for the class's group. It is safe to run again: rows are
+matched by `library_key`, and a chapter test that has been published or written is left alone.
+
+## Notifications
+
+Push notifications go through Firebase Cloud Messaging. Students are told about a new test as
+soon as it opens, and get a reminder an hour before it closes if they have not started it
+(only for tests that were open two hours or more; for a shorter one, the first notification
+already gave the closing time). At 8 pm India time the teacher gets a summary of the day, if
+anything happened.
+
+The app registers the phone after logging in and on every start. The registration belongs to
+that login, so logging out, or a PIN reset, stops the notifications. Publishing an open test
+announces it straight away. Everything else comes from `/cron/notify`, which a Neon trigger
+(declared in `neon.ts`) calls every five minutes. That run reads the time of the next
+notification from `notify/next.json` in the bucket and only queries the database when it is
+due. If it queried every time, the 0.25 CU compute would never scale to zero: 186
+compute-hours a month, and the free plan has 100.
+
+To set it up, once:
+
+1. In the Firebase console, create a project and add two Android apps:
+   `com.coreacademy.core_academy` and `com.coreacademy.core_academy.dev`. Save the
+   `google-services.json` you get after the second as `app/android/app/google-services.json`.
+   Builds made without that file work normally, with notifications off.
+2. In Project settings, under Service accounts, generate a private key. Save it as
+   `api/firebase-service-account.json` and upload it to the function:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File tools/upload-firebase-key.ps1 -Branch dev
+   ```
+
+Until the key is on a branch, the API there reports `"push": false` at `/` and sends nothing.
 
 ## Running it
 
@@ -104,7 +161,8 @@ and the scripts that read it would then point at the live database.
 | Command | What it proves |
 |---|---|
 | `npm run typecheck` | The API type-checks. |
-| `npm run test:api` | 45 end-to-end checks of the marking rules against the deployed dev API (add `-- --env .env.main` for the live one). It creates its own students and tests, then removes them. |
+| `npm run test:api` | 62 end-to-end checks of the marking rules, groups and logins against the deployed dev API (add `-- --env .env.main` for the live one). It creates its own students, subject and tests, gives its tests only to those students, then removes them all. |
+| `node tools/notify-test.ts --log server.log` | 23 checks of the notifications against the API on your PC, run with `PUSH_DRY_RUN=1` so each notification is written to the log instead of sent. Dev only. |
 | `node tools/check-answers.ts` | Every sample question's marked answer is right, and no other option equals it. |
 | `node tools/ai-test.ts` | How accurately the AI reads the 2-page sample paper (render it first with `tools/make-sample-paper.ps1`). |
 | `flutter analyze` and `flutter test` (in `app/`) | The app's lints and unit tests. |
@@ -122,8 +180,10 @@ To view the comps, run `python -m http.server 8777 --bind 127.0.0.1 --directory 
 ## Secrets
 
 These are git-ignored and must never be committed: `.env.local`, `.env.main`,
-`api/.env.secrets`, `tools/out/` (logins), and any keystore. The Groq keys live only in
-`api/.env.secrets` and on the deployed function, never in the app.
+`api/.env.secrets`, `api/firebase-service-account.json`, `app/android/app/google-services.json`,
+`tools/out/` (logins), and any keystore. The Groq keys and the Firebase service-account key
+live only in those files and on the deployed function, never in the app.
+(`google-services.json` does go into the app: it only names the Firebase project.)
 
 ## Going live
 

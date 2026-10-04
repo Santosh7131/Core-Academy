@@ -7,6 +7,12 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// Push notifications read Firebase's android/app/google-services.json, which stays out of git.
+// Without the file the app still builds and runs, with notifications off.
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
+}
+
 // The release signing key lives outside git: android/key.properties points at the keystore.
 // Without it, release builds fall back to the debug key (fine for trying, not for sharing).
 val keystoreProperties = Properties()

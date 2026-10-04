@@ -33,7 +33,7 @@ const login = (username: string, secret: string) => api('POST', '/auth/login', u
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const iso = (msFromNow: number) => new Date(Date.now() + msFromNow).toISOString();
 
-const created = { users: [] as string[], questions: [] as string[], tests: [] as string[] };
+const created = { users: [] as string[], questions: [] as string[], tests: [] as string[], subjects: [] as string[] };
 const tag = `apitest${randomInt(1000, 9999)}`;
 
 try {
@@ -165,39 +165,45 @@ try {
   }
 
   // Groups: a class and a subject. A group test reaches only the class's students who study it.
+  // The group checks use a subject of their own, so no real student (on live, a real 9th Science
+  // student) is ever given, or notified about, a test from this script.
   const subj = await api('GET', '/teacher/subjects', T);
   const maths = subj.body?.subjects?.find((x: any) => x.is_default);
-  const science = subj.body?.subjects?.find((x: any) => x.name === 'Science');
-  check('Maths and Science are subjects, Maths the default', maths?.name === 'Maths' && !!science, subj.body);
+  check('Maths and Science are subjects, Maths the default',
+    maths?.name === 'Maths' && subj.body?.subjects?.some((x: any) => x.name === 'Science'), subj.body);
+  const ns = await api('POST', '/teacher/subjects', T, { name: tag });
+  check('teacher adds a subject', ns.status === 201 && ns.body?.subject?.name === tag, ns.body);
+  const own = ns.body.subject;
+  created.subjects.push(own.id);
   const s3 = await api('POST', '/teacher/students', T, {
-    display_name: 'Test Student Three', class_level: 9, username: `${tag}.three`, pin: '4321', subject_ids: [science.id],
+    display_name: 'Test Student Three', class_level: 9, username: `${tag}.three`, pin: '4321', subject_ids: [own.id],
   });
-  check('a science-only student can be added', s3.status === 201, s3.body);
+  check('a student of one other subject can be added', s3.status === 201, s3.body);
   created.users.push(s3.body.student.id);
   const names = (r: any) => JSON.stringify(r.body?.student?.subjects?.map((x: any) => x.name));
   const d1 = await api('GET', `/teacher/students/${created.users[0]}`, T);
   const d3 = await api('GET', `/teacher/students/${s3.body.student.id}`, T);
   check('students added by the older app study maths', names(d1) === '["Maths"]', d1.body?.student?.subjects);
-  check('the science student studies only science', names(d3) === '["Science"]', d3.body?.student?.subjects);
+  check('that student studies only that subject', names(d3) === JSON.stringify([tag]), d3.body?.student?.subjects);
 
   const sq = await api('POST', '/teacher/questions', T, {
-    class_level: 9, subject_id: science.id, text: `${tag} Which gas do plants take in for photosynthesis?`,
+    class_level: 9, subject_id: own.id, text: `${tag} Which gas do plants take in for photosynthesis?`,
     options: ['Oxygen', 'Carbon dioxide', 'Nitrogen', 'Hydrogen'], correct_option: 1,
   });
   created.questions.push(sq.body.id);
   const sqRow = await api('GET', `/teacher/questions/${sq.body.id}`, T);
-  check('a question can be a science question', sq.status === 201 && sqRow.body?.question?.subject === 'Science', sqRow.body?.question);
-  const sciList = await api('GET', `/teacher/questions?class=9&subject=${science.id}&q=${tag}`, T);
+  check('a question can belong to that subject', sq.status === 201 && sqRow.body?.question?.subject === tag, sqRow.body?.question);
+  const sciList = await api('GET', `/teacher/questions?class=9&subject=${own.id}&q=${tag}`, T);
   check('the question bank filters by subject', sciList.body?.questions?.length === 1 && sciList.body.questions[0].id === sq.body.id,
     sciList.body?.questions?.map((x: any) => x.text));
 
   const g = await api('POST', '/teacher/tests', T, {
-    title: `${tag} group`, class_level: 9, subject_id: science.id, question_ids: [sq.body.id],
+    title: `${tag} group`, class_level: 9, subject_id: own.id, question_ids: [sq.body.id],
     assign_all: false, assign_group: true, opens_at: iso(-60_000), closes_at: iso(30 * 60_000),
   });
   created.tests.push(g.body.id);
   const gp = await api('POST', `/teacher/tests/${g.body.id}/publish`, T, { published: true });
-  check('a test can go to the 9th Science group', g.status === 201 && gp.status === 200, [g.body, gp.body]);
+  check('a test can go to a class + subject group', g.status === 201 && gp.status === 200, [g.body, gp.body]);
   const S3 = (await login(`${tag}.three`, '4321')).body.token as string;
   const sees = async (token: string) => ((await api('GET', '/student/home', token)).body?.tests ?? []).some((x: any) => x.id === g.body.id);
   check('a group member sees the group test', await sees(S3));
@@ -207,15 +213,15 @@ try {
   check('the group test results list only the group', JSON.stringify(gr.body?.students?.map((x: any) => x.id)) === JSON.stringify([s3.body.student.id]),
     gr.body?.students?.map((x: any) => x.display_name));
   const groups = await api('GET', '/teacher/groups', T);
-  check('groups include 9th Science', groups.body?.groups?.some((x: any) => x.class_level === 9 && x.subject === 'Science' && x.students >= 1), groups.body);
-  await api('PATCH', `/teacher/students/${created.users[0]}`, T, { subject_ids: [maths.id, science.id] });
+  check('groups count the new group', groups.body?.groups?.some((x: any) => x.class_level === 9 && x.subject === tag && x.students === 1), groups.body);
+  await api('PATCH', `/teacher/students/${created.users[0]}`, T, { subject_ids: [maths.id, own.id] });
   check('adding Science to a student brings in the group test', await sees(S1));
 
   const old = await api('POST', '/teacher/tests', T, { title: `${tag} older app`, class_level: 9, question_ids: [created.questions[0]] });
   created.tests.push(old.body.id);
   const oldRow = (await api('GET', `/teacher/tests/${old.body.id}`, T)).body?.test;
   check('a test from the older app is a whole-class maths test', oldRow?.subject_id === maths.id && oldRow?.assign_all === true && oldRow?.assign_group === false, oldRow);
-  check('a subject in use cannot be deleted', (await api('DELETE', `/teacher/subjects/${science.id}`, T)).status === 409);
+  check('a subject in use cannot be deleted', (await api('DELETE', `/teacher/subjects/${own.id}`, T)).status === 409);
   check('Maths cannot be deleted', (await api('DELETE', `/teacher/subjects/${maths.id}`, T)).status === 409);
 
   // Lockout, PIN reset and deactivation.
@@ -239,6 +245,7 @@ try {
   await db.query('delete from tests where id = any($1::uuid[])', [created.tests]);
   await db.query('delete from questions where id = any($1::uuid[])', [created.questions]);
   await db.query('delete from users where id = any($1::uuid[])', [created.users]);
+  await db.query('delete from subjects where id = any($1::uuid[])', [created.subjects]);
   await db.end();
   console.log(`\n${pass} passed, ${fail} failed (test data removed)`);
   process.exit(fail ? 1 : 0);

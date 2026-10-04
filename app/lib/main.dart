@@ -3,6 +3,8 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'core/api.dart';
+import 'core/push.dart';
 import 'core/screen_guard.dart';
 import 'core/session.dart';
 import 'router.dart';
@@ -10,6 +12,7 @@ import 'theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  Push.start();
   await session.loadPrefs();
   _resolveDark();
   runApp(const CoreAcademyApp());
@@ -75,6 +78,7 @@ class _CoreAcademyAppState extends State<CoreAcademyApp> with WidgetsBindingObse
 
   void _onSession() {
     ScreenGuard.forRole(session.user?['role'] as String?);
+    Push.forSession(session.signedIn ? api.token : null);
     if (_resolveDark()) _rebuildEverything();
   }
 

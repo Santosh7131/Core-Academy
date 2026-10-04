@@ -36,6 +36,7 @@ build/
 local.properties
 .idea/
 .cxx/
+.kotlin/
 
 # Tool output
 tools/out/
@@ -48,3 +49,7 @@ design/screenshots/sheet-*.png
 # OS
 Thumbs.db
 .DS_Store
+
+# Firebase: the app's config and the server's service-account key stay out of the public repo
+google-services.json
+firebase-service-account*.json

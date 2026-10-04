@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto';
+import { waitUntil } from '@neon/functions';
 import { Hono } from 'hono';
 import {
   checkPassword, checkPin, checkUsername, hashSecret, killSessions, newPin, verifySecret, type AppEnv,
 } from '../lib/auth.ts';
-import { resultPayload } from '../lib/attempts.ts';
+import { ASSIGNED_CTE, resultPayload } from '../lib/attempts.ts';
 import { pool, q, q1, tx } from '../lib/db.ts';
 import { bad, bool, date, HttpError, int, notFound, str, uuid, uuidOpt } from '../lib/http.ts';
+import { afterTestChange } from '../lib/notify.ts';
 import { mustKeepOrder } from '../lib/questions.ts';
 import { deleteObjects, maybeViewUrl, uploadUrl } from '../lib/storage.ts';
 import { MATHS, STUDENT_SUBJECTS, subjectIds } from '../lib/subjects.ts';
@@ -13,20 +15,6 @@ import { readBody } from './body.ts';
 
 // Mounted behind requireUser('teacher') in index.ts.
 export const teacherRoutes = new Hono<AppEnv>();
-
-// Students each test is given to: the whole class, the class's group for the test's subject,
-// or the chosen students.
-const ASSIGNED_CTE = `assigned as (
-  select t.id as test_id, u.id as student_id
-    from tests t join users u on u.role = 'student' and u.active and u.class_level = t.class_level
-   where t.status = 'published'
-     and (t.assign_all or t.assign_group and exists (
-           select 1 from student_subjects ss where ss.student_id = u.id and ss.subject_id = t.subject_id))
-  union
-  select t.id, ts.student_id
-    from tests t join test_students ts on ts.test_id = t.id join users u on u.id = ts.student_id and u.active
-   where t.status = 'published' and not t.assign_all and not t.assign_group
-)`;
 
 const pct = (score: number | null, max: number | null) => (score == null || !max ? null : score / max);
 
@@ -590,7 +578,7 @@ teacherRoutes.get('/tests/:id', async (c) => {
 teacherRoutes.patch('/tests/:id', async (c) => {
   const id = uuid(c.req.param('id'), 'test id');
   const t = readTest(await readBody(c));
-  await tx(async (cx) => {
+  const status = await tx(async (cx) => {
     const cur = await q1(
       `select (select count(*) from attempts x where x.test_id = $1) as attempts,
               array(select question_id from test_questions where test_id = $1 order by position) as qids`,
@@ -601,17 +589,23 @@ teacherRoutes.patch('/tests/:id', async (c) => {
     if (cur.attempts > 0 && !sameQuestions) {
       throw new HttpError(409, 'has_attempts', 'Students have already started this test, so its questions cannot change.');
     }
+    // Moved to open later: students are told again when it opens. A new closing time gets its
+    // own reminder.
     const row = await q1(
       `update tests set title = $2, class_level = $3, time_limit_min = $4, opens_at = $5, closes_at = $6,
                         shuffle = $7, assign_all = $8, subject_id = coalesce($9, subject_id),
-                        assign_group = case when $8 then false else coalesce($10, assign_group) end
-        where id = $1 returning id`,
+                        assign_group = case when $8 then false else coalesce($10, assign_group) end,
+                        announced_at = case when $5::timestamptz > now() then null else announced_at end,
+                        reminded_at = case when $6::timestamptz is distinct from closes_at then null else reminded_at end
+        where id = $1 returning id, status`,
       [id, t.title, t.class_level, t.time_limit_min, t.opens_at, t.closes_at, t.shuffle, t.assign_all, t.subject_id, t.assign_group],
       cx,
     );
     if (!row) throw notFound('This test');
     await saveTestChildren(cx, id, t);
+    return row.status as string;
   });
+  if (status === 'published') waitUntil(afterTestChange());
   return c.json({ id });
 });
 
@@ -627,6 +621,8 @@ teacherRoutes.post('/tests/:id/publish', async (c) => {
     [id, published ? 'published' : 'draft'],
   );
   if (!t) throw notFound('This test');
+  // Students hear about it after the teacher's screen has its answer.
+  if (published) waitUntil(afterTestChange());
   return c.json({ test: t });
 });
 

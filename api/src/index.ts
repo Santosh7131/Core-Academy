@@ -3,7 +3,9 @@ import { cors } from 'hono/cors';
 import { requireUser, type AppEnv } from './lib/auth.ts';
 import { aiConfigured } from './lib/groq.ts';
 import { HttpError } from './lib/http.ts';
+import { pushConfigured } from './lib/push.ts';
 import { authRoutes } from './routes/auth.ts';
+import { notifyRoutes } from './routes/notify.ts';
 import { paperRoutes } from './routes/papers.ts';
 import { studentRoutes } from './routes/student.ts';
 import { teacherRoutes } from './routes/teacher.ts';
@@ -13,10 +15,12 @@ const app = new Hono<AppEnv>();
 // The Android app does not need CORS; the web version planned for later will.
 app.use('*', cors({ origin: '*', allowHeaders: ['authorization', 'content-type'], allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] }));
 
-app.get('/', (c) => c.json({ name: 'Core Academy API', branch: process.env.NEON_BRANCH ?? null, ai: aiConfigured() }));
+app.get('/', (c) =>
+  c.json({ name: 'Core Academy API', branch: process.env.NEON_BRANCH ?? null, ai: aiConfigured(), push: pushConfigured() }));
 
 app.route('/auth', authRoutes);
 app.route('/student', studentRoutes);
+app.route('/', notifyRoutes);
 
 const teacher = new Hono<AppEnv>();
 teacher.use('*', requireUser('teacher'));

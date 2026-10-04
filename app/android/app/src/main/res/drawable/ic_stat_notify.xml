@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The status-bar icon for notifications: the launcher mark from design/icon/icon.html (a "C"
+     around a solid core) in white. Android draws status-bar icons from the alpha channel only. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="58"
+    android:viewportHeight="58">
+    <group android:translateX="-23" android:translateY="-25">
+        <path
+            android:pathData="M70.85,39.86 A22,22 0 1,0 70.85,68.14"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="8.5"
+            android:strokeLineCap="round" />
+        <path
+            android:pathData="M54,47.5 a6.5,6.5 0 1,1 0,13 a6.5,6.5 0 1,1 0,-13 z"
+            android:fillColor="#FFFFFFFF" />
+    </group>
+</vector>
