@@ -2,13 +2,15 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
-/// The API base: the dev branch function by default; pass --dart-define=API_BASE=... to change it.
-const apiBase = String.fromEnvironment(
-  'API_BASE',
-  defaultValue: 'https://br-nameless-shape-azg23hcy-api.compute.c-3.ap-southeast-1.aws.neon.tech',
-);
+const _liveApi = 'https://br-cold-shape-azcvozbw-api.compute.c-3.ap-southeast-1.aws.neon.tech';
+const _devApi = 'https://br-nameless-shape-azg23hcy-api.compute.c-3.ap-southeast-1.aws.neon.tech';
+
+/// The API base: release builds use the live (main branch) API, debug builds the dev branch.
+/// Pass --dart-define=API_BASE=... to point a build anywhere else.
+const apiBase = String.fromEnvironment('API_BASE', defaultValue: kReleaseMode ? _liveApi : _devApi);
 
 class ApiException implements Exception {
   ApiException(this.status, this.code, this.message);

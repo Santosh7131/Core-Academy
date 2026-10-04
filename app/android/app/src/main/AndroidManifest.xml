@@ -1,6 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The app talks to the Core Academy API. Flutter only adds this for debug builds. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
-        android:label="core_academy"
+        android:label="${appLabel}"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

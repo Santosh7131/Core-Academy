@@ -67,7 +67,9 @@ cd app
 flutter run --dart-define=API_BASE=http://127.0.0.1:8787
 ```
 
-Leave out `--dart-define` and the app talks to the deployed dev API instead, so it works
+This is the test build, "Core Academy Dev" (app id `com.coreacademy.core_academy.dev`), so it
+installs beside the live app. Leave out `--dart-define` and it talks to the deployed dev API
+instead, so it works
 without your PC.
 
 ## Deploying the API
@@ -141,8 +143,32 @@ The first pull takes only the database settings, because the bucket the full pul
 only exists after the first deploy. `create-teacher.ts` writes the teacher login to
 `tools/out/logins.main.md`.
 
-Still to do:
+Then upload the Groq keys with `tools/upload-groq-keys.ps1 -Branch main`, and change the
+teacher password from the generated one in the app (Settings → Password).
 
-1. Upload the Groq keys to `main`: `tools/upload-groq-keys.ps1 -Branch main`.
-2. Build a signed release APK that points at the `main` API.
-3. Change the teacher password from the generated one (Settings → Password).
+## Releasing the app
+
+Release builds talk to the live API (`main`); debug builds talk to dev. A release is signed
+with the key in `app/android/core-academy-release.jks`, and `app/android/key.properties` holds
+its passwords. Both are git-ignored. **Keep a copy of both somewhere safe.** Android only
+installs an update over an app signed with the same key. Lose the key, and every student has
+to uninstall and reinstall.
+
+1. Raise `version:` in `app/pubspec.yaml`, for example `1.0.1+2`. The number after `+` must
+   go up every release.
+2. Build it (ARM only, which covers every phone) and try it on the test phone:
+
+   ```powershell
+   .\tools\phone.ps1 release
+   ```
+
+3. Publish it on GitHub so students get one download link (the copy in `tools/out` gives the
+   download a readable name and stays out of git):
+
+   ```powershell
+   Copy-Item app\build\app\outputs\flutter-apk\app-release.apk tools\out\core-academy-1.0.1.apk
+   gh release create v1.0.1 tools\out\core-academy-1.0.1.apk --title "Core Academy 1.0.1" --notes "What changed"
+   ```
+
+The launcher icon comes from `design/icon/icon.html`; run `.\tools\make-icon.ps1` after
+changing it.

@@ -194,8 +194,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             }, 'Password changed.')),
         const SectionRule('AI paper reader', padding: rule),
         FactList([('Pages read today', '${ai['calls_today']}'), ('Failed today', '${ai['failed_today']}')]),
-        SectionRule('Sample data', padding: rule, alert: false, count: hasSample ? null : 0),
+        // Only the dev branch has sample data; the live app never shows this section.
         if (hasSample) ...[
+          const SectionRule('Sample data', padding: rule),
           FactList([
             ('Sample students', '${sample['users']}'),
             ('Sample questions', '${sample['questions']}'),
@@ -215,8 +216,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _load();
             }
           }),
-        ] else
-          Text('No sample data left. Everything here is your own.', style: bodyStyle.copyWith(color: muted)),
+        ],
         const SizedBox(height: 34),
         SecondaryButton('Log out', icon: Ph.signOut, tint: danger, onTap: () async {
           final ok = await confirmCard(context, title: 'Log out?', body: 'You will need your username and password to log back in.', confirm: 'Log out', destructive: true);

@@ -1,11 +1,12 @@
 # Helpers for building, installing and screenshotting the app on the test phone over adb.
 # Usage examples:
-#   .\tools\phone.ps1 build                 # debug APK (arm64) and install
-#   .\tools\phone.ps1 launch
+#   .\tools\phone.ps1 build                 # test build (Core Academy Dev, dev API), arm64, and install
+#   .\tools\phone.ps1 release               # signed live build (Core Academy, live API) and install
+#   .\tools\phone.ps1 launch [-Live]        # -Live drives the live app instead of the test build
 #   .\tools\phone.ps1 shot login-light      # saves design/screenshots/app/login-light.png
 #   .\tools\phone.ps1 tap 210 600           # in dp (density 3 on the A024)
 #   .\tools\phone.ps1 text "harini.v"
-param([Parameter(Position = 0)][string]$Cmd, [Parameter(Position = 1)][string]$A, [Parameter(Position = 2)][string]$B, [string]$ApiBase)
+param([Parameter(Position = 0)][string]$Cmd, [Parameter(Position = 1)][string]$A, [Parameter(Position = 2)][string]$B, [string]$ApiBase, [switch]$Live)
 
 $sdk = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { Join-Path $env:USERPROFILE 'Android\Sdk' }
 $adb = Join-Path $sdk 'platform-tools\adb.exe'
@@ -20,15 +21,16 @@ if (-not $serial) {
   $serial = $phones[0]
 }
 $root = Split-Path $PSScriptRoot -Parent
-$pkg = 'com.coreacademy.core_academy'
+$pkg = if ($Live) { 'com.coreacademy.core_academy' } else { 'com.coreacademy.core_academy.dev' }
+$activity = 'com.coreacademy.core_academy.MainActivity'
 $scale = 3.0
 
 function Adb { & $adb -s $serial @args }
 
-# Input only ever goes to Core Academy: refuse when another app is in front.
+# Input only ever goes to Core Academy (live or test build): refuse when another app is in front.
 function Assert-Ours {
   $top = Adb shell dumpsys activity activities | Select-String -Pattern 'topResumedActivity' | Select-Object -First 1
-  if ("$top" -notmatch [regex]::Escape($pkg)) { "REFUSED: Core Academy is not in front"; exit 2 }
+  if ("$top" -notmatch 'com\.coreacademy\.core_academy(\.dev)?/') { "REFUSED: Core Academy is not in front"; exit 2 }
 }
 if ($Cmd -in @('tap', 'swipe', 'text', 'key', 'back')) { Assert-Ours }
 
@@ -42,7 +44,15 @@ switch ($Cmd) {
       Adb install -r 'build\app\outputs\flutter-apk\app-debug.apk'
     } finally { Pop-Location }
   }
-  'launch' { Adb shell am force-stop $pkg; Adb shell am start -n "$pkg/.MainActivity" | Out-Null; 'launched' }
+  'release' {
+    # Needs app/android/key.properties and the keystore it names. ARM only: that is every phone.
+    Push-Location (Join-Path $root 'app')
+    try {
+      & C:\src\flutter\bin\flutter.bat build apk --release --target-platform android-arm,android-arm64 2>&1 | Select-Object -Last 3
+      Adb install -r 'build\app\outputs\flutter-apk\app-release.apk'
+    } finally { Pop-Location }
+  }
+  'launch' { Adb shell am force-stop $pkg; Adb shell am start -n "$pkg/$activity" | Out-Null; 'launched' }
   'stop' { Adb shell am force-stop $pkg }
   'clear' { Adb shell pm clear $pkg }
   'shot' {
@@ -59,5 +69,5 @@ switch ($Cmd) {
   'text' { Adb shell input text ($A -replace ' ', '%s') }
   'key' { Adb shell input keyevent $A }
   'back' { Adb shell input keyevent 4 }
-  default { 'commands: build, launch, stop, clear, shot <name>, tap <x> <y>, swipe x1,y1,x2,y2, text <s>, key <code>, back' }
+  default { 'commands: build, release, launch, stop, clear, shot <name>, tap <x> <y>, swipe x1,y1,x2,y2, text <s>, key <code>, back (-Live: the live app)' }
 }
