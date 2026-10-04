@@ -1,7 +1,7 @@
 name: core_academy
 description: "Core Academy: MCQ tests for a maths tuition, with teacher-managed logins."
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.1.0+2
 
 environment:
   sdk: ^3.13.2
