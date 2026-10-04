@@ -146,6 +146,13 @@ only exists after the first deploy. `create-teacher.ts` writes the teacher login
 Then upload the Groq keys with `tools/upload-groq-keys.ps1 -Branch main`, and change the
 teacher password from the generated one in the app (Settings → Password).
 
+The app only accepts teacher passwords of 8 or more characters. To set any other password, or
+to reset a forgotten one, run this in a terminal and type the password at the hidden prompt:
+
+```bash
+node tools/set-teacher-password.ts --env .env.main
+```
+
 ## Releasing the app
 
 Release builds talk to the live API (`main`); debug builds talk to dev. A release is signed
