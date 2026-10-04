@@ -1,6 +1,7 @@
 // Soft Structuralism token layer — copied verbatim from the design guide §6
 // by tools/extract-tokens.mjs. Only the accent was renamed to its purpose.
 // Do not retype values here; change the guide and re-run the script.
+// ignore_for_file: unused_local_variable
 
 import 'package:flutter/material.dart';
 

@@ -28,7 +28,8 @@ dart = replaceOnce(dart,
 writeFileSync('app/lib/theme.dart',
   '// Soft Structuralism token layer — copied verbatim from the design guide §6\n' +
   '// by tools/extract-tokens.mjs. Only the accent was renamed to its purpose.\n' +
-  '// Do not retype values here; change the guide and re-run the script.\n\n' + dart);
+  '// Do not retype values here; change the guide and re-run the script.\n' +
+  '// ignore_for_file: unused_local_variable\n\n' + dart);
 
 // ---- CSS (§7)
 let css = block('## 7. CSS implementation', 'css');

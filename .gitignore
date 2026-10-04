@@ -41,6 +41,10 @@ local.properties
 tools/out/
 design/screenshots/*.tmp.png
 
+# Screenshots from the test phone carry its status bar and notifications; they stay local
+design/screenshots/app/
+design/screenshots/sheet-*.png
+
 # OS
 Thumbs.db
 .DS_Store

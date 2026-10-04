@@ -37,7 +37,8 @@ async function api(method: string, path: string, token?: string, body?: unknown)
 }
 
 const T = (await api('POST', '/auth/login', undefined, { username: logins.teacher.username, secret: logins.teacher.password })).body.token;
-const created = await api('POST', '/teacher/papers', T, { class_level: 10, exam_name: 'AI test paper', pages: 2 });
+const examName = args.includes('--name') ? args[args.indexOf('--name') + 1] : 'AI test paper';
+const created = await api('POST', '/teacher/papers', T, { class_level: 10, exam_name: examName, pages: 2 });
 if (created.status !== 201) throw new Error(`create paper: ${JSON.stringify(created.body)}`);
 const paperId = created.body.paper.id;
 

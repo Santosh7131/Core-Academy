@@ -11,6 +11,7 @@ function value(opt: string): number | null {
     .replace(/\^\\circ/g, '')
     .replace(/\^[23]/g, '')
     .replace(/^x\s*=\s*/, '')
+    .replace(/\s*cm[²³]?$/, '') // plain units: "28 cm²"
     .trim();
   const frac = s.match(/^(-?)\\t?frac\{(\d+(?:\.\d+)?)\}\{(\d+(?:\.\d+)?)\}$/);
   if (frac) return ((frac[1] ? -1 : 1) * Number(frac[2])) / Number(frac[3]);

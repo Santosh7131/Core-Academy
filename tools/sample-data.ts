@@ -60,7 +60,7 @@ export const questions: Record<number, SampleQuestion[]> = {
     {
       chapter: 'Perimeter and Area',
       text: 'What is the perimeter of a rectangle of length 8 cm and breadth 5 cm?',
-      options: ['$13\\ \\text{cm}$', '$40\\ \\text{cm}$', '$26\\ \\text{cm}$', '$21\\ \\text{cm}$'],
+      options: ['13 cm', '40 cm', '26 cm', '21 cm'],
       correct: 2,
       solution: 'Perimeter $= 2 \\times (8 + 5) = 26$ cm.',
       expect: 2 * (8 + 5),
@@ -68,7 +68,7 @@ export const questions: Record<number, SampleQuestion[]> = {
     {
       chapter: 'Perimeter and Area',
       text: 'What is the area of a square of side 7 cm?',
-      options: ['$28\\ \\text{cm}^2$', '$49\\ \\text{cm}^2$', '$14\\ \\text{cm}^2$', '$21\\ \\text{cm}^2$'],
+      options: ['28 cm²', '49 cm²', '14 cm²', '21 cm²'],
       correct: 1,
       solution: 'Area $= 7 \\times 7 = 49\\ \\text{cm}^2$.',
       expect: 7 * 7,
@@ -160,7 +160,7 @@ export const questions: Record<number, SampleQuestion[]> = {
     {
       chapter: 'Mensuration',
       text: 'A trapezium has parallel sides of 10 cm and 6 cm, and the distance between them is 4 cm. What is its area?',
-      options: ['$64\\ \\text{cm}^2$', '$32\\ \\text{cm}^2$', '$240\\ \\text{cm}^2$', '$20\\ \\text{cm}^2$'],
+      options: ['64 cm²', '32 cm²', '240 cm²', '20 cm²'],
       correct: 1,
       solution: 'Area $= \\frac{1}{2} \\times (10 + 6) \\times 4 = 32\\ \\text{cm}^2$.',
       expect: 0.5 * (10 + 6) * 4,
@@ -168,7 +168,7 @@ export const questions: Record<number, SampleQuestion[]> = {
     {
       chapter: 'Mensuration',
       text: 'What is the volume of a cube of edge 5 cm?',
-      options: ['$25\\ \\text{cm}^3$', '$75\\ \\text{cm}^3$', '$150\\ \\text{cm}^3$', '$125\\ \\text{cm}^3$'],
+      options: ['25 cm³', '75 cm³', '150 cm³', '125 cm³'],
       correct: 3,
       solution: 'Volume $= 5^3 = 125\\ \\text{cm}^3$.',
       expect: 5 ** 3,
