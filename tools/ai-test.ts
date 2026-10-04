@@ -1,11 +1,11 @@
 // Runs the AI paper reader on the 2-page sample paper (tools/out/paper/page1.jpg, page2.jpg)
 // through the real API and scores the drafts against what is actually printed.
-// Usage: node tools/ai-test.ts [--base https://... | http://127.0.0.1:PORT] [--keep]
+// Usage: node tools/ai-test.ts [--env .env.local] [--base https://... | http://127.0.0.1:PORT] [--keep]
 import { readFileSync } from 'node:fs';
 import pg from 'pg';
 
-process.loadEnvFile('.env.local');
 const args = process.argv.slice(2);
+process.loadEnvFile(args.includes('--env') ? args[args.indexOf('--env') + 1] : '.env.local');
 const BASE = (args.includes('--base') ? args[args.indexOf('--base') + 1] : process.env.NEON_FUNCTION_API_BASE_URL ?? '').replace(/\/$/, '');
 const logins = JSON.parse(readFileSync(`tools/out/sample-logins.${process.env.NEON_BRANCH}.json`, 'utf8'));
 

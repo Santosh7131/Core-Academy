@@ -31,11 +31,12 @@ for (const [cls, list] of Object.entries(questions)) {
     if (!chapters[Number(cls)].includes(qq.chapter)) fail(`unknown chapter ${qq.chapter}`);
     if (new Set(qq.options).size !== 4) fail('options are not 4 distinct values');
     if (typeof qq.expect === 'number') {
+      const expect = qq.expect;
       const vals = qq.options.map(value);
       const v = vals[qq.correct];
       if (v === null) fail(`correct option "${qq.options[qq.correct]}" is not numeric`);
-      else if (!same(v, qq.expect)) fail(`marked ${v}, expected ${qq.expect}`);
-      vals.forEach((x, k) => { if (k !== qq.correct && x !== null && same(x, qq.expect)) fail(`option ${k} also equals the answer`); });
+      else if (!same(v, expect)) fail(`marked ${v}, expected ${expect}`);
+      vals.forEach((x, k) => { if (k !== qq.correct && x !== null && same(x, expect)) fail(`option ${k} also equals the answer`); });
     } else {
       if (qq.options[qq.correct] !== qq.expect) fail(`marked "${qq.options[qq.correct]}", expected "${qq.expect}"`);
       qq.options.forEach((o, k) => { if (k !== qq.correct && o === qq.expect) fail(`option ${k} also equals the answer`); });

@@ -86,12 +86,23 @@ powershell -ExecutionPolicy Bypass -File tools/upload-groq-keys.ps1 -Branch dev
 Until that has run on a branch, the API there reports `"ai": false` at `/` and the paper
 reader is off.
 
+The live API runs on the `main` branch. Ship an API change or a new migration there too,
+once it works on dev:
+
+```bash
+node tools/migrate.ts --env .env.main
+neon deploy --branch main --no-env-pull
+```
+
+Keep `--no-env-pull`: without it, `neon deploy` writes `main`'s settings over `.env.local`,
+and the scripts that read it would then point at the live database.
+
 ## Checks
 
 | Command | What it proves |
 |---|---|
 | `npm run typecheck` | The API type-checks. |
-| `npm run test:api` | 45 end-to-end checks of the marking rules against the deployed dev API. It creates its own students and tests, then removes them. |
+| `npm run test:api` | 45 end-to-end checks of the marking rules against the deployed dev API (add `-- --env .env.main` for the live one). It creates its own students and tests, then removes them. |
 | `node tools/check-answers.ts` | Every sample question's marked answer is right, and no other option equals it. |
 | `node tools/ai-test.ts` | How accurately the AI reads the 2-page sample paper (render it first with `tools/make-sample-paper.ps1`). |
 | `flutter analyze` and `flutter test` (in `app/`) | The app's lints and unit tests. |
@@ -108,25 +119,30 @@ To view the comps, run `python -m http.server 8777 --bind 127.0.0.1 --directory 
 
 ## Secrets
 
-These are git-ignored and must never be committed: `.env.local`, `api/.env.secrets`,
-`tools/out/` (sample logins), and any keystore. The Groq keys live only in
+These are git-ignored and must never be committed: `.env.local`, `.env.main`,
+`api/.env.secrets`, `tools/out/` (logins), and any keystore. The Groq keys live only in
 `api/.env.secrets` and on the deployed function, never in the app.
 
 ## Going live
 
-1. Set up the `main` branch. The seed is what creates the teacher login, so it runs here
-   too; it rewrites `tools/out/sample-logins.md` with `main`'s logins.
+The `main` branch holds the live data. It never gets sample data: it starts with just the
+teacher login and the first school. This is how it was set up:
 
-   ```bash
-   neon env pull --branch main --file .env.main
-   node tools/migrate.ts --env .env.main
-   node tools/seed.ts --env .env.main --allow-main
-   neon checkout main
-   npm run deploy
-   ```
+```bash
+neon env pull --branch main --file .env.main -s postgres
+node tools/migrate.ts --env .env.main
+node tools/create-teacher.ts --env .env.main
+neon deploy --branch main --no-env-pull
+neon env pull --branch main --file .env.main
+node tools/api-test.ts --env .env.main
+```
 
-   Then upload the Groq keys with `-Branch main`, and run `neon checkout dev` to go back.
+The first pull takes only the database settings, because the bucket the full pull expects
+only exists after the first deploy. `create-teacher.ts` writes the teacher login to
+`tools/out/logins.main.md`.
+
+Still to do:
+
+1. Upload the Groq keys to `main`: `tools/upload-groq-keys.ps1 -Branch main`.
 2. Build a signed release APK that points at the `main` API.
-3. In the app, delete the sample data (Settings → Delete all sample data). The teacher login
-   and the school stay.
-4. Change the teacher password from the seeded one.
+3. Change the teacher password from the generated one (Settings → Password).

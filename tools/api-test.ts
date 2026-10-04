@@ -1,14 +1,15 @@
 // End-to-end checks of the marking rules against a running API (the deployed dev branch by default).
 // Creates its own students, questions and tests, then removes them.
-// Usage: node tools/api-test.ts [--base https://...] [--skip-wait]
+// Usage: node tools/api-test.ts [--env .env.local] [--base https://...] [--skip-wait]
 import { randomInt } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import pg from 'pg';
 
-process.loadEnvFile('.env.local');
 const args = process.argv.slice(2);
+const envFile = args.includes('--env') ? args[args.indexOf('--env') + 1] : '.env.local';
+process.loadEnvFile(envFile);
 const BASE = (args.includes('--base') ? args[args.indexOf('--base') + 1] : process.env.NEON_FUNCTION_API_BASE_URL ?? '').replace(/\/$/, '');
-if (!BASE) throw new Error('No API base URL (pass --base or set NEON_FUNCTION_API_BASE_URL in .env.local).');
+if (!BASE) throw new Error(`No API base URL (pass --base or set NEON_FUNCTION_API_BASE_URL in ${envFile}).`);
 const logins = JSON.parse(readFileSync(`tools/out/sample-logins.${process.env.NEON_BRANCH}.json`, 'utf8'));
 
 let pass = 0;
