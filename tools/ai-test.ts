@@ -92,3 +92,5 @@ if (!args.includes('--keep')) {
   await api('DELETE', `/teacher/papers/${paperId}`, T);
   console.log('test paper removed');
 }
+// Leave no teacher session behind, which matters on the live branch.
+await api('POST', '/auth/logout', T);
