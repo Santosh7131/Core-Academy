@@ -9,11 +9,20 @@ function value(opt: string): number | null {
     .replace(/\$/g, '')
     .replace(/\\ /g, ' ')
     .replace(/\\text\{[^}]*\}/g, '')
-    .replace(/\^\\circ/g, '')
-    .replace(/\s*(cm|m)[²³]?$/, '')
+    .replace(/\^\\circ|°[CF]?/g, '')
+    .replace(/−/g, '-')
+    .replace(/^₹\s*/, '')
+    .replace(/(\d),(?=\d)/g, '$1') // 1,200 and the Indian 1,00,000
+    .replace(/\s*(sq units|units|cm|mm|km|m|kg|g|mL|L|kWh|km\/h|hours|h|days|years|%|varṇa)?\s*(\^\{?[23]\}?|[²³])?$/, '')
     .trim();
   const frac = s.match(/^(-?)\\t?frac\{(\d+(?:\.\d+)?)\}\{(\d+(?:\.\d+)?)\}$/);
   if (frac) return ((frac[1] ? -1 : 1) * Number(frac[2])) / Number(frac[3]);
+  // 5\sqrt{2}, -\sqrt{3}, 2\pi
+  const root = s.match(/^(-?\d*(?:\.\d+)?)\\sqrt\{(\d+(?:\.\d+)?)\}$/);
+  const pi = s.match(/^(-?\d*(?:\.\d+)?)\\pi$/);
+  const coef = (k: string) => (k === '' ? 1 : k === '-' ? -1 : Number(k));
+  if (root) return coef(root[1]) * Math.sqrt(Number(root[2]));
+  if (pi) return coef(pi[1]) * Math.PI;
   if (/^-?\d+(\.\d+)?$/.test(s)) return Number(s);
   return null;
 }

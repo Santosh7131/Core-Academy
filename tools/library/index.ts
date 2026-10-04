@@ -1,10 +1,14 @@
 // All ready-made question books, and the order their options are stored in.
 import { createHash } from 'node:crypto';
+import { book as c7Maths } from './c7-maths.ts';
+import { book as c8Maths } from './c8-maths.ts';
+import { book as c9Maths } from './c9-maths.ts';
+import { book as c9Science } from './c9-science.ts';
 import { book as c10Maths } from './c10-maths.ts';
 import { book as c10Science } from './c10-science.ts';
 import type { LibraryBook, LibraryQuestion } from './types.ts';
 
-export const books: LibraryBook[] = [c10Maths, c10Science];
+export const books: LibraryBook[] = [c7Maths, c8Maths, c9Maths, c9Science, c10Maths, c10Science];
 
 /**
  * The questions are written with the right answer first. Before they are stored, each one's

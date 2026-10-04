@@ -37,8 +37,10 @@ before subjects existed, count as Maths.
 ## Ready-made questions
 
 `tools/library/` holds original chapter-wise MCQs, with worked solutions, written for the
-NCERT 2026-27 books (nothing is copied from a paper or a book). Every answer is proved before
-it can be imported:
+NCERT 2026-27 books (nothing is copied from a paper or a book): ten per chapter for Class 7
+Maths (Ganita Prakash, 15 chapters), Class 8 Maths (Ganita Prakash, 14), Class 9 Maths
+(Ganita Manjari, 14) and Science (Exploration, 13), and Class 10 Maths (14) and Science (13).
+That is 830 questions. Every answer is proved before it can be imported:
 
 ```bash
 node tools/check-library.ts
