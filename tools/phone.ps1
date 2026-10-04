@@ -27,12 +27,14 @@ $scale = 3.0
 
 function Adb { & $adb -s $serial @args }
 
-# Input only ever goes to Core Academy (live or test build): refuse when another app is in front.
-function Assert-Ours {
+# Input and screenshots only ever touch Core Academy (live or test build): the phone is Santosh's
+# own, so refuse when another app is in front.
+function Test-Ours {
   $top = Adb shell dumpsys activity activities | Select-String -Pattern 'topResumedActivity' | Select-Object -First 1
-  if ("$top" -notmatch 'com\.coreacademy\.core_academy(\.dev)?/') { "REFUSED: Core Academy is not in front"; exit 2 }
+  "$top" -match 'com\.coreacademy\.core_academy(\.dev)?/'
 }
-if ($Cmd -in @('tap', 'swipe', 'text', 'key', 'back')) { Assert-Ours }
+function Assert-Ours { if (-not (Test-Ours)) { "REFUSED: Core Academy is not in front"; exit 2 } }
+if ($Cmd -in @('tap', 'swipe', 'text', 'key', 'back', 'shot')) { Assert-Ours }
 
 switch ($Cmd) {
   'build' {
@@ -60,6 +62,8 @@ switch ($Cmd) {
     New-Item -ItemType Directory -Force $dir | Out-Null
     $file = Join-Path $dir "$A.png"
     Adb shell screencap -p /sdcard/ca-shot.png
+    # Another app may have come to the front during the capture: then the picture is not ours to keep.
+    if (-not (Test-Ours)) { Adb shell rm /sdcard/ca-shot.png; "DISCARDED: another app came to the front"; exit 2 }
     Adb pull /sdcard/ca-shot.png $file | Out-Null
     Adb shell rm /sdcard/ca-shot.png
     $file
