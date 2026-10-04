@@ -21,6 +21,9 @@
   .fig { margin: 14px 0 6px 60px; }
   .foot { position: absolute; bottom: 60px; left: 0; right: 0; text-align: center; font-size: 24px; }
   .page { position: relative; }
+  /* ?page=all prints both pages as an A4 PDF: 1240 px pages scaled to 210 mm, one per sheet. */
+  @page { size: A4; margin: 0; }
+  @media print { .page.on { zoom: 0.6398; } .page.on + .page.on { break-before: page; } }
 </style>
 </head>
 <body>
@@ -64,7 +67,7 @@
 </div>
 <script>
   var n = new URLSearchParams(location.search).get('page') || '1';
-  document.getElementById('p' + n).classList.add('on');
+  document.querySelectorAll(n === 'all' ? '.page' : '#p' + n).forEach(function (p) { p.classList.add('on'); });
   document.querySelectorAll('.m').forEach(function (el) { katex.render(el.textContent, el, { throwOnError: false }); });
 </script>
 </body>
