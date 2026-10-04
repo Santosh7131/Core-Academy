@@ -8,20 +8,24 @@ import { pool, q, q1, tx } from '../lib/db.ts';
 import { bad, bool, date, HttpError, int, notFound, str, uuid, uuidOpt } from '../lib/http.ts';
 import { mustKeepOrder } from '../lib/questions.ts';
 import { deleteObjects, maybeViewUrl, uploadUrl } from '../lib/storage.ts';
+import { MATHS, STUDENT_SUBJECTS, subjectIds } from '../lib/subjects.ts';
 import { readBody } from './body.ts';
 
 // Mounted behind requireUser('teacher') in index.ts.
 export const teacherRoutes = new Hono<AppEnv>();
 
-// Students each test is given to: the whole class, or the chosen students.
+// Students each test is given to: the whole class, the class's group for the test's subject,
+// or the chosen students.
 const ASSIGNED_CTE = `assigned as (
   select t.id as test_id, u.id as student_id
     from tests t join users u on u.role = 'student' and u.active and u.class_level = t.class_level
-   where t.status = 'published' and t.assign_all
+   where t.status = 'published'
+     and (t.assign_all or t.assign_group and exists (
+           select 1 from student_subjects ss where ss.student_id = u.id and ss.subject_id = t.subject_id))
   union
   select t.id, ts.student_id
     from tests t join test_students ts on ts.test_id = t.id join users u on u.id = ts.student_id and u.active
-   where t.status = 'published' and not t.assign_all
+   where t.status = 'published' and not t.assign_all and not t.assign_group
 )`;
 
 const pct = (score: number | null, max: number | null) => (score == null || !max ? null : score / max);
@@ -100,17 +104,27 @@ teacherRoutes.get('/dashboard', async (c) => {
 
 teacherRoutes.get('/students', async (c) => {
   const cls = c.req.query('class');
+  const subject = c.req.query('subject');
   const rows = await q(
     `select u.id, u.display_name, u.username, u.class_level, u.school_id, s.name as school, u.active, u.last_seen_at,
             (select avg(score / nullif(max_score, 0)) from attempts a where a.student_id = u.id and a.submitted_at is not null) as avg_pct,
-            (select count(*) from attempts a where a.student_id = u.id and a.submitted_at is not null) as tests_done
+            (select count(*) from attempts a where a.student_id = u.id and a.submitted_at is not null) as tests_done,
+            ${STUDENT_SUBJECTS}
        from users u left join schools s on s.id = u.school_id
       where u.role = 'student' and ($1::smallint is null or u.class_level = $1)
+        and ($2::uuid is null or exists (select 1 from student_subjects ss where ss.student_id = u.id and ss.subject_id = $2))
       order by u.active desc, u.class_level, u.display_name`,
-    [cls ? Number(cls) : null],
+    [cls ? Number(cls) : null, subject ? uuid(subject, 'subject') : null],
   );
   return c.json({ students: rows });
 });
+
+async function setStudentSubjects(cx: any, studentId: string, ids: string[]) {
+  await cx.query('delete from student_subjects where student_id = $1', [studentId]);
+  if (ids.length) {
+    await cx.query('insert into student_subjects (student_id, subject_id) select $1, unnest($2::uuid[])', [studentId, ids]);
+  }
+}
 
 teacherRoutes.post('/students', async (c) => {
   const b = await readBody(c);
@@ -118,17 +132,25 @@ teacherRoutes.post('/students', async (c) => {
   const classLevel = int(b, 'class_level', { min: 6, max: 12 })!;
   const schoolId = uuidOpt(b.school_id, 'school');
   const username = checkUsername(b.username);
+  // The app before subjects sends none: its students study maths.
+  const subjects = 'subject_ids' in b ? subjectIds(b.subject_ids) : [MATHS];
   const pin = b.pin === undefined || b.pin === null || b.pin === '' ? newPin() : checkPin(b.pin);
   const { hash, salt } = await hashSecret(pin);
   try {
-    const u = await q1(
-      `insert into users (role, username, display_name, class_level, school_id, secret_hash, secret_salt)
-       values ('student', $1, $2, $3, $4, $5, $6) returning id, username, display_name, class_level, school_id`,
-      [username, displayName, classLevel, schoolId, hash, salt],
-    );
+    const u = await tx(async (cx) => {
+      const row = await q1(
+        `insert into users (role, username, display_name, class_level, school_id, secret_hash, secret_salt)
+         values ('student', $1, $2, $3, $4, $5, $6) returning id, username, display_name, class_level, school_id`,
+        [username, displayName, classLevel, schoolId, hash, salt],
+        cx,
+      );
+      await setStudentSubjects(cx, row.id, subjects);
+      return row;
+    });
     return c.json({ student: u, login: { username, pin } }, 201);
   } catch (e: any) {
     if (e.code === '23505') throw new HttpError(409, 'username_taken', `The username ${username} is already taken.`);
+    if (e.code === '23503') throw bad('One of those subjects no longer exists.');
     throw e;
   }
 });
@@ -137,7 +159,8 @@ teacherRoutes.get('/students/:id', async (c) => {
   const id = uuid(c.req.param('id'), 'student id');
   await q('select finalize_expired_attempts()');
   const s = await q1(
-    `select u.id, u.display_name, u.username, u.class_level, u.school_id, sc.name as school, u.active, u.last_seen_at, u.created_at
+    `select u.id, u.display_name, u.username, u.class_level, u.school_id, sc.name as school, u.active, u.last_seen_at, u.created_at,
+            ${STUDENT_SUBJECTS}
        from users u left join schools sc on sc.id = u.school_id where u.id = $1 and u.role = 'student'`,
     [id],
   );
@@ -173,14 +196,20 @@ teacherRoutes.get('/students/:id', async (c) => {
 teacherRoutes.patch('/students/:id', async (c) => {
   const id = uuid(c.req.param('id'), 'student id');
   const b = await readBody(c);
-  const u = await q1(
-    `update users set display_name = coalesce($2, display_name),
-                      class_level = coalesce($3, class_level),
-                      school_id = case when $5 then $4::uuid else school_id end
-      where id = $1 and role = 'student' returning id, display_name, class_level, school_id`,
-    [id, str(b, 'display_name', { max: 60, optional: true }) ?? null, int(b, 'class_level', { min: 6, max: 12, optional: true }) ?? null,
-      uuidOpt(b.school_id, 'school'), 'school_id' in b],
-  );
+  const subjects = 'subject_ids' in b ? subjectIds(b.subject_ids) : null;
+  const u = await tx(async (cx) => {
+    const row = await q1(
+      `update users set display_name = coalesce($2, display_name),
+                        class_level = coalesce($3, class_level),
+                        school_id = case when $5 then $4::uuid else school_id end
+        where id = $1 and role = 'student' returning id, display_name, class_level, school_id`,
+      [id, str(b, 'display_name', { max: 60, optional: true }) ?? null, int(b, 'class_level', { min: 6, max: 12, optional: true }) ?? null,
+        uuidOpt(b.school_id, 'school'), 'school_id' in b],
+      cx,
+    );
+    if (row && subjects) await setStudentSubjects(cx, id, subjects);
+    return row;
+  });
   if (!u) throw notFound('This student');
   return c.json({ student: u });
 });
@@ -241,14 +270,84 @@ teacherRoutes.delete('/schools/:id', async (c) => {
   return c.json({ ok: true });
 });
 
+// ---------------------------------------------------------------- subjects and groups
+
+teacherRoutes.get('/subjects', async (c) => {
+  const rows = await q(
+    `select sj.id, sj.name, sj.sort_order, sj.id = $1 as is_default,
+            (select count(*) from student_subjects ss join users u on u.id = ss.student_id
+              where ss.subject_id = sj.id and u.active) as students,
+            (select count(*) from chapters ch where ch.subject_id = sj.id) as chapters,
+            (select count(*) from questions qq where qq.subject_id = sj.id) as questions,
+            (select count(*) from tests t where t.subject_id = sj.id) as tests
+       from subjects sj order by sj.sort_order, sj.name`,
+    [MATHS],
+  );
+  return c.json({ subjects: rows });
+});
+
+teacherRoutes.post('/subjects', async (c) => {
+  const name = str(await readBody(c), 'name', { max: 40 })!;
+  try {
+    const sj = await q1(
+      `insert into subjects (name, sort_order) values ($1, coalesce((select max(sort_order) + 1 from subjects), 0))
+       returning id, name, sort_order`,
+      [name],
+    );
+    return c.json({ subject: sj }, 201);
+  } catch (e: any) {
+    if (e.code === '23505') throw new HttpError(409, 'duplicate', `${name} is already a subject.`);
+    throw e;
+  }
+});
+
+teacherRoutes.patch('/subjects/:id', async (c) => {
+  const name = str(await readBody(c), 'name', { max: 40 })!;
+  try {
+    const sj = await q1('update subjects set name = $2 where id = $1 returning id, name, sort_order', [uuid(c.req.param('id')), name]);
+    if (!sj) throw notFound('This subject');
+    return c.json({ subject: sj });
+  } catch (e: any) {
+    if (e.code === '23505') throw new HttpError(409, 'duplicate', `${name} is already a subject.`);
+    throw e;
+  }
+});
+
+teacherRoutes.delete('/subjects/:id', async (c) => {
+  const id = uuid(c.req.param('id'));
+  if (id === MATHS) throw new HttpError(409, 'default_subject', 'Maths is the main subject, so it stays.');
+  const used = await q1(
+    `select (select count(*) from chapters where subject_id = $1) + (select count(*) from questions where subject_id = $1)
+          + (select count(*) from tests where subject_id = $1) + (select count(*) from papers where subject_id = $1) as n`,
+    [id],
+  );
+  if (used.n > 0) throw new HttpError(409, 'in_use', 'This subject has chapters, questions, papers or tests. Delete those first.');
+  await pool.query('delete from subjects where id = $1', [id]);
+  return c.json({ ok: true });
+});
+
+/** Groups that have students: one per class and subject, e.g. "10th Science". */
+teacherRoutes.get('/groups', async (c) => {
+  const rows = await q(
+    `select u.class_level, sj.id as subject_id, sj.name as subject, count(*) as students
+       from student_subjects ss join users u on u.id = ss.student_id and u.role = 'student' and u.active
+       join subjects sj on sj.id = ss.subject_id
+      group by u.class_level, sj.id, sj.name, sj.sort_order
+      order by u.class_level, sj.sort_order, sj.name`,
+  );
+  return c.json({ groups: rows });
+});
+
 teacherRoutes.get('/chapters', async (c) => {
   const cls = c.req.query('class');
+  const subject = c.req.query('subject');
   const rows = await q(
-    `select ch.id, ch.class_level, ch.name, ch.sort_order,
+    `select ch.id, ch.class_level, ch.subject_id, ch.name, ch.sort_order,
             (select count(*) from questions qq where qq.chapter_id = ch.id) as questions
-       from chapters ch where ($1::smallint is null or ch.class_level = $1)
+       from chapters ch
+      where ($1::smallint is null or ch.class_level = $1) and ($2::uuid is null or ch.subject_id = $2)
       order by ch.class_level, ch.sort_order, ch.name`,
-    [cls ? Number(cls) : null],
+    [cls ? Number(cls) : null, subject ? uuid(subject, 'subject') : null],
   );
   return c.json({ chapters: rows });
 });
@@ -257,16 +356,18 @@ teacherRoutes.post('/chapters', async (c) => {
   const b = await readBody(c);
   const cls = int(b, 'class_level', { min: 6, max: 12 })!;
   const name = str(b, 'name', { max: 80 })!;
+  const subject = uuidOpt(b.subject_id, 'subject') ?? MATHS;
   try {
     const ch = await q1(
-      `insert into chapters (class_level, name, sort_order)
-       values ($1, $2, coalesce((select max(sort_order) + 1 from chapters where class_level = $1), 0))
-       returning id, class_level, name, sort_order`,
-      [cls, name],
+      `insert into chapters (class_level, subject_id, name, sort_order)
+       values ($1, $2, $3, coalesce((select max(sort_order) + 1 from chapters where class_level = $1 and subject_id = $2), 0))
+       returning id, class_level, subject_id, name, sort_order`,
+      [cls, subject, name],
     );
     return c.json({ chapter: ch }, 201);
   } catch (e: any) {
-    if (e.code === '23505') throw new HttpError(409, 'duplicate', `Class ${cls} already has a chapter called ${name}.`);
+    if (e.code === '23505') throw new HttpError(409, 'duplicate', `This subject already has a Class ${cls} chapter called ${name}.`);
+    if (e.code === '23503') throw bad('That subject no longer exists.');
     throw e;
   }
 });
@@ -298,6 +399,7 @@ function readQuestion(b: Record<string, any>) {
   return {
     class_level: int(b, 'class_level', { min: 6, max: 12 })!,
     chapter_id: uuidOpt(b.chapter_id, 'chapter'),
+    subject_id: uuidOpt(b.subject_id, 'subject'),
     text: str(b, 'text', { max: 4000 })!,
     options: opts,
     correct_option: int(b, 'correct_option', { min: 0, max: 3 })!,
@@ -308,9 +410,14 @@ function readQuestion(b: Record<string, any>) {
   };
 }
 
-const QUESTION_COLS = `qq.id, qq.class_level, qq.chapter_id, ch.name as chapter, qq.text, qq.options, qq.correct_option,
+const QUESTION_COLS = `qq.id, qq.class_level, qq.chapter_id, ch.name as chapter, qq.subject_id,
+  (select name from subjects where id = qq.subject_id) as subject, qq.text, qq.options, qq.correct_option,
   qq.solution, qq.marks, qq.keep_option_order, qq.image_key, qq.source, qq.paper_id, qq.created_at, qq.updated_at,
   (select count(*) from test_questions tq where tq.question_id = qq.id) as used_in`;
+
+// A question's subject: its chapter's subject, else the one sent, else (on create) Maths.
+const QUESTION_SUBJECT = (chapterParam: string, subjectParam: string, fallback: string) =>
+  `coalesce((select subject_id from chapters where id = ${chapterParam}), ${subjectParam}, ${fallback})`;
 
 async function withImage<T extends { image_key: string | null }>(row: T) {
   return { ...row, image_url: await maybeViewUrl(row.image_key) };
@@ -319,15 +426,17 @@ async function withImage<T extends { image_key: string | null }>(row: T) {
 teacherRoutes.get('/questions', async (c) => {
   const cls = c.req.query('class');
   const chapter = c.req.query('chapter');
+  const subject = c.req.query('subject');
   const search = c.req.query('q');
   const rows = await q(
     `select ${QUESTION_COLS} from questions qq left join chapters ch on ch.id = qq.chapter_id
       where ($1::smallint is null or qq.class_level = $1)
         and ($2::uuid is null or qq.chapter_id = $2)
         and ($3::text is null or qq.text ilike '%' || $3 || '%')
+        and ($4::uuid is null or qq.subject_id = $4)
       order by qq.class_level, ch.sort_order nulls last, qq.created_at desc
       limit 300`,
-    [cls ? Number(cls) : null, chapter ? uuid(chapter, 'chapter') : null, search?.trim() || null],
+    [cls ? Number(cls) : null, chapter ? uuid(chapter, 'chapter') : null, search?.trim() || null, subject ? uuid(subject, 'subject') : null],
   );
   return c.json({ questions: await Promise.all(rows.map(withImage)) });
 });
@@ -345,9 +454,11 @@ teacherRoutes.post('/questions', async (c) => {
   const x = readQuestion(await readBody(c));
   if (!(x.marks > 0 && x.marks <= 100)) throw bad('Marks must be between 0 and 100.');
   const row = await q1(
-    `insert into questions (class_level, chapter_id, text, options, correct_option, solution, marks, keep_option_order, image_key, created_by)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) returning id`,
-    [x.class_level, x.chapter_id, x.text, x.options, x.correct_option, x.solution, x.marks, x.keep_option_order, x.image_key, c.get('user').id],
+    `insert into questions (class_level, chapter_id, text, options, correct_option, solution, marks, keep_option_order, image_key, created_by,
+                            subject_id)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, ${QUESTION_SUBJECT('$2::uuid', '$11::uuid', `'${MATHS}'::uuid`)}) returning id`,
+    [x.class_level, x.chapter_id, x.text, x.options, x.correct_option, x.solution, x.marks, x.keep_option_order, x.image_key, c.get('user').id,
+      x.subject_id],
   );
   return c.json({ id: row.id }, 201);
 });
@@ -356,9 +467,11 @@ teacherRoutes.patch('/questions/:id', async (c) => {
   const x = readQuestion(await readBody(c));
   const row = await q1(
     `update questions set class_level = $2, chapter_id = $3, text = $4, options = $5, correct_option = $6, solution = $7,
-                          marks = $8, keep_option_order = $9, image_key = $10, updated_at = now()
+                          marks = $8, keep_option_order = $9, image_key = $10, updated_at = now(),
+                          subject_id = ${QUESTION_SUBJECT('$3::uuid', '$11::uuid', 'subject_id')}
       where id = $1 returning id`,
-    [uuid(c.req.param('id')), x.class_level, x.chapter_id, x.text, x.options, x.correct_option, x.solution, x.marks, x.keep_option_order, x.image_key],
+    [uuid(c.req.param('id')), x.class_level, x.chapter_id, x.text, x.options, x.correct_option, x.solution, x.marks, x.keep_option_order, x.image_key,
+      x.subject_id],
   );
   if (!row) throw notFound('This question');
   return c.json({ id: row.id });
@@ -388,14 +501,20 @@ function readTest(b: Record<string, any>) {
   const opensAt = date(b, 'opens_at');
   const closesAt = date(b, 'closes_at');
   if (opensAt && closesAt && opensAt >= closesAt) throw bad('The test must close after it opens.');
+  const assignAll = bool(b, 'assign_all', true);
+  // The app before subjects never sends these: null keeps what the test already has.
+  const assignGroup = 'assign_group' in b ? bool(b, 'assign_group', false) : null;
+  if (assignAll && assignGroup) throw bad('A test goes to the whole class or to the group, not both.');
   return {
     title: str(b, 'title', { max: 100 })!,
     class_level: int(b, 'class_level', { min: 6, max: 12 })!,
+    subject_id: uuidOpt(b.subject_id, 'subject'),
     time_limit_min: int(b, 'time_limit_min', { min: 1, max: 300, optional: true }) ?? null,
     opens_at: opensAt,
     closes_at: closesAt,
     shuffle: bool(b, 'shuffle', true),
-    assign_all: bool(b, 'assign_all', true),
+    assign_all: assignAll,
+    assign_group: assignGroup,
     question_ids: [...new Set(ids.map((x: string) => uuid(x, 'question id')))],
     student_ids: [...new Set(students.map((x: string) => uuid(x, 'student id')))],
   };
@@ -409,7 +528,8 @@ async function saveTestChildren(c: any, testId: string, t: ReturnType<typeof rea
     [testId, t.question_ids],
   );
   await c.query('delete from test_students where test_id = $1', [testId]);
-  if (!t.assign_all && t.student_ids.length) {
+  const chosen = await c.query('select not assign_all and not assign_group as chosen from tests where id = $1', [testId]);
+  if (chosen.rows[0]?.chosen && t.student_ids.length) {
     await c.query(`insert into test_students (test_id, student_id) select $1, unnest($2::uuid[])`, [testId, t.student_ids]);
   }
 }
@@ -419,6 +539,7 @@ teacherRoutes.get('/tests', async (c) => {
   const rows = await q(
     `with ${ASSIGNED_CTE}
      select t.id, t.title, t.class_level, t.time_limit_min, t.opens_at, t.closes_at, t.shuffle, t.assign_all, t.status, t.created_at,
+            t.subject_id, (select name from subjects where id = t.subject_id) as subject, t.assign_group,
             (select count(*) from test_questions tq where tq.test_id = t.id) as question_count,
             (select count(*) from assigned a where a.test_id = t.id) as assigned,
             (select count(distinct x.student_id) from attempts x where x.test_id = t.id and x.submitted_at is not null) as submitted,
@@ -434,9 +555,10 @@ teacherRoutes.post('/tests', async (c) => {
   const t = readTest(await readBody(c));
   const id = await tx(async (cx) => {
     const row = await q1(
-      `insert into tests (title, class_level, time_limit_min, opens_at, closes_at, shuffle, assign_all, created_by)
-       values ($1, $2, $3, $4, $5, $6, $7, $8) returning id`,
-      [t.title, t.class_level, t.time_limit_min, t.opens_at, t.closes_at, t.shuffle, t.assign_all, c.get('user').id],
+      `insert into tests (title, class_level, time_limit_min, opens_at, closes_at, shuffle, assign_all, created_by, subject_id, assign_group)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, coalesce($9, '${MATHS}'::uuid), coalesce($10, false)) returning id`,
+      [t.title, t.class_level, t.time_limit_min, t.opens_at, t.closes_at, t.shuffle, t.assign_all, c.get('user').id,
+        t.subject_id, t.assign_group],
       cx,
     );
     await saveTestChildren(cx, row.id, t);
@@ -481,8 +603,10 @@ teacherRoutes.patch('/tests/:id', async (c) => {
     }
     const row = await q1(
       `update tests set title = $2, class_level = $3, time_limit_min = $4, opens_at = $5, closes_at = $6,
-                        shuffle = $7, assign_all = $8 where id = $1 returning id`,
-      [id, t.title, t.class_level, t.time_limit_min, t.opens_at, t.closes_at, t.shuffle, t.assign_all],
+                        shuffle = $7, assign_all = $8, subject_id = coalesce($9, subject_id),
+                        assign_group = case when $8 then false else coalesce($10, assign_group) end
+        where id = $1 returning id`,
+      [id, t.title, t.class_level, t.time_limit_min, t.opens_at, t.closes_at, t.shuffle, t.assign_all, t.subject_id, t.assign_group],
       cx,
     );
     if (!row) throw notFound('This test');
@@ -517,7 +641,12 @@ teacherRoutes.delete('/tests/:id', async (c) => {
 teacherRoutes.get('/tests/:id/results', async (c) => {
   const id = uuid(c.req.param('id'), 'test id');
   await q('select finalize_expired_attempts()');
-  const t = await q1('select id, title, class_level, opens_at, closes_at, time_limit_min, status, now() as now from tests where id = $1', [id]);
+  const t = await q1(
+    `select id, title, class_level, opens_at, closes_at, time_limit_min, status, now() as now, subject_id, assign_group,
+            (select name from subjects where id = tests.subject_id) as subject
+       from tests where id = $1`,
+    [id],
+  );
   if (!t) throw notFound('This test');
   const students = await q(
     `with ${ASSIGNED_CTE}, pool as (

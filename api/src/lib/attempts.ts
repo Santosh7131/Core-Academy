@@ -17,6 +17,8 @@ export function shuffle<T>(items: T[]): T[] {
 
 /** SQL condition: test t is given to student $1 in class $2. */
 export const ASSIGNED = `(t.assign_all and t.class_level = $2
+   or t.assign_group and t.class_level = $2
+      and exists (select 1 from student_subjects ss where ss.student_id = $1 and ss.subject_id = t.subject_id)
    or exists (select 1 from test_students ts where ts.test_id = t.id and ts.student_id = $1))`;
 
 type AttemptRow = {

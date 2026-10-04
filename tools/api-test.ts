@@ -164,6 +164,60 @@ try {
     check('expired attempt was auto-submitted with the saved answer', r.status === 200 && r.body.attempt.auto_submitted === true && r.body.review.some((x: any) => x.chosen !== null), r.body?.attempt);
   }
 
+  // Groups: a class and a subject. A group test reaches only the class's students who study it.
+  const subj = await api('GET', '/teacher/subjects', T);
+  const maths = subj.body?.subjects?.find((x: any) => x.is_default);
+  const science = subj.body?.subjects?.find((x: any) => x.name === 'Science');
+  check('Maths and Science are subjects, Maths the default', maths?.name === 'Maths' && !!science, subj.body);
+  const s3 = await api('POST', '/teacher/students', T, {
+    display_name: 'Test Student Three', class_level: 9, username: `${tag}.three`, pin: '4321', subject_ids: [science.id],
+  });
+  check('a science-only student can be added', s3.status === 201, s3.body);
+  created.users.push(s3.body.student.id);
+  const names = (r: any) => JSON.stringify(r.body?.student?.subjects?.map((x: any) => x.name));
+  const d1 = await api('GET', `/teacher/students/${created.users[0]}`, T);
+  const d3 = await api('GET', `/teacher/students/${s3.body.student.id}`, T);
+  check('students added by the older app study maths', names(d1) === '["Maths"]', d1.body?.student?.subjects);
+  check('the science student studies only science', names(d3) === '["Science"]', d3.body?.student?.subjects);
+
+  const sq = await api('POST', '/teacher/questions', T, {
+    class_level: 9, subject_id: science.id, text: `${tag} Which gas do plants take in for photosynthesis?`,
+    options: ['Oxygen', 'Carbon dioxide', 'Nitrogen', 'Hydrogen'], correct_option: 1,
+  });
+  created.questions.push(sq.body.id);
+  const sqRow = await api('GET', `/teacher/questions/${sq.body.id}`, T);
+  check('a question can be a science question', sq.status === 201 && sqRow.body?.question?.subject === 'Science', sqRow.body?.question);
+  const sciList = await api('GET', `/teacher/questions?class=9&subject=${science.id}&q=${tag}`, T);
+  check('the question bank filters by subject', sciList.body?.questions?.length === 1 && sciList.body.questions[0].id === sq.body.id,
+    sciList.body?.questions?.map((x: any) => x.text));
+
+  const g = await api('POST', '/teacher/tests', T, {
+    title: `${tag} group`, class_level: 9, subject_id: science.id, question_ids: [sq.body.id],
+    assign_all: false, assign_group: true, opens_at: iso(-60_000), closes_at: iso(30 * 60_000),
+  });
+  created.tests.push(g.body.id);
+  const gp = await api('POST', `/teacher/tests/${g.body.id}/publish`, T, { published: true });
+  check('a test can go to the 9th Science group', g.status === 201 && gp.status === 200, [g.body, gp.body]);
+  const S3 = (await login(`${tag}.three`, '4321')).body.token as string;
+  const sees = async (token: string) => ((await api('GET', '/student/home', token)).body?.tests ?? []).some((x: any) => x.id === g.body.id);
+  check('a group member sees the group test', await sees(S3));
+  check('a classmate outside the group does not see it', !(await sees(S1)));
+  check('and cannot start it', (await api('POST', `/student/tests/${g.body.id}/start`, S1)).status === 404);
+  const gr = await api('GET', `/teacher/tests/${g.body.id}/results`, T);
+  check('the group test results list only the group', JSON.stringify(gr.body?.students?.map((x: any) => x.id)) === JSON.stringify([s3.body.student.id]),
+    gr.body?.students?.map((x: any) => x.display_name));
+  const groups = await api('GET', '/teacher/groups', T);
+  check('groups include 9th Science', groups.body?.groups?.some((x: any) => x.class_level === 9 && x.subject === 'Science' && x.students >= 1), groups.body);
+  await api('PATCH', `/teacher/students/${created.users[0]}`, T, { subject_ids: [maths.id, science.id] });
+  check('adding Science to a student brings in the group test', await sees(S1));
+
+  const old = await api('POST', '/teacher/tests', T, { title: `${tag} older app`, class_level: 9, question_ids: [created.questions[0]] });
+  created.tests.push(old.body.id);
+  const oldRow = (await api('GET', `/teacher/tests/${old.body.id}`, T)).body?.test;
+  check('a test from the older app is a whole-class maths test', oldRow?.subject_id === maths.id && oldRow?.assign_all === true && oldRow?.assign_group === false, oldRow);
+  check('a subject in use cannot be deleted', (await api('DELETE', `/teacher/subjects/${science.id}`, T)).status === 409);
+  check('Maths cannot be deleted', (await api('DELETE', `/teacher/subjects/${maths.id}`, T)).status === 409);
+
   // Lockout, PIN reset and deactivation.
   let last = 0;
   for (let i = 0; i < 5; i++) last = (await login(`${tag}.two`, '0000')).status;

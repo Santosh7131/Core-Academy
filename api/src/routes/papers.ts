@@ -5,6 +5,7 @@ import { chat, parseJson, VISION_MODELS } from '../lib/groq.ts';
 import { bad, HttpError, int, notFound, str, uuid, uuidOpt } from '../lib/http.ts';
 import { mustKeepOrder } from '../lib/questions.ts';
 import { deleteObjects, maybeViewUrl, readObject, uploadUrl, viewUrl } from '../lib/storage.ts';
+import { MATHS } from '../lib/subjects.ts';
 import { readBody } from './body.ts';
 
 // Mounted behind requireUser('teacher') in index.ts.
@@ -16,6 +17,7 @@ const pageKey = (paperId: string, pageNo: number) => `papers/${paperId}/p${pageN
 paperRoutes.get('/papers', async (c) => {
   const rows = await q(
     `select p.id, p.class_level, p.exam_name, p.year, p.page_count, p.created_at, s.name as school,
+            p.subject_id, (select name from subjects where id = p.subject_id) as subject,
             (select count(*) from paper_pages pp where pp.paper_id = p.id and pp.ai_status = 'done') as pages_read,
             (select count(*) from paper_drafts d where d.paper_id = p.id and d.status = 'draft' and d.kind = 'mcq') as to_check,
             (select count(*) from paper_drafts d where d.paper_id = p.id and d.status = 'saved') as saved
@@ -31,10 +33,11 @@ paperRoutes.post('/papers', async (c) => {
   const pages = int(b, 'pages', { min: 1, max: MAX_PAGES })!;
   const paper = await tx(async (cx) => {
     const p = await q1(
-      `insert into papers (school_id, class_level, exam_name, year, page_count, uploaded_by)
-       values ($1, $2, $3, $4, $5, $6) returning id, class_level, exam_name, year, page_count`,
+      `insert into papers (school_id, class_level, exam_name, year, page_count, uploaded_by, subject_id)
+       values ($1, $2, $3, $4, $5, $6, $7) returning id, class_level, exam_name, year, page_count, subject_id`,
       [uuidOpt(b.school_id, 'school'), int(b, 'class_level', { min: 6, max: 12 }), str(b, 'exam_name', { max: 80 }),
-        int(b, 'year', { min: 2000, max: 2100, optional: true }) ?? null, pages, c.get('user').id],
+        int(b, 'year', { min: 2000, max: 2100, optional: true }) ?? null, pages, c.get('user').id,
+        uuidOpt(b.subject_id, 'subject') ?? MATHS],
       cx,
     );
     for (let n = 1; n <= pages; n++) {
@@ -60,7 +63,8 @@ paperRoutes.post('/papers/:id/pages/:n/uploaded', async (c) => {
 paperRoutes.get('/papers/:id', async (c) => {
   const id = uuid(c.req.param('id'), 'paper id');
   const p = await q1(
-    `select p.*, s.name as school from papers p left join schools s on s.id = p.school_id where p.id = $1`,
+    `select p.*, s.name as school, (select name from subjects where id = p.subject_id) as subject
+       from papers p left join schools s on s.id = p.school_id where p.id = $1`,
     [id],
   );
   if (!p) throw notFound('This paper');
@@ -70,7 +74,10 @@ paperRoutes.get('/papers/:id', async (c) => {
       where d.paper_id = $1 order by d.page_no, d.seq`,
     [id],
   );
-  const chapters = await q('select id, name from chapters where class_level = $1 order by sort_order, name', [p.class_level]);
+  const chapters = await q(
+    'select id, name from chapters where class_level = $1 and subject_id = $2 order by sort_order, name',
+    [p.class_level, p.subject_id],
+  );
   return c.json({
     paper: p,
     pages: await Promise.all(pages.map(async (pg) => ({ ...pg, image_url: pg.uploaded ? await viewUrl(pg.object_key) : null }))),
@@ -83,12 +90,12 @@ type Extracted = {
   number?: unknown; kind?: unknown; text?: unknown; options?: unknown; needs_diagram?: unknown; chapter_guess?: unknown;
 };
 
-function prompt(classLevel: number, pageNo: number, chapters: string[]) {
-  return `This image is page ${pageNo} of a Class ${classLevel} CBSE mathematics question paper.
+function prompt(classLevel: number, subject: string, pageNo: number, chapters: string[]) {
+  return `This image is page ${pageNo} of a Class ${classLevel} CBSE ${subject} question paper.
 Transcribe every question printed on this page, in order, as JSON:
 {"questions":[{"number":"<question number as printed>","kind":"mcq" or "other","text":"<question text>","options":["<a>","<b>","<c>","<d>"],"needs_diagram":true or false,"chapter_guess":"<chapter>"}]}
 Rules:
-- Copy the wording exactly. Write all maths in LaTeX inside $...$, e.g. $\\frac{3}{4}$, $x^2$, $\\sqrt{2}$, $90^\\circ$.
+- Copy the wording exactly. Write all maths, formulas and chemical equations in LaTeX inside $...$, e.g. $\\frac{3}{4}$, $x^2$, $\\sqrt{2}$, $90^\\circ$, $H_2O$.
 - "mcq" only when exactly four options are printed. Give the option text without its (a)/(A)/(i) label, in printed order. Otherwise use "other" with "options": [].
 - needs_diagram is true when the question depends on a figure, graph or diagram.
 - chapter_guess must be one of: ${chapters.length ? chapters.map((n) => JSON.stringify(n)).join(', ') : '(none listed)'}; use "" if unsure.
@@ -104,12 +111,16 @@ paperRoutes.post('/papers/:id/pages/:n/read', async (c) => {
   const id = uuid(c.req.param('id'), 'paper id');
   const pageNo = Number(c.req.param('n'));
   const page = await q1(
-    `select pp.*, p.class_level from paper_pages pp join papers p on p.id = pp.paper_id where pp.paper_id = $1 and pp.page_no = $2`,
+    `select pp.*, p.class_level, p.subject_id, (select name from subjects where id = p.subject_id) as subject
+       from paper_pages pp join papers p on p.id = pp.paper_id where pp.paper_id = $1 and pp.page_no = $2`,
     [id, pageNo],
   );
   if (!page) throw notFound('This page');
   if (!page.uploaded) throw new HttpError(409, 'not_uploaded', 'This page has not finished uploading.');
-  const chapters = await q<{ id: string; name: string }>('select id, name from chapters where class_level = $1', [page.class_level]);
+  const chapters = await q<{ id: string; name: string }>(
+    'select id, name from chapters where class_level = $1 and subject_id = $2',
+    [page.class_level, page.subject_id],
+  );
 
   await pool.query(`update paper_pages set ai_status = 'reading', ai_error = null where id = $1`, [page.id]);
   let items: Extracted[];
@@ -127,7 +138,7 @@ paperRoutes.post('/papers/:id/pages/:n/read', async (c) => {
         {
           role: 'user',
           content: [
-            { type: 'text', text: prompt(page.class_level, pageNo, chapters.map((ch) => ch.name)) },
+            { type: 'text', text: prompt(page.class_level, page.subject, pageNo, chapters.map((ch) => ch.name)) },
             { type: 'image_url', image_url: { url: dataUrl } },
           ],
         },
@@ -216,9 +227,11 @@ paperRoutes.post('/papers/:id/save', async (c) => {
     );
     for (const d of ready) {
       const qrow = await q1(
-        `insert into questions (class_level, chapter_id, text, options, correct_option, keep_option_order, image_key, source, paper_id, created_by)
-         values ($1, $2, $3, $4, $5, $6, $7, 'paper', $8, $9) returning id`,
-        [paper.class_level, d.chapter_id, d.text, d.options, d.correct_option, mustKeepOrder(d.options), d.image_key, id, c.get('user').id],
+        `insert into questions (class_level, chapter_id, text, options, correct_option, keep_option_order, image_key, source, paper_id, created_by,
+                                subject_id)
+         values ($1, $2, $3, $4, $5, $6, $7, 'paper', $8, $9, $10) returning id`,
+        [paper.class_level, d.chapter_id, d.text, d.options, d.correct_option, mustKeepOrder(d.options), d.image_key, id, c.get('user').id,
+          paper.subject_id],
         cx,
       );
       await cx.query(`update paper_drafts set status = 'saved', question_id = $2 where id = $1`, [d.id, qrow.id]);

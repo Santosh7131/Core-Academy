@@ -72,7 +72,7 @@ try {
     for (const [i, name] of names.entries()) {
       ids[name] = (await q(
         `insert into chapters (class_level, name, sort_order, is_sample) values ($1, $2, $3, true)
-         on conflict (class_level, name) do update set sort_order = excluded.sort_order returning id`,
+         on conflict (class_level, subject_id, name) do update set sort_order = excluded.sort_order returning id`,
         [cls, name, i],
       ))[0].id;
     }
