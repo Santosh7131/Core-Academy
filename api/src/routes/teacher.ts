@@ -534,7 +534,7 @@ teacherRoutes.get('/tests', async (c) => {
             (select count(*) from attempts x where x.test_id = t.id and x.submitted_at is null) as writing,
             now() as now
        from tests t
-      order by coalesce(t.closes_at, t.opens_at, t.created_at) desc`,
+      order by coalesce(t.closes_at, t.opens_at, t.created_at) desc, t.title`,
   );
   return c.json({ tests: rows });
 });

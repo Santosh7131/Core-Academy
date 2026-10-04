@@ -29,6 +29,9 @@ try {
   let questions = 0;
   let tests = 0;
   let testsKept = 0;
+  // The Tests screen lists newest first. Each chapter test is made one second older than the
+  // one before it, so the drafts read in book order: Class 7 chapter 1, chapter 2, …
+  let order = 0;
   await db.query('begin');
   for (const book of books) {
     if (onlyClass && book.classLevel !== onlyClass) continue;
@@ -66,6 +69,7 @@ try {
         `select t.id, t.status, (select count(*) from attempts a where a.test_id = t.id)::int as attempts from tests t where t.library_key = $1`,
         [testKey],
       );
+      const age = order++;
       if (existing && (existing.status !== 'draft' || existing.attempts > 0)) {
         testsKept++;
         continue;
@@ -75,6 +79,7 @@ try {
          values ($1, $2, $3, $4, true, false, true, 'draft', $5, $6) returning id`,
         [`${chapter.name}: chapter test`, book.classLevel, subject.id, Math.max(10, Math.ceil(chapter.questions.length * 1.5)), teacher.id, testKey],
       );
+      await db.query(`update tests set created_at = now() - make_interval(secs => $2) where id = $1`, [test.id, age]);
       await db.query('delete from test_questions where test_id = $1', [test.id]);
       await db.query(
         `insert into test_questions (test_id, question_id, position) select $1, x.id, x.ord from unnest($2::uuid[]) with ordinality as x(id, ord)`,

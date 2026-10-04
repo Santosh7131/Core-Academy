@@ -53,8 +53,11 @@ class TestsScreen extends StatefulWidget {
 
 class _TestsScreenState extends State<TestsScreen> {
   List<Map<String, dynamic>>? _rows;
+  List<Subject> _subjects = [];
   String? _error;
   String _filter = 'open';
+  int? _class;
+  String? _subject;
 
   @override
   void initState() {
@@ -65,11 +68,13 @@ class _TestsScreenState extends State<TestsScreen> {
   Future<void> _load() async {
     try {
       final r = await api.get('/teacher/tests');
+      final subjects = _subjects.isEmpty ? await loadSubjects() : _subjects;
       if (mounted) {
         setState(() {
-        _rows = (r['tests'] as List).cast<Map<String, dynamic>>();
-        _error = null;
-      });
+          _rows = (r['tests'] as List).cast<Map<String, dynamic>>();
+          _subjects = subjects;
+          _error = null;
+        });
       }
     } on ApiException catch (e) {
       if (mounted) setState(() => _error = e.message);
@@ -83,7 +88,10 @@ class _TestsScreenState extends State<TestsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final all = _rows;
+    // The class and subject chips narrow the list; the status chips count within them.
+    final all = _rows
+        ?.where((t) => (_class == null || t['class_level'] == _class) && (_subject == null || t['subject_id'] == _subject))
+        .toList();
     final counts = <String, int>{};
     for (final t in all ?? const <Map<String, dynamic>>[]) {
       counts.update(testState(t), (n) => n + 1, ifAbsent: () => 1);
@@ -102,6 +110,12 @@ class _TestsScreenState extends State<TestsScreen> {
           for (final (k, label) in [('open', 'Open'), ('upcoming', 'Coming up'), ('closed', 'Closed'), ('draft', 'Drafts'), ('all', 'All')])
             SegChip(label, count: k == 'all' ? all?.length : counts[k] ?? 0, selected: _filter == k, onTap: () => setState(() => _filter = k)),
         ]),
+        const SizedBox(height: 8),
+        ClassChips(value: _class, allowAll: true, onChanged: (c) => setState(() => _class = c)),
+        if (_subjects.length > 1) ...[
+          const SizedBox(height: 8),
+          SubjectChips(subjects: _subjects, value: _subject, allowAll: true, onChanged: (v) => setState(() => _subject = v)),
+        ],
         const SizedBox(height: 16),
         if (all == null && _error != null)
           ErrorState(message: _error!, onRetry: _load)
