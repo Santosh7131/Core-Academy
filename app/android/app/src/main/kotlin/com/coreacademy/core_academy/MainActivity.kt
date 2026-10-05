@@ -37,5 +37,14 @@ class MainActivity : FlutterActivity() {
                 result.notImplemented()
             }
         }
+        // In-app updates: see Updater.kt and lib/core/updater.dart.
+        val updates = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, Updater.CHANNEL)
+        updates.setMethodCallHandler { call, result -> Updater.handle(this, call, result) }
+        Updater.channel = updates
+    }
+
+    override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        Updater.channel = null
+        super.cleanUpFlutterEngine(flutterEngine)
     }
 }

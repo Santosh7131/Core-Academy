@@ -12,19 +12,24 @@ import 'students_screens.dart';
 import 'tests_screens.dart';
 import 'today_screen.dart';
 
-GoRoute _page(String path, Widget Function(GoRouterState s) build) =>
+/// A tab's own screen. Switching tabs swaps instantly, as a tab bar should.
+GoRoute _tab(String path, Widget Function(GoRouterState s) build) =>
     GoRoute(path: path, pageBuilder: (c, s) => NoTransitionPage(key: s.pageKey, child: build(s)));
+
+/// Forms and details fade in over the tab: the theme's fade-forwards transition.
+GoRoute _page(String path, Widget Function(GoRouterState s) build) =>
+    GoRoute(path: path, pageBuilder: (c, s) => MaterialPage(key: s.pageKey, child: build(s)));
 
 /// Five tabs inside the shell; every form and detail screen is pushed full-screen above it.
 final teacherRoutes = <RouteBase>[
   StatefulShellRoute.indexedStack(
     builder: (context, state, shell) => TeacherShell(shell: shell),
     branches: [
-      StatefulShellBranch(routes: [_page('/t', (_) => const TodayScreen())]),
-      StatefulShellBranch(routes: [_page('/t/students', (_) => const StudentsScreen())]),
-      StatefulShellBranch(routes: [_page('/t/papers', (_) => const PapersScreen())]),
-      StatefulShellBranch(routes: [_page('/t/questions', (_) => const QuestionsScreen())]),
-      StatefulShellBranch(routes: [_page('/t/tests', (_) => const TestsScreen())]),
+      StatefulShellBranch(routes: [_tab('/t', (_) => const TodayScreen())]),
+      StatefulShellBranch(routes: [_tab('/t/students', (_) => const StudentsScreen())]),
+      StatefulShellBranch(routes: [_tab('/t/papers', (_) => const PapersScreen())]),
+      StatefulShellBranch(routes: [_tab('/t/questions', (_) => const QuestionsScreen())]),
+      StatefulShellBranch(routes: [_tab('/t/tests', (_) => const TestsScreen())]),
     ],
   ),
   _page('/t/students/new', (_) => const AddStudentScreen()),

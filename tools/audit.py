@@ -26,6 +26,10 @@ for p in FILES:
 print('%-26s %5d %5d | %5d %5d | %6d %5d %5d' % ('TOTAL', *totals))
 
 # Banned or rule-breaking patterns; theme.dart is the verbatim token file and is exempt.
+# Santosh chose subtle motion on 2026-10-05 (short fades, the press scale, the refresh turn).
+# Spinners and progress widgets stay banned; a line marked "// motion: approved" is one of the
+# approved movements and is skipped.
+APPROVED = '// motion: approved'
 BANNED = {
     'spinner / animated widget': r'CircularProgressIndicator|LinearProgressIndicator|AnimatedContainer|AnimatedOpacity|AnimationController|Hero\(|AnimatedSwitcher',
     'bottom sheet': r'showModalBottomSheet|BottomSheet\(|showBottomSheet',
@@ -47,7 +51,7 @@ for label, pattern in BANNED.items():
         if p.replace('\\', '/').endswith('lib/theme.dart'):
             continue
         for i, line in enumerate(io.open(p, encoding='utf-8'), 1):
-            if re.search(pattern, line):
+            if re.search(pattern, line) and APPROVED not in line:
                 hits.append('%s:%d: %s' % (p.replace('\\', '/'), i, line.strip()[:90]))
     print('  %-26s %s' % (label, 'none' if not hits else '%d hit(s)' % len(hits)))
     for h in hits:

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/session.dart';
 import '../../theme.dart';
 import '../../ui/kit.dart';
+import '../../ui/update_card.dart';
 
 /// Profile for students and the teacher: who is signed in, theme, log out.
 class ProfileScreen extends StatelessWidget {
@@ -40,6 +41,8 @@ class ProfileScreen extends StatelessWidget {
                 for (final (t, label) in [(ThemeChoice.system, 'Same as phone'), (ThemeChoice.light, 'Light'), (ThemeChoice.dark, 'Dark')])
                   SegChip(label, selected: session.theme == t, onTap: () => session.setTheme(t)),
               ]),
+              const SectionRule('App', padding: EdgeInsets.fromLTRB(0, 26, 0, 12)),
+              const AppVersionPanel(),
               const SizedBox(height: 34),
               SecondaryButton(
                 'Log out',

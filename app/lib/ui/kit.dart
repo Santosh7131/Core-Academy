@@ -9,7 +9,7 @@ import 'tokens.dart';
 export 'icons.dart';
 
 // The component vocabulary from the guide's section 5, as widgets.
-// No widget here animates: presses and focus changes apply instantly.
+// Motion stays subtle: a 130 ms press scale and a short fade for centred cards.
 
 TextStyle get buttonStyle => rowTitleStyle.copyWith(fontWeight: FontWeight.w700, letterSpacing: -0.44);
 TextStyle get chipStyle => labelStyle.copyWith(fontSize: 12.5, letterSpacing: -0.31, color: body);
@@ -62,7 +62,7 @@ class Kicker extends StatelessWidget {
       Fig(text.toUpperCase(), style: kickerStyle.copyWith(color: color ?? faint), maxLines: 1);
 }
 
-/// Replaces the ink splash: the child scales to 0.978 while pressed, with no tween.
+/// Replaces the ink splash: the child scales to 0.978 while pressed (guide: 130 ms, easeOutCubic).
 class Pressable extends StatefulWidget {
   const Pressable({super.key, required this.child, this.onTap, this.label, this.enabled = true});
 
@@ -99,7 +99,12 @@ class _PressableState extends State<Pressable> {
         onTapUp: active ? (_) => _set(false) : null,
         onTapCancel: active ? () => _set(false) : null,
         onTap: active ? widget.onTap : null,
-        child: Transform.scale(scale: _down ? 0.978 : 1, child: widget.child),
+        child: AnimatedScale(
+          scale: _down ? 0.978 : 1,
+          duration: const Duration(milliseconds: 130),
+          curve: Curves.easeOutCubic,
+          child: widget.child,
+        ),
       ),
     );
   }
@@ -153,11 +158,14 @@ class CircleBtn extends StatelessWidget {
 }
 
 class PrimaryButton extends StatelessWidget {
-  const PrimaryButton(this.label, {super.key, this.onTap, this.icon, this.disabledReason});
+  const PrimaryButton(this.label, {super.key, this.onTap, this.icon, this.leadingIcon, this.disabledReason});
 
   final String label;
   final VoidCallback? onTap;
   final IconData? icon;
+
+  /// An icon before the label, for a button named after a thing (a test) rather than a step.
+  final IconData? leadingIcon;
 
   /// Shown under a disabled button; the guide never disables silently.
   final String? disabledReason;
@@ -180,6 +188,7 @@ class PrimaryButton extends StatelessWidget {
         ),
         alignment: Alignment.center,
         child: Row(mainAxisSize: MainAxisSize.min, children: [
+          if (leadingIcon != null) ...[Icon(leadingIcon, size: 19, color: fg), const SizedBox(width: 9)],
           Flexible(child: Fig(label, style: buttonStyle.copyWith(color: fg), maxLines: 1)),
           if (icon != null) ...[const SizedBox(width: 8), Icon(icon, size: 18, color: fg)],
         ]),
@@ -702,14 +711,19 @@ class PushedPanel extends StatelessWidget {
       );
 }
 
-/// Short choices: a near-full-width card in the middle of the screen. No blur, no slide.
-Future<T?> showCentredCard<T>(BuildContext context, {required String title, required Widget Function(BuildContext) builder}) {
+/// Short choices: a near-full-width card in the middle of the screen. No blur; it fades in
+/// with a slight scale rather than arriving from an edge.
+Future<T?> showCentredCard<T>(BuildContext context, {required String title, String? subtitle, required Widget Function(BuildContext) builder}) {
   return showGeneralDialog<T>(
     context: context,
     barrierDismissible: true,
     barrierLabel: 'Close',
     barrierColor: scrim,
-    transitionDuration: Duration.zero,
+    transitionDuration: const Duration(milliseconds: 170),
+    transitionBuilder: (ctx, anim, _, child) {
+      final a = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
+      return FadeTransition(opacity: a, child: ScaleTransition(scale: Tween(begin: 0.97, end: 1.0).animate(a), child: child));
+    },
     pageBuilder: (ctx, _, _) {
       final size = MediaQuery.sizeOf(ctx);
       return SafeArea(
@@ -726,6 +740,7 @@ Future<T?> showCentredCard<T>(BuildContext context, {required String title, requ
                     Expanded(child: Text(title, style: cardTitleStyle)),
                     CircleBtn(icon: Ph.x, label: 'Close', ground: fill, onTap: () => Navigator.of(ctx).pop()),
                   ]),
+                  if (subtitle != null) Fig(subtitle, style: labelStyle),
                   const SizedBox(height: 14),
                   Flexible(child: Padding(padding: const EdgeInsets.only(right: 6), child: builder(ctx))),
                 ]),
@@ -785,4 +800,237 @@ class InlineNotice extends StatelessWidget {
       ]),
     );
   }
+}
+
+// ---------------------------------------------------------------- selects
+
+/// One option in a choice card. [value] may be null for an "All …" option.
+class Choice<T> {
+  const Choice(this.value, this.label, {this.count});
+  final T? value;
+  final String label;
+
+  /// Optional figure beside the option, such as how many questions a chapter has.
+  final int? count;
+}
+
+/// A centred card listing [options]; returns the one tapped, or null when dismissed. Replaces
+/// dropdown menus, which would arrive from an edge.
+Future<Choice<T>?> showChoices<T>(BuildContext context,
+    {required String title, String? subtitle, required List<Choice<T>> options, required T? selected}) {
+  return showCentredCard<Choice<T>>(
+    context,
+    title: title,
+    subtitle: subtitle,
+    builder: (ctx) => ListView(
+      shrinkWrap: true,
+      padding: EdgeInsets.zero,
+      children: [
+        for (final (i, o) in options.indexed) ...[
+          if (i > 0) Container(height: 1, margin: const EdgeInsets.symmetric(horizontal: 4), color: hairline),
+          Pressable(
+            label: o.label,
+            onTap: () => Navigator.of(ctx).pop(o),
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(12, 14, 12, 14),
+              decoration: o.value == selected ? BoxDecoration(color: fill, borderRadius: BorderRadius.circular(rSmall)) : null,
+              child: Row(children: [
+                Expanded(child: Fig(o.label, style: rowTitleStyle)),
+                if (o.count != null) ...[const SizedBox(width: 10), Text('${o.count}', style: numStyle(size: 12, color: faint))],
+                if (o.value == selected) ...[const SizedBox(width: 10), Icon(Ph.check, size: 18, color: ink)],
+              ]),
+            ),
+          ),
+        ],
+      ],
+    ),
+  );
+}
+
+/// A filter as a pill: its value and a caret. An applied filter (not "All") takes the filled
+/// action ground, so it is obvious what the list is narrowed to.
+class SelectPill extends StatelessWidget {
+  const SelectPill({super.key, required this.label, required this.onTap, this.active = false, this.count});
+  final String label;
+  final VoidCallback onTap;
+  final bool active;
+
+  /// How many items the current choice shows, set in mono after the label.
+  final int? count;
+
+  @override
+  Widget build(BuildContext context) {
+    final fg = active ? actionInk : body;
+    return Pressable(
+      label: label,
+      onTap: onTap,
+      child: Container(
+        height: 36,
+        padding: const EdgeInsets.fromLTRB(14, 0, 12, 0),
+        decoration: active
+            ? BoxDecoration(color: actionFill, borderRadius: BorderRadius.circular(rPill), boxShadow: e2)
+            : surface(radius: rPill, shadow: e1),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Flexible(child: Text(label, style: chipStyle.copyWith(color: fg), maxLines: 1, overflow: TextOverflow.ellipsis)),
+          if (count != null) ...[
+            const SizedBox(width: 6),
+            Text('$count', style: numStyle(size: 12.5, color: fg.withValues(alpha: 0.75))),
+          ],
+          const SizedBox(width: 6),
+          Icon(Ph.caretDown, size: 13, color: active ? actionInk.withValues(alpha: 0.7) : faint),
+        ]),
+      ),
+    );
+  }
+}
+
+/// A form field that opens a choice card: the current value (or a faint placeholder) and a caret.
+class SelectField extends StatelessWidget {
+  const SelectField({super.key, required this.value, required this.onTap, this.placeholder = 'Choose'});
+  final String? value;
+  final VoidCallback? onTap;
+  final String placeholder;
+
+  @override
+  Widget build(BuildContext context) => Pressable(
+        label: value ?? placeholder,
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(17, 15, 15, 15),
+          decoration: surface(radius: rCard, shadow: e1),
+          child: Row(children: [
+            Expanded(
+              child: Fig(value ?? placeholder,
+                  style: rowTitleStyle.copyWith(fontWeight: FontWeight.w500, fontSize: 15, color: value == null ? faint : (onTap == null ? muted : ink)),
+                  maxLines: 2),
+            ),
+            const SizedBox(width: 10),
+            Icon(Ph.caretDown, size: 16, color: faint),
+          ]),
+        ),
+      );
+}
+
+/// Filters side by side, wrapping onto a second line when they do not fit.
+class FilterBar extends StatelessWidget {
+  const FilterBar({super.key, required this.children, this.padding = const EdgeInsets.symmetric(horizontal: gutter)});
+  final List<Widget> children;
+  final EdgeInsets padding;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: padding,
+        child: Align(alignment: Alignment.centerLeft, child: Wrap(spacing: 8, runSpacing: 8, children: children)),
+      );
+}
+
+/// The add action on a tab, labelled and floating above the tab bar, always in the same place.
+class FloatingAdd extends StatelessWidget {
+  const FloatingAdd(this.label, {super.key, required this.onTap, this.icon = Ph.plus});
+  final String label;
+  final VoidCallback onTap;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) => Pressable(
+        label: label,
+        onTap: onTap,
+        child: Container(
+          height: 54,
+          padding: const EdgeInsets.fromLTRB(18, 0, 22, 0),
+          decoration: BoxDecoration(
+            color: actionFill,
+            borderRadius: BorderRadius.circular(rPill),
+            border: isDark ? Border.all(color: const Color(0xFF3A3A46)) : null,
+            boxShadow: e4,
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(icon, size: 19, color: actionInk),
+            const SizedBox(width: 8),
+            Text(label, style: buttonStyle.copyWith(color: actionInk)),
+          ]),
+        ),
+      );
+}
+
+/// A tab's content with its [FloatingAdd] pinned above the floating tab bar.
+class WithFloatingAdd extends StatelessWidget {
+  const WithFloatingAdd({super.key, required this.child, required this.add});
+  final Widget child;
+  final Widget add;
+
+  @override
+  Widget build(BuildContext context) => Stack(children: [
+        Positioned.fill(child: child),
+        // The tab bar sits 12 above the safe area and is 64 tall; this clears it by 14.
+        Positioned(right: gutter, bottom: 12 + 64 + 14 + MediaQuery.paddingOf(context).bottom, child: add),
+      ]);
+}
+
+// ---------------------------------------------------------------- refreshing
+
+/// The refresh button: its arrows turn while a refresh runs, finishing the turn they are on.
+class RefreshButton extends StatefulWidget {
+  const RefreshButton({super.key, required this.onRefresh});
+  final Future<void> Function() onRefresh;
+
+  @override
+  State<RefreshButton> createState() => _RefreshButtonState();
+}
+
+class _RefreshButtonState extends State<RefreshButton> with SingleTickerProviderStateMixin {
+  late final AnimationController _spin = AnimationController(vsync: this, duration: const Duration(milliseconds: 800)); // motion: approved
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    _spin.dispose();
+    super.dispose();
+  }
+
+  Future<void> _run() async {
+    if (_busy) return;
+    _busy = true;
+    _spin.repeat();
+    try {
+      // At least one full turn, so a quick refresh still shows that something happened.
+      await Future.wait([widget.onRefresh(), Future<void>.delayed(const Duration(milliseconds: 800))]);
+    } finally {
+      if (mounted) {
+        await _spin.forward();
+        if (mounted) _spin.value = 0;
+      }
+      _busy = false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Pressable(
+        label: 'Refresh',
+        onTap: _run,
+        child: Container(
+          width: 40,
+          height: 40,
+          alignment: Alignment.center,
+          decoration: surface(radius: rPill, shadow: e1),
+          child: RotationTransition(turns: _spin, child: Icon(Ph.arrowsClockwise, size: 19, color: ink)),
+        ),
+      );
+}
+
+/// Pull down to refresh. The list inside needs AlwaysScrollableScrollPhysics so a short
+/// list can still be pulled.
+class PullToRefresh extends StatelessWidget {
+  const PullToRefresh({super.key, required this.onRefresh, required this.child});
+  final Future<void> Function() onRefresh;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => RefreshIndicator(
+        onRefresh: onRefresh,
+        color: ink,
+        backgroundColor: card,
+        displacement: 36,
+        child: child,
+      );
 }

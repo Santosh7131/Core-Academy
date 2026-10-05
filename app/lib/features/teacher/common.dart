@@ -33,35 +33,97 @@ class TabHeader extends StatelessWidget {
       );
 }
 
-/// A horizontally scrolling row of segmented chips that bleeds to the screen edge.
+/// A short group of segmented chips that wraps onto the next line instead of scrolling
+/// sideways. Long lists (classes, subjects, chapters, days) use a select instead.
 class ChipRow extends StatelessWidget {
   const ChipRow({super.key, required this.children, this.padding = const EdgeInsets.symmetric(horizontal: gutter)});
   final List<Widget> children;
   final EdgeInsets padding;
 
   @override
-  Widget build(BuildContext context) => SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
+  Widget build(BuildContext context) => Padding(
         padding: padding,
-        clipBehavior: Clip.none,
-        child: Row(children: [
-          for (final (i, c) in children.indexed) ...[if (i > 0) const SizedBox(width: 8), c],
-        ]),
+        child: Align(alignment: Alignment.centerLeft, child: Wrap(spacing: 8, runSpacing: 8, children: children)),
       );
 }
 
-class ClassChips extends StatelessWidget {
-  const ClassChips({super.key, required this.value, required this.onChanged, this.allowAll = false, this.padding = const EdgeInsets.symmetric(horizontal: gutter)});
+Future<Choice<int>?> _pickClass(BuildContext context, int? value, {required bool allowAll}) => showChoices<int>(
+      context,
+      title: 'Class',
+      options: [if (allowAll) const Choice(null, 'All classes'), for (final c in classLevels) Choice(c, 'Class $c')],
+      selected: value,
+    );
+
+/// The class as a filter pill: "All classes" or "Class 9".
+class ClassFilter extends StatelessWidget {
+  const ClassFilter({super.key, required this.value, required this.onChanged, this.allowAll = true});
   final int? value;
   final ValueChanged<int?> onChanged;
   final bool allowAll;
-  final EdgeInsets padding;
 
   @override
-  Widget build(BuildContext context) => ChipRow(padding: padding, children: [
-        if (allowAll) SegChip('All classes', selected: value == null, onTap: () => onChanged(null)),
-        for (final c in classLevels) SegChip('Class $c', selected: value == c, onTap: () => onChanged(c)),
-      ]);
+  Widget build(BuildContext context) => SelectPill(
+        label: value == null ? 'All classes' : 'Class $value',
+        active: value != null,
+        onTap: () async {
+          final c = await _pickClass(context, value, allowAll: allowAll);
+          if (c != null) onChanged(c.value);
+        },
+      );
+}
+
+/// The class in a form.
+class ClassField extends StatelessWidget {
+  const ClassField({super.key, required this.value, required this.onChanged, this.enabled = true});
+  final int? value;
+  final ValueChanged<int> onChanged;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) => SelectField(
+        value: value == null ? null : 'Class $value',
+        placeholder: 'Choose a class',
+        onTap: !enabled
+            ? null
+            : () async {
+                final c = await _pickClass(context, value, allowAll: false);
+                if (c?.value != null) onChanged(c!.value!);
+              },
+      );
+}
+
+/// A chapter row from the API: {id, name, questions?}.
+typedef ChapterRow = Map<String, dynamic>;
+
+/// The chapter as a filter pill, for a class and subject that are already chosen.
+class ChapterFilter extends StatelessWidget {
+  const ChapterFilter({super.key, required this.chapters, required this.value, required this.onChanged, this.subtitle});
+  final List<ChapterRow> chapters;
+  final String? value;
+  final ValueChanged<String?> onChanged;
+  final String? subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final current = chapters.where((c) => c['id'] == value).map((c) => '${c['name']}').firstOrNull;
+    return SelectPill(
+      label: current ?? 'All chapters',
+      active: current != null,
+      onTap: () async {
+        final c = await showChoices<String>(
+          context,
+          title: 'Chapter',
+          subtitle: subtitle,
+          options: [
+            const Choice(null, 'All chapters'),
+            for (final ch in chapters) Choice('${ch['id']}', '${ch['name']}', count: ch['questions'] as int?),
+          ],
+          selected: value,
+        );
+        if (c != null) onChanged(c.value);
+      },
+    );
+  }
 }
 
 /// Label above a form group, small and muted (not a labelled form box).
@@ -77,7 +139,7 @@ class FormLabel extends StatelessWidget {
       );
 }
 
-/// Picks a day and a time with chips: no dialogs, so nothing animates in.
+/// Picks a day and a time with two selects side by side.
 class DayTimeChooser extends StatelessWidget {
   const DayTimeChooser({super.key, required this.value, required this.onChanged, this.noneLabel, this.days = 14});
 
@@ -110,17 +172,45 @@ class DayTimeChooser extends StatelessWidget {
       onChanged(DateTime(d.year, d.month, d.day, m ~/ 60, m % 60));
     }
 
-    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      ChipRow(padding: EdgeInsets.zero, children: [
-        if (noneLabel != null) SegChip(noneLabel!, selected: value == null, onTap: () => onChanged(null)),
-        for (var i = 0; i < days; i++)
-          SegChip(dayLabel(i), selected: selDay == day0.add(Duration(days: i)), onTap: () => pick(dayValue: day0.add(Duration(days: i)))),
-      ]),
+    // A value from before the 14-day window, or not on a half hour, still shows as itself.
+    String? currentDay() {
+      if (selDay == null) return noneLabel;
+      final i = selDay.difference(day0).inDays;
+      return i >= 0 && i < days ? dayLabel(i) : DateFormat('EEE d MMM').format(selDay);
+    }
+
+    return Row(children: [
+      Expanded(
+        child: SelectField(
+          value: currentDay(),
+          placeholder: 'Day',
+          onTap: () async {
+            final c = await showChoices<int>(
+              context,
+              title: 'Day',
+              options: [if (noneLabel != null) Choice(-1, noneLabel!), for (var i = 0; i < days; i++) Choice(i, dayLabel(i))],
+              selected: selDay == null ? (noneLabel != null ? -1 : null) : selDay.difference(day0).inDays,
+            );
+            if (c == null) return;
+            if (c.value == -1) {
+              onChanged(null);
+            } else {
+              pick(dayValue: day0.add(Duration(days: c.value!)));
+            }
+          },
+        ),
+      ),
       if (value != null) ...[
-        const SizedBox(height: 8),
-        ChipRow(padding: EdgeInsets.zero, children: [
-          for (final m in times) SegChip(timeLabel(m), selected: selMinutes == m, onTap: () => pick(minutes: m)),
-        ]),
+        const SizedBox(width: 10),
+        Expanded(
+          child: SelectField(
+            value: timeLabel(selMinutes!),
+            onTap: () async {
+              final c = await showChoices<int>(context, title: 'Time', options: [for (final m in times) Choice(m, timeLabel(m))], selected: selMinutes);
+              if (c?.value != null) pick(minutes: c!.value);
+            },
+          ),
+        ),
       ],
     ]);
   }
@@ -209,3 +299,6 @@ class FactList extends StatelessWidget {
 
 /// Bottom spacing so the last row clears the floating navigation.
 const navClearance = SizedBox(height: 110);
+
+/// Bottom spacing on a tab with a [FloatingAdd]: clears the tab bar and the button above it.
+const fabClearance = SizedBox(height: 180);

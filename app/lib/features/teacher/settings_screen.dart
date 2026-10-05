@@ -4,6 +4,7 @@ import '../../core/api.dart';
 import '../../core/session.dart';
 import '../../theme.dart';
 import '../../ui/kit.dart';
+import '../../ui/update_card.dart';
 import 'common.dart';
 import 'subjects.dart';
 
@@ -201,17 +202,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
           }
         }),
         const SectionRule('Chapters', padding: rule),
-        ClassChips(value: _chapterClass, padding: EdgeInsets.zero, onChanged: (c) {
-          setState(() => _chapterClass = c ?? 9);
-          _loadChapters();
-        }),
-        if (_subjects.length > 1) ...[
-          const SizedBox(height: 8),
-          SubjectChips(subjects: _subjects, value: _chapterSubject, padding: EdgeInsets.zero, onChanged: (v) {
-            setState(() => _chapterSubject = v);
+        FilterBar(padding: EdgeInsets.zero, children: [
+          ClassFilter(value: _chapterClass, allowAll: false, onChanged: (c) {
+            setState(() => _chapterClass = c ?? 9);
             _loadChapters();
           }),
-        ],
+          if (_subjects.length > 1)
+            SubjectFilter(subjects: _subjects, value: _chapterSubject, allowAll: false, onChanged: (v) {
+              setState(() => _chapterSubject = v);
+              _loadChapters();
+            }),
+        ]),
         const SizedBox(height: 10),
         for (final (i, ch) in _chapters.indexed) ...[
           if (i > 0) const SizedBox(height: gapRow),
@@ -247,6 +248,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _current.clear();
               _next.clear();
             }, 'Password changed.')),
+        const SectionRule('App', padding: rule),
+        const AppVersionPanel(),
         const SectionRule('AI paper reader', padding: rule),
         FactList([('Pages read today', '${ai['calls_today']}'), ('Failed today', '${ai['failed_today']}')]),
         // Only the dev branch has sample data; the live app never shows this section.

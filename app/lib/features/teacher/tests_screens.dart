@@ -97,56 +97,63 @@ class _TestsScreenState extends State<TestsScreen> {
       counts.update(testState(t), (n) => n + 1, ifAbsent: () => 1);
     }
     final rows = all?.where((t) => _filter == 'all' || testState(t) == _filter).toList();
+    const statuses = [('open', 'Open'), ('upcoming', 'Coming up'), ('closed', 'Closed'), ('draft', 'Drafts'), ('all', 'All tests')];
+    final statusLabel = statuses.firstWhere((s) => s.$1 == _filter).$2;
     return SafeArea(
       bottom: false,
-      child: ListView(padding: EdgeInsets.zero, children: [
-        TabHeader(
-          kicker: all == null ? 'Tests' : f.count(all.length, 'test'),
-          title: 'Tests',
-          actions: [CircleBtn(icon: Ph.plus, filled: true, label: 'New test', onTap: () => _open('/t/tests/new'))],
-        ),
-        const SizedBox(height: 18),
-        ChipRow(children: [
-          for (final (k, label) in [('open', 'Open'), ('upcoming', 'Coming up'), ('closed', 'Closed'), ('draft', 'Drafts'), ('all', 'All')])
-            SegChip(label, count: k == 'all' ? all?.length : counts[k] ?? 0, selected: _filter == k, onTap: () => setState(() => _filter = k)),
-        ]),
-        const SizedBox(height: 8),
-        ClassChips(value: _class, allowAll: true, onChanged: (c) => setState(() => _class = c)),
-        if (_subjects.length > 1) ...[
-          const SizedBox(height: 8),
-          SubjectChips(subjects: _subjects, value: _subject, allowAll: true, onChanged: (v) => setState(() => _subject = v)),
-        ],
-        const SizedBox(height: 16),
-        if (all == null && _error != null)
-          ErrorState(message: _error!, onRetry: _load)
-        else if (all == null)
-          const LoadingState()
-        else if (rows!.isEmpty)
-          EmptyState(
-            icon: Ph.exam,
-            title: 'No tests here',
-            body: 'Build a test from your question bank and choose when it opens.',
-            action: SizedBox(width: 200, child: PrimaryButton('New test', onTap: () => _open('/t/tests/new'))),
-          )
-        else
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: gutter),
-            child: Column(children: [
-              for (final (i, t) in rows.indexed) ...[
-                if (i > 0) const SizedBox(height: gapRow),
-                RowTile(
-                  title: '${t['title']}',
-                  meta: testMeta(t),
-                  trailing: t['status'] == 'published'
-                      ? Text('${t['submitted']}/${t['assigned']}', style: numStyle(size: 15))
-                      : const TagChip('Draft'),
-                  onTap: () => _open(t['status'] == 'published' ? '/t/tests/${t['id']}' : '/t/tests/${t['id']}/edit'),
-                ),
-              ],
+      child: WithFloatingAdd(
+        add: FloatingAdd('New test', onTap: () => _open('/t/tests/new')),
+        child: PullToRefresh(
+          onRefresh: _load,
+          child: ListView(padding: EdgeInsets.zero, physics: const AlwaysScrollableScrollPhysics(), children: [
+            TabHeader(kicker: all == null ? 'Tests' : f.count(all.length, 'test'), title: 'Tests'),
+            const SizedBox(height: 18),
+            FilterBar(children: [
+              SelectPill(
+                label: statusLabel,
+                count: all == null ? null : (_filter == 'all' ? all.length : counts[_filter] ?? 0),
+                active: _filter != 'all',
+                onTap: () async {
+                  final c = await showChoices<String>(
+                    context,
+                    title: 'Show',
+                    options: [for (final (k, label) in statuses) Choice(k, label, count: k == 'all' ? all?.length : counts[k] ?? 0)],
+                    selected: _filter,
+                  );
+                  if (c?.value != null) setState(() => _filter = c!.value!);
+                },
+              ),
+              ClassFilter(value: _class, onChanged: (c) => setState(() => _class = c)),
+              if (_subjects.length > 1) SubjectFilter(subjects: _subjects, value: _subject, onChanged: (v) => setState(() => _subject = v)),
             ]),
-          ),
-        navClearance,
-      ]),
+            const SizedBox(height: 16),
+            if (all == null && _error != null)
+              ErrorState(message: _error!, onRetry: _load)
+            else if (all == null)
+              const LoadingState()
+            else if (rows!.isEmpty)
+              const EmptyState(icon: Ph.exam, title: 'No tests here', body: 'Build a test from your question bank and choose when it opens.')
+            else
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: gutter),
+                child: Column(children: [
+                  for (final (i, t) in rows.indexed) ...[
+                    if (i > 0) const SizedBox(height: gapRow),
+                    RowTile(
+                      title: '${t['title']}',
+                      meta: testMeta(t),
+                      trailing: t['status'] == 'published'
+                          ? Text('${t['submitted']}/${t['assigned']}', style: numStyle(size: 15))
+                          : const TagChip('Draft'),
+                      onTap: () => _open(t['status'] == 'published' ? '/t/tests/${t['id']}' : '/t/tests/${t['id']}/edit'),
+                    ),
+                  ],
+                ]),
+              ),
+            fabClearance,
+          ]),
+        ),
+      ),
     );
   }
 }
@@ -256,10 +263,8 @@ class _TestEditorState extends State<TestEditor> {
 
   Future<void> _pickQuestions() async {
     if (_class == null || _subjectId == null) return;
-    final picked = await Navigator.of(context).push<List<Map<String, dynamic>>>(PageRouteBuilder(
-      transitionDuration: Duration.zero,
-      reverseTransitionDuration: Duration.zero,
-      pageBuilder: (_, _, _) => QuestionPicker(classLevel: _class!, subjectId: _subjectId!, subjectName: _subjectName ?? '', selected: _questions),
+    final picked = await Navigator.of(context).push<List<Map<String, dynamic>>>(MaterialPageRoute(
+      builder: (_) => QuestionPicker(classLevel: _class!, subjectId: _subjectId!, subjectName: _subjectName ?? '', selected: _questions),
     ));
     if (picked != null) setState(() => _questions = picked);
   }
@@ -324,33 +329,29 @@ class _TestEditorState extends State<TestEditor> {
           BareField(controller: _title, placeholder: 'Test name, e.g. Unit test 3', capitalization: TextCapitalization.sentences),
         ]),
         const FormLabel('Class'),
-        ClassChips(
+        ClassField(
           value: _class,
-          padding: EdgeInsets.zero,
-          onChanged: locked
-              ? (_) {}
-              : (c) {
-                  setState(() {
-                    if (c != _class) {
-                      _questions = [];
-                      _studentIds = {};
-                    }
-                    _class = c;
-                  });
-                  _loadStudents();
-                },
+          enabled: !locked,
+          onChanged: (c) {
+            setState(() {
+              if (c != _class) {
+                _questions = [];
+                _studentIds = {};
+              }
+              _class = c;
+            });
+            _loadStudents();
+          },
         ),
         const FormLabel('Subject'),
-        SubjectChips(
+        SubjectField(
           subjects: _subjects,
           value: _subjectId,
-          padding: EdgeInsets.zero,
-          onChanged: locked
-              ? (_) {}
-              : (v) => setState(() {
-                    if (v != _subjectId) _questions = [];
-                    _subjectId = v;
-                  }),
+          enabled: !locked,
+          onChanged: (v) => setState(() {
+            if (v != _subjectId) _questions = [];
+            _subjectId = v;
+          }),
         ),
         FormLabel(_questions.isEmpty ? 'Questions' : 'Questions · ${_questions.length} chosen'),
         if (locked)
@@ -376,10 +377,21 @@ class _TestEditorState extends State<TestEditor> {
           if (_class == null) Padding(padding: const EdgeInsets.only(top: 8), child: Text('Choose a class first.', style: labelStyle)),
         ],
         const FormLabel('Time limit'),
-        ChipRow(padding: EdgeInsets.zero, children: [
-          for (final m in [null, 10, 15, 20, 30, 45, 60, 90])
-            SegChip(m == null ? 'No limit' : '$m min', selected: _limit == m, onTap: () => setState(() => _limit = m)),
-        ]),
+        SelectField(
+          value: _limit == null ? 'No limit' : '$_limit min',
+          onTap: () async {
+            final c = await showChoices<int>(
+              context,
+              title: 'Time limit',
+              options: [
+                const Choice(-1, 'No limit'),
+                for (final m in {10, 15, 20, 30, 45, 60, 90, ?_limit}.toList()..sort()) Choice(m, '$m min'),
+              ],
+              selected: _limit ?? -1,
+            );
+            if (c?.value != null) setState(() => _limit = c!.value == -1 ? null : c.value);
+          },
+        ),
         const FormLabel('Opens'),
         DayTimeChooser(value: _opens, noneLabel: 'Now', onChanged: (v) => setState(() => _opens = v)),
         const FormLabel('Closes'),
@@ -496,8 +508,13 @@ class _QuestionPickerState extends State<QuestionPicker> {
   @override
   Widget build(BuildContext context) {
     final all = _all;
-    final chapters = <String>{for (final q in all ?? const <Map<String, dynamic>>[]) if (q['chapter'] != null) '${q['chapter']}'}.toList()..sort();
+    // Chapters in book order (the API sorts questions by chapter), with how many each has.
+    final chapterCounts = <String, int>{};
+    for (final q in all ?? const <Map<String, dynamic>>[]) {
+      if (q['chapter'] != null) chapterCounts.update('${q['chapter']}', (n) => n + 1, ifAbsent: () => 1);
+    }
     final shown = all?.where((q) => _chapter == null || q['chapter'] == _chapter).toList();
+    final notPicked = shown?.where((q) => !_has(q)).toList() ?? const [];
     return PushedPanel(
       kicker: groupName(widget.classLevel, widget.subjectName),
       title: 'Choose questions',
@@ -508,11 +525,28 @@ class _QuestionPickerState extends State<QuestionPicker> {
       ),
       children: [
         const SizedBox(height: 18),
-        if (chapters.isNotEmpty)
-          ChipRow(padding: EdgeInsets.zero, children: [
-            SegChip('All chapters', selected: _chapter == null, onTap: () => setState(() => _chapter = null)),
-            for (final c in chapters) SegChip(c, selected: _chapter == c, onTap: () => setState(() => _chapter = c)),
+        if (chapterCounts.isNotEmpty)
+          FilterBar(padding: EdgeInsets.zero, children: [
+            SelectPill(
+              label: _chapter ?? 'All chapters',
+              active: _chapter != null,
+              onTap: () async {
+                final c = await showChoices<String>(
+                  context,
+                  title: 'Chapter',
+                  subtitle: groupName(widget.classLevel, widget.subjectName),
+                  options: [const Choice(null, 'All chapters'), for (final e in chapterCounts.entries) Choice(e.key, e.key, count: e.value)],
+                  selected: _chapter,
+                );
+                if (c != null) setState(() => _chapter = c.value);
+              },
+            ),
           ]),
+        if (notPicked.isNotEmpty && _chapter != null)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextAction('Add all ${notPicked.length} from this chapter', color: ink, onTap: () => setState(() => _picked.addAll(notPicked))),
+          ),
         const SizedBox(height: 14),
         if (all == null && _error != null)
           ErrorState(message: _error!, onRetry: _load)

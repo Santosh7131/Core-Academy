@@ -33,7 +33,7 @@ const login = (username: string, secret: string) => api('POST', '/auth/login', u
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const iso = (msFromNow: number) => new Date(Date.now() + msFromNow).toISOString();
 
-const created = { users: [] as string[], questions: [] as string[], tests: [] as string[], subjects: [] as string[] };
+const created = { users: [] as string[], questions: [] as string[], tests: [] as string[], subjects: [] as string[], papers: [] as string[] };
 const tag = `apitest${randomInt(1000, 9999)}`;
 
 try {
@@ -224,6 +224,31 @@ try {
   check('a subject in use cannot be deleted', (await api('DELETE', `/teacher/subjects/${own.id}`, T)).status === 409);
   check('Maths cannot be deleted', (await api('DELETE', `/teacher/subjects/${maths.id}`, T)).status === 409);
 
+  // A question paper is kept under its name and lists the questions saved from it, in paper order.
+  const pp = await api('POST', '/teacher/papers', T, { class_level: 9, subject_id: maths.id, exam_name: `${tag} paper`, year: 2025, pages: 1 });
+  const paperId = pp.body?.paper?.id;
+  if (paperId) created.papers.push(paperId);
+  check('teacher uploads a named paper', pp.status === 201 && pp.body?.paper?.exam_name === `${tag} paper`, pp.body);
+  // Two questions as the AI reader leaves them, with the right options already marked by the teacher.
+  const pdb = new pg.Client({ connectionString: process.env.DATABASE_URL_UNPOOLED });
+  await pdb.connect();
+  await pdb.query(
+    `insert into paper_drafts (paper_id, page_no, seq, number_label, kind, text, options, correct_option)
+     values ($1, 1, 2, '2', 'mcq', $3, $4, 1), ($1, 1, 1, '1', 'mcq', $2, $4, 0)`,
+    [paperId, `${tag} first`, `${tag} second`, ['a', 'b', 'c', 'd']],
+  );
+  await pdb.end();
+  const sv = await api('POST', `/teacher/papers/${paperId}/save`, T);
+  check('checked questions from a paper are saved', sv.status === 200 && sv.body?.saved === 2, sv.body);
+  const one = await api('GET', `/teacher/papers/${paperId}`, T);
+  check('the paper lists its saved questions in paper order',
+    JSON.stringify(one.body?.questions?.map((x: any) => x.text)) === JSON.stringify([`${tag} first`, `${tag} second`]), one.body?.questions);
+  const rn = await api('PATCH', `/teacher/papers/${paperId}`, T, { exam_name: `${tag} renamed`, year: null, school_id: null });
+  check('teacher renames the paper', rn.status === 200 && rn.body?.paper?.exam_name === `${tag} renamed` && rn.body?.paper?.year === null, rn.body);
+  const prow = (await api('GET', '/teacher/papers', T)).body?.papers?.find((x: any) => x.id === paperId);
+  check('the papers list shows the new name and the saved count', prow?.exam_name === `${tag} renamed` && prow?.saved === 2, prow);
+  check('a paper cannot be renamed to nothing', (await api('PATCH', `/teacher/papers/${paperId}`, T, { exam_name: '  ' })).status === 400);
+
   // Lockout, PIN reset and deactivation.
   let last = 0;
   for (let i = 0; i < 5; i++) last = (await login(`${tag}.two`, '0000')).status;
@@ -243,7 +268,8 @@ try {
   const db = new pg.Client({ connectionString: process.env.DATABASE_URL_UNPOOLED });
   await db.connect();
   await db.query('delete from tests where id = any($1::uuid[])', [created.tests]);
-  await db.query('delete from questions where id = any($1::uuid[])', [created.questions]);
+  await db.query('delete from questions where id = any($1::uuid[]) or paper_id = any($2::uuid[])', [created.questions, created.papers]);
+  await db.query('delete from papers where id = any($1::uuid[])', [created.papers]);
   await db.query('delete from users where id = any($1::uuid[])', [created.users]);
   await db.query('delete from subjects where id = any($1::uuid[])', [created.subjects]);
   await db.end();

@@ -51,6 +51,29 @@ The import adds each book's chapters, its questions (tagged Ready-made in the ap
 draft chapter test per chapter for the class's group. It is safe to run again: rows are
 matched by `library_key`, and a chapter test that has been published or written is left alone.
 
+## Question papers
+
+The Upload tab keeps every paper the teacher photographs under its own name, such as
+"Half-yearly exam 2025", with its class, subject, school and year. AI reads the pages into
+drafts. Once each draft is checked and saved, the paper opens as a numbered set of its
+questions, and "Make a test from this paper" puts them all into a new draft test for the
+paper's class and subject. The questions also join the question bank under their chapters.
+
+## Updates
+
+From 1.2.0 on, the app updates itself. When it starts, and when it comes back to the front
+(at most every two hours), it reads `update.json` from the latest GitHub release. If that
+names a higher build number than the one installed, Home shows "Version 1.2.1 is ready".
+Update downloads the APK, checks its SHA-256 against the feed and hands it to Android's
+package installer. The first time, Android asks once whether Core Academy may install apps.
+After that, Android 12 and later put the update in without the Install prompt; older Android
+shows it. Android closes the app while it replaces it, and a notification offers to open the
+new version. Settings (and a student's profile) show the version and can check at once.
+
+Versions 1.1.0 and earlier have no updater, so 1.2.0 has to be installed by hand once.
+Debug builds never offer an update unless they are built with
+`--dart-define=UPDATE_FEED=...`.
+
 ## Notifications
 
 Push notifications go through Firebase Cloud Messaging. Students are told about a new test as
@@ -172,7 +195,7 @@ and the scripts that read it would then point at the live database.
 | Command | What it proves |
 |---|---|
 | `npm run typecheck` | The API type-checks. |
-| `npm run test:api` | 62 end-to-end checks of the marking rules, groups and logins against the deployed dev API (add `-- --env .env.main` for the live one). It creates its own students, subject and tests, gives its tests only to those students, then removes them all. |
+| `npm run test:api` | 68 end-to-end checks of the marking rules, groups, logins and named question papers against the deployed dev API (add `-- --env .env.main` for the live one). It creates its own students, subject, tests and paper, gives its tests only to those students, then removes them all. |
 | `node tools/notify-test.ts --log server.log` | 23 checks of the notifications against the API on your PC, run with `PUSH_DRY_RUN=1` so each notification is written to the log instead of sent. Dev only. |
 | `node tools/check-answers.ts` | Every sample question's marked answer is right, and no other option equals it. |
 | `node tools/ai-test.ts` | How accurately the AI reads the 2-page sample paper (render it first with `tools/make-sample-paper.ps1`). |
@@ -232,21 +255,39 @@ its passwords. Both are git-ignored. **Keep a copy of both somewhere safe.** And
 installs an update over an app signed with the same key. Lose the key, and every student has
 to uninstall and reinstall.
 
-1. Raise `version:` in `app/pubspec.yaml`, for example `1.0.1+2`. The number after `+` must
-   go up every release.
+1. Raise `version:` in `app/pubspec.yaml`, for example `1.2.1+4`. The number after `+` must
+   go up every release: installed copies compare it to decide whether an update is newer.
 2. Build it (ARM only, which covers every phone) and try it on the test phone:
 
    ```powershell
    .\tools\phone.ps1 release
    ```
 
-3. Publish it on GitHub so students get one download link (the copy in `tools/out` gives the
-   download a readable name and stays out of git):
+3. Write what changed in a plain text file, a line per change. GitHub shows it on the
+   release, and the app shows it in its "What is new" card.
+4. Publish it:
 
    ```powershell
-   Copy-Item app\build\app\outputs\flutter-apk\app-release.apk tools\out\core-academy-1.0.1.apk
-   gh release create v1.0.1 tools\out\core-academy-1.0.1.apk --title "Core Academy 1.0.1" --notes "What changed"
+   .\tools\release-app.ps1 -Notes notes.txt
    ```
+
+   The script builds the signed APK, writes `tools/out/update.json` (version, build number,
+   download link, SHA-256, size and the notes), creates the GitHub release with both files,
+   then reads the feed back through GitHub's latest-release link. Phones on 1.2.0 or later
+   offer the update within two hours, or at once from Settings, App, Check for updates.
+   Add `-NoPublish` to build and write the files without releasing.
+
+To try the updater without publishing anything, build two debug APKs that read a feed on the
+PC, the second with a higher build number:
+
+```bash
+flutter build apk --debug --build-number=3 --dart-define=UPDATE_FEED=http://127.0.0.1:8778/update.json
+flutter build apk --debug --build-number=4 --build-name=1.2.1 --dart-define=UPDATE_FEED=http://127.0.0.1:8778/update.json
+```
+
+Put the second APK and an `update.json` that describes it in a folder, serve the folder with
+`py -3 -m http.server 8778`, run `adb reverse tcp:8778 tcp:8778`, install the first APK and
+tap Update.
 
 The launcher icon comes from `design/icon/icon.html`; run `.\tools\make-icon.ps1` after
 changing it.

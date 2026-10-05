@@ -422,7 +422,8 @@ teacherRoutes.get('/questions', async (c) => {
         and ($2::uuid is null or qq.chapter_id = $2)
         and ($3::text is null or qq.text ilike '%' || $3 || '%')
         and ($4::uuid is null or qq.subject_id = $4)
-      order by qq.class_level, ch.sort_order nulls last, qq.created_at desc
+      order by qq.class_level, (select sort_order from subjects where id = qq.subject_id), qq.subject_id,
+               ch.sort_order nulls last, ch.name, qq.created_at desc
       limit 300`,
     [cls ? Number(cls) : null, chapter ? uuid(chapter, 'chapter') : null, search?.trim() || null, subject ? uuid(subject, 'subject') : null],
   );

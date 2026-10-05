@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/api.dart';
-import '../../theme.dart';
 import '../../ui/kit.dart';
-import 'common.dart';
 
 /// A subject the tuition teaches. A group is a class and a subject, such as "10th Science".
 class Subject {
@@ -29,32 +27,64 @@ String groupName(int classLevel, String subject) => '${classLevel}th $subject';
 /// The subject names in a student row from the API: [{id, name}, ...].
 List<String> subjectNames(Object? list) => [for (final s in (list as List? ?? const [])) '${(s as Map)['name']}'];
 
-/// One subject at a time, optionally with "All subjects".
-class SubjectChips extends StatelessWidget {
-  const SubjectChips({
-    super.key,
-    required this.subjects,
-    required this.value,
-    required this.onChanged,
-    this.allowAll = false,
-    this.counts,
-    this.padding = const EdgeInsets.symmetric(horizontal: gutter),
-  });
+Future<Choice<String>?> _pickSubject(BuildContext context, List<Subject> subjects, String? value,
+        {required bool allowAll, Map<String, int>? counts}) =>
+    showChoices<String>(
+      context,
+      title: 'Subject',
+      options: [
+        if (allowAll) const Choice(null, 'All subjects'),
+        for (final s in subjects) Choice(s.id, s.name, count: counts?[s.id]),
+      ],
+      selected: value,
+    );
+
+/// The subject as a filter pill: "All subjects" or "Science".
+class SubjectFilter extends StatelessWidget {
+  const SubjectFilter({super.key, required this.subjects, required this.value, required this.onChanged, this.allowAll = true, this.counts});
 
   final List<Subject> subjects;
   final String? value;
   final ValueChanged<String?> onChanged;
   final bool allowAll;
 
-  /// Optional number beside each subject, by subject id.
+  /// Optional number beside each subject in the choices, by subject id.
   final Map<String, int>? counts;
-  final EdgeInsets padding;
 
   @override
-  Widget build(BuildContext context) => ChipRow(padding: padding, children: [
-        if (allowAll) SegChip('All subjects', selected: value == null, onTap: () => onChanged(null)),
-        for (final s in subjects) SegChip(s.name, selected: value == s.id, count: counts?[s.id], onTap: () => onChanged(s.id)),
-      ]);
+  Widget build(BuildContext context) {
+    final current = subjects.where((s) => s.id == value).map((s) => s.name).firstOrNull;
+    return SelectPill(
+      label: current ?? 'All subjects',
+      active: current != null,
+      onTap: () async {
+        final c = await _pickSubject(context, subjects, value, allowAll: allowAll, counts: counts);
+        if (c != null) onChanged(c.value);
+      },
+    );
+  }
+}
+
+/// The subject in a form.
+class SubjectField extends StatelessWidget {
+  const SubjectField({super.key, required this.subjects, required this.value, required this.onChanged, this.enabled = true});
+
+  final List<Subject> subjects;
+  final String? value;
+  final ValueChanged<String> onChanged;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) => SelectField(
+        value: subjects.where((s) => s.id == value).map((s) => s.name).firstOrNull,
+        placeholder: 'Choose a subject',
+        onTap: !enabled
+            ? null
+            : () async {
+                final c = await _pickSubject(context, subjects, value, allowAll: false);
+                if (c?.value != null) onChanged(c!.value!);
+              },
+      );
 }
 
 /// Several subjects at once: the ones a student studies.

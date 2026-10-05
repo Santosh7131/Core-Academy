@@ -6,6 +6,7 @@ import '../../core/format.dart' as f;
 import '../../core/session.dart';
 import '../../theme.dart';
 import '../../ui/kit.dart';
+import '../../ui/update_card.dart';
 
 class StudentHome extends StatefulWidget {
   const StudentHome({super.key});
@@ -62,40 +63,44 @@ class _StudentHomeState extends State<StudentHome> with WidgetsBindingObserver {
     final tests = _tests;
     return Scaffold(
       body: SafeArea(
-        child: ListView(padding: const EdgeInsets.only(top: 8, bottom: 28), children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: gutter),
-            child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-              Expanded(
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  const SizedBox(height: 14),
-                  Kicker('${session.tuitionName} · Class ${user['class_level'] ?? ''}'),
-                  const SizedBox(height: 6),
-                  Text(session.firstName, style: displayStyle, maxLines: 1, overflow: TextOverflow.ellipsis),
-                ]),
-              ),
-              CircleBtn(icon: Ph.arrowsClockwise, label: 'Refresh', onTap: _loading ? null : _load),
-              const SizedBox(width: 10),
-              Pressable(
-                label: 'Profile',
-                onTap: () => context.push('/s/profile'),
-                child: AppAvatar(name: '${user['display_name'] ?? ''}', seed: '${user['id'] ?? ''}', size: 40),
-              ),
-            ]),
-          ),
-          if (tests == null && _error != null)
-            ErrorState(message: _error!, onRetry: _load)
-          else if (tests == null)
-            const LoadingState()
-          else ...[
-            if (_error != null)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(gutter, 18, gutter, 0),
-                child: InlineNotice(_error!, icon: Ph.warning),
-              ),
-            ..._sections(tests),
-          ],
-        ]),
+        child: PullToRefresh(
+          onRefresh: _load,
+          child: ListView(padding: const EdgeInsets.only(top: 8, bottom: 28), physics: const AlwaysScrollableScrollPhysics(), children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: gutter),
+              child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const SizedBox(height: 14),
+                    Kicker('${session.tuitionName} · Class ${user['class_level'] ?? ''}'),
+                    const SizedBox(height: 6),
+                    Text(session.firstName, style: displayStyle, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  ]),
+                ),
+                RefreshButton(onRefresh: _load),
+                const SizedBox(width: 10),
+                Pressable(
+                  label: 'Profile',
+                  onTap: () => context.push('/s/profile'),
+                  child: AppAvatar(name: '${user['display_name'] ?? ''}', seed: '${user['id'] ?? ''}', size: 40),
+                ),
+              ]),
+            ),
+            const UpdateBanner(),
+            if (tests == null && _error != null)
+              ErrorState(message: _error!, onRetry: _load)
+            else if (tests == null)
+              const LoadingState()
+            else ...[
+              if (_error != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(gutter, 18, gutter, 0),
+                  child: InlineNotice(_error!, icon: Ph.warning),
+                ),
+              ..._sections(tests),
+            ],
+          ]),
+        ),
       ),
     );
   }

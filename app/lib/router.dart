@@ -13,9 +13,9 @@ import 'features/student/test_intro_screen.dart';
 import 'features/student/test_screen.dart';
 import 'features/teacher/teacher_routes.dart';
 
-/// Every route swaps instantly (no-motion rule).
+/// Each screen fades in over the one before it: the theme's fade-forwards transition.
 GoRoute page(String path, Widget Function(GoRouterState s) build) =>
-    GoRoute(path: path, pageBuilder: (c, s) => NoTransitionPage(key: s.pageKey, child: build(s)));
+    GoRoute(path: path, pageBuilder: (c, s) => MaterialPage(key: s.pageKey, child: build(s)));
 
 GoRouter buildRouter() => GoRouter(
       initialLocation: '/start',

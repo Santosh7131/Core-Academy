@@ -78,12 +78,34 @@ paperRoutes.get('/papers/:id', async (c) => {
     'select id, name from chapters where class_level = $1 and subject_id = $2 order by sort_order, name',
     [p.class_level, p.subject_id],
   );
+  // The paper as a set: the questions saved from it, as they now are in the bank, in paper order.
+  const questions = await q(
+    `select qq.id, qq.text, qq.options, qq.correct_option, qq.image_key, ch.name as chapter, d.number_label
+       from paper_drafts d join questions qq on qq.id = d.question_id left join chapters ch on ch.id = qq.chapter_id
+      where d.paper_id = $1 and d.status = 'saved'
+      order by d.page_no, d.seq`,
+    [id],
+  );
   return c.json({
     paper: p,
     pages: await Promise.all(pages.map(async (pg) => ({ ...pg, image_url: pg.uploaded ? await viewUrl(pg.object_key) : null }))),
     drafts: await Promise.all(drafts.map(async (d) => ({ ...d, image_url: await maybeViewUrl(d.image_key) }))),
     chapters,
+    questions: await Promise.all(questions.map(async (x) => ({ ...x, image_url: await maybeViewUrl(x.image_key) }))),
   });
+});
+
+/** Renames a paper or corrects its year and school. Class and subject stay: its questions use them. */
+paperRoutes.patch('/papers/:id', async (c) => {
+  const id = uuid(c.req.param('id'), 'paper id');
+  const b = await readBody(c);
+  const p = await q1(
+    `update papers set exam_name = $2, year = $3, school_id = $4 where id = $1
+     returning id, exam_name, year, school_id, class_level, subject_id`,
+    [id, str(b, 'exam_name', { max: 80 }), int(b, 'year', { min: 2000, max: 2100, optional: true }) ?? null, uuidOpt(b.school_id, 'school')],
+  );
+  if (!p) throw notFound('This paper');
+  return c.json({ paper: p });
 });
 
 type Extracted = {

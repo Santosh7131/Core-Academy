@@ -16,14 +16,15 @@ import 'common.dart';
 import 'subjects.dart';
 import 'questions_screens.dart' show MathToolbar, insertInto, pickAndUploadImage;
 
-Route<T> _instant<T>(Widget page) => PageRouteBuilder<T>(
-      transitionDuration: Duration.zero,
-      reverseTransitionDuration: Duration.zero,
-      pageBuilder: (_, _, _) => page,
-    );
+/// "Half-yearly exam 2025": a paper's name is what the teacher typed, plus its year.
+String paperName(Map<String, dynamic> p) => '${p['exam_name']}${p['year'] == null ? '' : ' ${p['year']}'}';
+
+String _paperGroup(Map<String, dynamic> p) =>
+    p['subject'] == null ? 'Class ${p['class_level']}' : groupName(p['class_level'] as int, '${p['subject']}');
 
 // ---------------------------------------------------------------- list
 
+/// The Upload tab: the way in to the AI paper reader, then every paper uploaded so far, by name.
 class PapersScreen extends StatefulWidget {
   const PapersScreen({super.key});
 
@@ -33,12 +34,18 @@ class PapersScreen extends StatefulWidget {
 
 class _PapersScreenState extends State<PapersScreen> {
   List<Map<String, dynamic>>? _rows;
+  List<Subject> _subjects = [];
+  int? _class;
+  String? _subject;
   String? _error;
 
   @override
   void initState() {
     super.initState();
     _load();
+    loadSubjects().then((s) {
+      if (mounted) setState(() => _subjects = s);
+    }).catchError((_) {});
   }
 
   Future<void> _load() async {
@@ -46,9 +53,9 @@ class _PapersScreenState extends State<PapersScreen> {
       final r = await api.get('/teacher/papers');
       if (mounted) {
         setState(() {
-        _rows = (r['papers'] as List).cast<Map<String, dynamic>>();
-        _error = null;
-      });
+          _rows = (r['papers'] as List).cast<Map<String, dynamic>>();
+          _error = null;
+        });
       }
     } on ApiException catch (e) {
       if (mounted) setState(() => _error = e.message);
@@ -63,64 +70,124 @@ class _PapersScreenState extends State<PapersScreen> {
   @override
   Widget build(BuildContext context) {
     final rows = _rows;
+    final shown = rows
+        ?.where((p) => (_class == null || p['class_level'] == _class) && (_subject == null || p['subject_id'] == _subject))
+        .toList();
     return SafeArea(
       bottom: false,
-      child: ListView(padding: EdgeInsets.zero, children: [
-        TabHeader(
-          kicker: rows == null ? 'Question papers' : f.count(rows.length, 'paper'),
-          title: 'Papers',
-          actions: [CircleBtn(icon: Ph.plus, filled: true, label: 'Upload paper', onTap: () => _open('/t/papers/new'))],
-        ),
-        const Padding(
-          padding: EdgeInsets.fromLTRB(gutter, 18, gutter, 0),
-          child: InlineNotice(
-            'Upload a question paper and AI types out its questions. You check each one and mark the right answer before it is saved.',
-            tone: Tone.ai,
-            icon: Ph.scan,
-          ),
-        ),
-        const SizedBox(height: 16),
-        if (rows == null && _error != null)
-          ErrorState(message: _error!, onRetry: _load)
-        else if (rows == null)
-          const LoadingState()
-        else if (rows.isEmpty)
-          EmptyState(
-            icon: Ph.scan,
-            title: 'No papers yet',
-            body: 'Photograph a question paper, or pick a PDF from WhatsApp or Files.',
-            action: SizedBox(width: 200, child: PrimaryButton('Upload a paper', onTap: () => _open('/t/papers/new'))),
-          )
-        else
+      child: PullToRefresh(
+        onRefresh: _load,
+        child: ListView(padding: EdgeInsets.zero, physics: const AlwaysScrollableScrollPhysics(), children: [
+          TabHeader(kicker: rows == null ? 'Question papers' : f.count(rows.length, 'question paper'), title: 'Upload'),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: gutter),
-            child: Column(children: [
-              for (final (i, p) in rows.indexed) ...[
-                if (i > 0) const SizedBox(height: gapRow),
-                RowTile(
-                  title: '${p['exam_name']}${p['year'] == null ? '' : ' ${p['year']}'}',
-                  meta: [
-                    p['subject'] == null ? 'Class ${p['class_level']}' : groupName(p['class_level'] as int, '${p['subject']}'),
-                    if (p['school'] != null) '${p['school']}',
-                    '${p['page_count']} page${p['page_count'] == 1 ? '' : 's'}',
-                  ].join(' · '),
-                  trailing: _status(p),
-                  onTap: () => _open('/t/papers/${p['id']}'),
-                ),
-              ],
-            ]),
+            padding: const EdgeInsets.fromLTRB(gutter, 18, gutter, 0),
+            child: _UploadButton(onTap: () => _open('/t/papers/new')),
           ),
-        navClearance,
-      ]),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(gutter + 12, 10, gutter + 12, 0),
+            child: Fig(
+              'Photograph it or pick a PDF. AI types out the questions; you check each one and give the paper a name.',
+              style: labelStyle.copyWith(fontSize: 12, height: 1.45),
+              textAlign: TextAlign.center,
+            ),
+          ),
+          if (rows != null && rows.isNotEmpty) ...[
+            const SizedBox(height: 18),
+            FilterBar(children: [
+              ClassFilter(value: _class, onChanged: (c) => setState(() => _class = c)),
+              if (_subjects.length > 1) SubjectFilter(subjects: _subjects, value: _subject, onChanged: (v) => setState(() => _subject = v)),
+            ]),
+          ],
+          if (rows == null && _error != null)
+            ErrorState(message: _error!, onRetry: _load)
+          else if (rows == null)
+            const LoadingState()
+          else if (rows.isEmpty)
+            const EmptyState(
+              icon: Ph.fileText,
+              title: 'No papers yet',
+              body: 'Each paper you upload is kept here under its name, with the questions saved from it.',
+            )
+          else ...[
+            SectionRule('Saved papers', count: shown!.length),
+            if (shown.isEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(gutter, 8, gutter, 0),
+                child: Fig('No papers for this class and subject.', style: bodyStyle.copyWith(color: muted)),
+              ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: gutter),
+              child: Column(children: [
+                for (final (i, p) in shown.indexed) ...[
+                  if (i > 0) const SizedBox(height: gapRow),
+                  RowTile(
+                    leading: const _PaperBadge(),
+                    title: paperName(p),
+                    meta: [_paperGroup(p), if (p['school'] != null) '${p['school']}', _progress(p)].join(' · '),
+                    trailing: _status(p),
+                    onTap: () => _open('/t/papers/${p['id']}'),
+                  ),
+                ],
+              ]),
+            ),
+          ],
+          navClearance,
+        ]),
+      ),
     );
+  }
+
+  /// How far the paper has got. A number and its word never split across lines.
+  String _progress(Map<String, dynamic> p) {
+    String n(int k, String one) => f.count(k, one).replaceFirst(' ', '\u00A0');
+    final unread = (p['page_count'] as int) - (p['pages_read'] as int);
+    if (unread > 0) return '${n(unread, 'page')} not read yet';
+    final questions = (p['saved'] as int) + (p['to_check'] as int);
+    return questions == 0 ? n(p['page_count'] as int, 'page') : n(questions, 'question');
   }
 
   Widget _status(Map<String, dynamic> p) {
     final toCheck = p['to_check'] as int;
     if ((p['pages_read'] as int) < (p['page_count'] as int)) return const TagChip('Not read');
     if (toCheck > 0) return TagChip('$toCheck to check', tone: Tone.warning);
-    return TagChip('${p['saved']} saved', tone: Tone.success);
+    if ((p['saved'] as int) > 0) return const TagChip('Ready', tone: Tone.success);
+    return const TagChip('Nothing saved');
   }
+}
+
+/// The way in to the AI paper reader, in the one accent colour the reader owns.
+class _UploadButton extends StatelessWidget {
+  const _UploadButton({required this.onTap});
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Pressable(
+        label: 'Upload a question paper',
+        onTap: onTap,
+        child: Container(
+          height: 56,
+          decoration: BoxDecoration(color: aiAccent, borderRadius: BorderRadius.circular(16), boxShadow: e4),
+          alignment: Alignment.center,
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            const Icon(Ph.scan, size: 20, color: Colors.white),
+            const SizedBox(width: 9),
+            Text('Upload a question paper', style: buttonStyle.copyWith(color: Colors.white, fontSize: 15)),
+          ]),
+        ),
+      );
+}
+
+class _PaperBadge extends StatelessWidget {
+  const _PaperBadge();
+
+  @override
+  Widget build(BuildContext context) => Container(
+        width: 40,
+        height: 48,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(color: fill, borderRadius: BorderRadius.circular(9)),
+        child: Icon(Ph.fileText, size: 19, color: faint),
+      );
 }
 
 // ---------------------------------------------------------------- upload
@@ -222,9 +289,9 @@ class _UploadPaperScreenState extends State<UploadPaperScreen> {
   }
 
   String? get _missing {
+    if (_exam.text.trim().isEmpty) return 'Name the paper, e.g. Half-yearly exam.';
     if (_class == null) return 'Choose the class.';
     if (_subjectId == null) return 'Choose the subject.';
-    if (_exam.text.trim().isEmpty) return 'Name the paper, e.g. Half-yearly exam.';
     if (_pages.isEmpty) return 'Add at least one page.';
     return null;
   }
@@ -267,7 +334,6 @@ class _UploadPaperScreenState extends State<UploadPaperScreen> {
   @override
   Widget build(BuildContext context) {
     final missing = _missing;
-    final years = [for (var y = DateTime.now().year; y > DateTime.now().year - 5; y--) y];
     return PushedPanel(
       kicker: 'Question paper',
       title: 'Upload paper',
@@ -277,24 +343,22 @@ class _UploadPaperScreenState extends State<UploadPaperScreen> {
         disabledReason: _busy ? null : missing,
       ),
       children: [
-        const FormLabel('Class'),
-        ClassChips(value: _class, padding: EdgeInsets.zero, onChanged: (c) => setState(() => _class = c)),
-        const FormLabel('Subject'),
-        SubjectChips(subjects: _subjects, value: _subjectId, padding: EdgeInsets.zero, onChanged: (v) => setState(() => _subjectId = v)),
-        const FormLabel('School'),
-        ChipRow(padding: EdgeInsets.zero, children: [
-          SegChip('Not from a school', selected: _schoolId == null, onTap: () => setState(() => _schoolId = null)),
-          for (final s in _schools) SegChip('${s['name']}', selected: _schoolId == s['id'], onTap: () => setState(() => _schoolId = '${s['id']}')),
-        ]),
-        const FormLabel('Paper'),
+        const FormLabel('Name'),
         GroupedInputs(children: [
-          BareField(controller: _exam, placeholder: 'Name, e.g. Half-yearly exam', capitalization: TextCapitalization.sentences),
+          BareField(controller: _exam, placeholder: 'Paper name, e.g. Half-yearly exam', capitalization: TextCapitalization.sentences),
         ]),
-        const SizedBox(height: 10),
-        ChipRow(padding: EdgeInsets.zero, children: [
-          for (final y in years) SegChip('$y', selected: _year == y, onTap: () => setState(() => _year = y)),
-          SegChip('No year', selected: _year == null, onTap: () => setState(() => _year = null)),
-        ]),
+        const FormLabel('Class'),
+        ClassField(value: _class, onChanged: (c) => setState(() => _class = c)),
+        const FormLabel('Subject'),
+        SubjectField(subjects: _subjects, value: _subjectId, onChanged: (v) => setState(() => _subjectId = v)),
+        const FormLabel('School and year'),
+        _SchoolYear(
+          schools: _schools,
+          schoolId: _schoolId,
+          year: _year,
+          onSchool: (v) => setState(() => _schoolId = v),
+          onYear: (v) => setState(() => _year = v),
+        ),
         FormLabel(_pages.isEmpty ? 'Pages' : 'Pages · ${_pages.length}'),
         if (_pages.isNotEmpty) ...[
           Wrap(spacing: 10, runSpacing: 10, children: [
@@ -335,6 +399,16 @@ class _UploadPaperScreenState extends State<UploadPaperScreen> {
 
 enum _Filter { toCheck, ready, other, saved, all }
 
+const _filterLabels = {
+  _Filter.toCheck: 'To check',
+  _Filter.ready: 'Ready to save',
+  _Filter.other: 'Not multiple choice',
+  _Filter.saved: 'Saved',
+  _Filter.all: 'All questions',
+};
+
+/// One uploaded paper. While AI drafts wait to be checked this is where they are checked;
+/// once every question is saved it shows the paper as a named set that can become a test.
 class PaperReviewScreen extends StatefulWidget {
   const PaperReviewScreen({super.key, required this.id, this.autoRead = false});
   final String id;
@@ -349,12 +423,19 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> {
   List<Map<String, dynamic>> _pages = [];
   List<Map<String, dynamic>> _drafts = [];
   List<Map<String, dynamic>> _chapters = [];
+
+  /// The questions saved from this paper, as they now are in the bank, in paper order.
+  List<Map<String, dynamic>> _questions = [];
   String? _error;
   String? _reading; // "Reading page 2 of 4"
   String? _readError;
   String? _saved;
   bool _saving = false;
+  bool _making = false;
   _Filter _filter = _Filter.toCheck;
+
+  /// Looking at the AI drafts of a paper that is already a finished set.
+  bool _review = false;
 
   @override
   void initState() {
@@ -373,6 +454,7 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> {
         _pages = (d['pages'] as List).cast<Map<String, dynamic>>();
         _drafts = (d['drafts'] as List).cast<Map<String, dynamic>>();
         _chapters = (d['chapters'] as List).cast<Map<String, dynamic>>();
+        _questions = (d['questions'] as List? ?? const []).cast<Map<String, dynamic>>();
         _error = null;
       });
     } on ApiException catch (e) {
@@ -422,20 +504,14 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> {
   }
 
   Future<void> _chooseChapter(Map<String, dynamic> d) async {
-    final id = await showCentredCard<String>(
+    final c = await showChoices<String>(
       context,
       title: 'Chapter',
-      builder: (ctx) => SingleChildScrollView(
-        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          for (final (i, c) in _chapters.indexed) ...[
-            if (i > 0) const SizedBox(height: 8),
-            RowTile(title: '${c['name']}', trailing: d['chapter_id'] == c['id'] ? Icon(Ph.check, size: 18, color: ink) : null, onTap: () => Navigator.of(ctx).pop('${c['id']}')),
-          ],
-          if (_chapters.isEmpty) Text('No chapters for this class yet. Add them in Settings.', style: bodyStyle.copyWith(color: muted)),
-        ]),
-      ),
+      subtitle: _chapters.isEmpty ? 'No chapters for this class yet. Add them in Settings.' : null,
+      options: [for (final c in _chapters) Choice('${c['id']}', '${c['name']}')],
+      selected: d['chapter_id'] as String?,
     );
-    if (id != null) _patch(d, {'chapter_id': id});
+    if (c?.value != null) _patch(d, {'chapter_id': c!.value});
   }
 
   Future<void> _addDiagram(Map<String, dynamic> d) async {
@@ -460,7 +536,7 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> {
   }
 
   Future<void> _edit(Map<String, dynamic> d) async {
-    final changed = await Navigator.of(context).push<Map<String, dynamic>>(_instant(DraftEditor(draft: d)));
+    final changed = await Navigator.of(context).push<Map<String, dynamic>>(MaterialPageRoute(builder: (_) => DraftEditor(draft: d)));
     if (changed != null) _patch(d, changed);
   }
 
@@ -482,6 +558,45 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> {
     }
   }
 
+  Future<void> _rename(Map<String, dynamic> p) async {
+    final changed = await Navigator.of(context).push<bool>(MaterialPageRoute(builder: (_) => _PaperDetails(paper: p)));
+    if (changed == true) _load();
+  }
+
+  Future<void> _openQuestion(Map<String, dynamic> q) async {
+    await context.push('/t/questions/${q['id']}');
+    _load();
+  }
+
+  /// Every saved question goes into a new draft test for the paper's class and subject, named
+  /// after the paper. The test editor opens so the teacher can set the times and publish.
+  Future<void> _makeTest(Map<String, dynamic> p) async {
+    setState(() => _making = true);
+    try {
+      final n = _questions.length;
+      // A minute and a half a question, rounded up to a limit the test editor offers.
+      final want = (n * 1.5).ceil();
+      final limit = const [20, 30, 45, 60, 90, 120, 180].firstWhere((m) => m >= want, orElse: () => 180);
+      final r = await api.post('/teacher/tests', {
+        'title': paperName(p),
+        'class_level': p['class_level'],
+        'subject_id': p['subject_id'],
+        'question_ids': [for (final q in _questions) q['id']],
+        'time_limit_min': limit,
+        'shuffle': true,
+        'assign_all': false,
+        'assign_group': true,
+      });
+      if (!mounted) return;
+      setState(() => _saved = 'Made the test "${paperName(p)}". It is in Tests.');
+      await context.push('/t/tests/${r['id']}/edit');
+    } on ApiException catch (e) {
+      if (mounted) showProblem(context, e);
+    } finally {
+      if (mounted) setState(() => _making = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final p = _paper;
@@ -498,10 +613,34 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> {
     final shown = live.where(_matches).toList();
     final unread = _pages.where((x) => x['ai_status'] != 'done').length;
     final lastRead = _pages.map((x) => f.parseTime(x['read_at'])).whereType<DateTime>().fold<DateTime?>(null, (a, b) => a == null || b.isAfter(a) ? b : a);
+    final counts = {_Filter.toCheck: toCheck, _Filter.ready: ready, _Filter.other: other, _Filter.saved: saved, _Filter.all: live.length};
 
+    // Nothing left to read, check or save: the paper is a finished set.
+    final asSet = unread == 0 && _reading == null && toCheck == 0 && ready == 0 && _questions.isNotEmpty;
+    if (asSet && !_review) return _asSet(p);
+
+    return PopScope(
+      canPop: !asSet,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) setState(() => _review = false);
+      },
+      child: _reviewPanel(p, live: live, shown: shown, counts: counts, ready: ready, toCheck: toCheck, unread: unread, lastRead: lastRead, asSet: asSet),
+    );
+  }
+
+  Widget _reviewPanel(Map<String, dynamic> p,
+      {required List<Map<String, dynamic>> live,
+      required List<Map<String, dynamic>> shown,
+      required Map<_Filter, int> counts,
+      required int ready,
+      required int toCheck,
+      required int unread,
+      required DateTime? lastRead,
+      required bool asSet}) {
     return PushedPanel(
-      kicker: 'Question paper · ${p['subject'] == null ? 'Class ${p['class_level']}' : groupName(p['class_level'] as int, '${p['subject']}')}',
+      kicker: 'Question paper · ${_paperGroup(p)}',
       title: _reading != null && live.isEmpty ? 'Reading' : '${live.length} questions',
+      onBack: asSet ? () => setState(() => _review = false) : null,
       footer: PrimaryButton(
         _saving ? 'Saving' : (ready == 0 ? 'Save ready questions' : 'Save $ready ready question${ready == 1 ? '' : 's'}'),
         onTap: ready > 0 && !_saving ? _save : null,
@@ -513,18 +652,14 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> {
       ),
       children: [
         const SizedBox(height: 8),
-        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Expanded(
-            child: Fig(
-              [
-                '${p['exam_name']}${p['year'] == null ? '' : ' ${p['year']}'}',
-                if (p['school'] != null) '${p['school']}',
-                if (lastRead != null) 'read ${f.time(lastRead)}',
-              ].join(' · '),
-              style: labelStyle,
-            ),
-          ),
-        ]),
+        Fig(
+          [
+            paperName(p),
+            if (p['school'] != null) '${p['school']}',
+            if (lastRead != null) 'read ${f.time(lastRead)}',
+          ].join(' · '),
+          style: labelStyle,
+        ),
         const SizedBox(height: 14),
         SizedBox(
           height: 84,
@@ -533,7 +668,9 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> {
               if (i > 0) const SizedBox(width: 10),
               Pressable(
                 label: 'Open page ${pg['page_no']}',
-                onTap: pg['image_url'] == null ? null : () => Navigator.of(context).push(_instant(_PageView(url: '${pg['image_url']}', n: pg['page_no'] as int))),
+                onTap: pg['image_url'] == null
+                    ? null
+                    : () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => _PageView(url: '${pg['image_url']}', n: pg['page_no'] as int))),
                 child: Stack(children: [
                   Container(
                     width: 63,
@@ -570,12 +707,21 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> {
           InlineNotice(_saved!, tone: Tone.success, icon: Ph.checkCircle),
         ],
         const SizedBox(height: 16),
-        ChipRow(padding: EdgeInsets.zero, children: [
-          SegChip('To check', count: toCheck, selected: _filter == _Filter.toCheck, onTap: () => setState(() => _filter = _Filter.toCheck)),
-          SegChip('Ready', count: ready, selected: _filter == _Filter.ready, onTap: () => setState(() => _filter = _Filter.ready)),
-          SegChip('Not MCQ', count: other, selected: _filter == _Filter.other, onTap: () => setState(() => _filter = _Filter.other)),
-          SegChip('Saved', count: saved, selected: _filter == _Filter.saved, onTap: () => setState(() => _filter = _Filter.saved)),
-          SegChip('All', count: live.length, selected: _filter == _Filter.all, onTap: () => setState(() => _filter = _Filter.all)),
+        FilterBar(padding: EdgeInsets.zero, children: [
+          SelectPill(
+            label: _filterLabels[_filter]!,
+            count: counts[_filter],
+            active: _filter != _Filter.all,
+            onTap: () async {
+              final c = await showChoices<_Filter>(
+                context,
+                title: 'Show',
+                options: [for (final x in _Filter.values) Choice(x, _filterLabels[x]!, count: counts[x])],
+                selected: _filter,
+              );
+              if (c?.value != null) setState(() => _filter = c!.value!);
+            },
+          ),
         ]),
         const SizedBox(height: 14),
         if (shown.isEmpty)
@@ -606,6 +752,209 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> {
         ],
       ],
     );
+  }
+
+  /// The paper as a named set of questions, ready to become a test.
+  Widget _asSet(Map<String, dynamic> p) {
+    final n = _questions.length;
+    final group = _paperGroup(p);
+    return PushedPanel(
+      kicker: 'Question paper · $group',
+      title: paperName(p),
+      headerTrailing: CircleBtn(icon: Ph.pencilSimple, label: 'Rename paper', onTap: () => _rename(p)),
+      footer: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        PrimaryButton(
+          _making ? 'Making the test' : 'Make a test from this paper',
+          leadingIcon: Ph.exam,
+          onTap: _making ? null : () => _makeTest(p),
+        ),
+        const SizedBox(height: 8),
+        Fig('All $n question${n == 1 ? '' : 's'} go into a new draft test for $group.', style: labelStyle, textAlign: TextAlign.center),
+      ]),
+      children: [
+        const SizedBox(height: 12),
+        Wrap(spacing: 8, runSpacing: 8, children: [
+          if (p['school'] != null) TagChip('${p['school']}'),
+          TagChip(f.count(n, 'question')),
+          TagChip(f.count(_pages.length, 'page')),
+        ]),
+        if (_saved != null) ...[
+          const SizedBox(height: 14),
+          InlineNotice(_saved!, tone: Tone.success, icon: Ph.checkCircle),
+        ],
+        SectionRule('Questions', count: n, padding: const EdgeInsets.fromLTRB(0, 26, 0, 11)),
+        for (final (i, q) in _questions.indexed) ...[
+          if (i > 0) const SizedBox(height: gapRow),
+          _SetRow(n: i + 1, q: q, onTap: () => _openQuestion(q)),
+        ],
+        const SizedBox(height: 8),
+        Center(
+          child: TextAction('See the AI drafts, page by page', onTap: () {
+            setState(() {
+              _review = true;
+              _filter = _Filter.all;
+            });
+          }),
+        ),
+      ],
+    );
+  }
+}
+
+/// A question in a paper's set: its place in the paper, the question, and its chapter.
+class _SetRow extends StatelessWidget {
+  const _SetRow({required this.n, required this.q, required this.onTap});
+  final int n;
+  final Map<String, dynamic> q;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Pressable(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(17, 15, 15, 15),
+          decoration: surface(radius: rCard, shadow: e1),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            SizedBox(
+              width: 22,
+              child: Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Text('$n', style: numStyle(size: 12, weight: FontWeight.w600, color: faint)),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                MathText('${q['text']}', style: rowTitleStyle, maxLines: 3),
+                const SizedBox(height: 2),
+                Fig(q['chapter'] == null ? 'No chapter' : '${q['chapter']}', style: labelStyle.copyWith(color: muted), maxLines: 1),
+              ]),
+            ),
+          ]),
+        ),
+      );
+}
+
+/// Rename a paper, or correct its school and year. The class and subject stay: the questions
+/// saved from it use them.
+class _PaperDetails extends StatefulWidget {
+  const _PaperDetails({required this.paper});
+  final Map<String, dynamic> paper;
+
+  @override
+  State<_PaperDetails> createState() => _PaperDetailsState();
+}
+
+class _PaperDetailsState extends State<_PaperDetails> {
+  late final _name = TextEditingController(text: '${widget.paper['exam_name']}');
+  late String? _schoolId = widget.paper['school_id'] as String?;
+  late int? _year = widget.paper['year'] as int?;
+  List<Map<String, dynamic>> _schools = [];
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _name.addListener(() => setState(() {}));
+    api.get('/teacher/schools').then((r) {
+      if (mounted) setState(() => _schools = (r['schools'] as List).cast<Map<String, dynamic>>());
+    }).catchError((_) {});
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    setState(() => _busy = true);
+    try {
+      await api.patch('/teacher/papers/${widget.paper['id']}', {'exam_name': _name.text.trim(), 'year': _year, 'school_id': _schoolId});
+      if (mounted) Navigator.of(context).pop(true);
+    } on ApiException catch (e) {
+      if (mounted) showProblem(context, e);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final empty = _name.text.trim().isEmpty;
+    return PushedPanel(
+      kicker: 'Question paper · ${_paperGroup(widget.paper)}',
+      title: 'Rename paper',
+      footer: PrimaryButton(
+        _busy ? 'Saving' : 'Save',
+        onTap: empty || _busy ? null : _save,
+        disabledReason: empty ? 'Name the paper, e.g. Half-yearly exam.' : null,
+      ),
+      children: [
+        const FormLabel('Name'),
+        GroupedInputs(children: [
+          BareField(controller: _name, placeholder: 'Paper name, e.g. Half-yearly exam', capitalization: TextCapitalization.sentences),
+        ]),
+        const FormLabel('School and year'),
+        _SchoolYear(
+          schools: _schools,
+          schoolId: _schoolId,
+          year: _year,
+          onSchool: (v) => setState(() => _schoolId = v),
+          onYear: (v) => setState(() => _year = v),
+        ),
+        const SizedBox(height: 10),
+        Fig('The class and subject stay as they are, because the questions saved from this paper use them.', style: labelStyle),
+      ],
+    );
+  }
+}
+
+/// A paper's school and year, side by side.
+class _SchoolYear extends StatelessWidget {
+  const _SchoolYear({required this.schools, required this.schoolId, required this.year, required this.onSchool, required this.onYear});
+  final List<Map<String, dynamic>> schools;
+  final String? schoolId;
+  final int? year;
+  final ValueChanged<String?> onSchool;
+  final ValueChanged<int?> onYear;
+
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now().year;
+    final years = {for (var y = now; y > now - 5; y--) y, ?year}.toList()..sort((a, b) => b - a);
+    return Row(children: [
+      Expanded(
+        child: SelectField(
+          value: schools.where((s) => s['id'] == schoolId).map((s) => '${s['name']}').firstOrNull ?? 'Not from a school',
+          onTap: () async {
+            final c = await showChoices<String>(
+              context,
+              title: 'School',
+              options: [const Choice(null, 'Not from a school'), for (final s in schools) Choice('${s['id']}', '${s['name']}')],
+              selected: schoolId,
+            );
+            if (c != null) onSchool(c.value);
+          },
+        ),
+      ),
+      const SizedBox(width: 10),
+      SizedBox(
+        width: 120,
+        child: SelectField(
+          value: year == null ? 'No year' : '$year',
+          onTap: () async {
+            final c = await showChoices<int>(
+              context,
+              title: 'Year',
+              options: [for (final y in years) Choice(y, '$y'), const Choice(null, 'No year')],
+              selected: year,
+            );
+            if (c != null) onYear(c.value);
+          },
+        ),
+      ),
+    ]);
   }
 }
 

@@ -6,15 +6,15 @@ import '../../ui/kit.dart';
 import '../../ui/tokens.dart';
 
 /// Teacher tabs with a floating navigation surface (solid, no blur).
-/// Papers is the AI reader, the one tab allowed to carry the accent.
+/// Upload is the AI paper reader, the one tab allowed to carry the accent.
 class TeacherShell extends StatelessWidget {
   const TeacherShell({super.key, required this.shell});
   final StatefulNavigationShell shell;
 
   static const _items = [
-    (Ph.house, 'Today'),
+    (Ph.house, 'Home'),
     (Ph.users, 'Students'),
-    (Ph.scan, 'Papers'),
+    (Ph.scan, 'Upload'),
     (Ph.books, 'Questions'),
     (Ph.exam, 'Tests'),
   ];

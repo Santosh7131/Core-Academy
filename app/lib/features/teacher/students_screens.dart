@@ -71,74 +71,80 @@ class _StudentsScreenState extends State<StudentsScreen> {
     final group = _class != null && subjectName != null ? groupName(_class!, subjectName) : null;
     return SafeArea(
       bottom: false,
-      child: ListView(padding: EdgeInsets.zero, children: [
-        TabHeader(
-          kicker: all == null ? 'Students' : (group != null ? '$group · ${rows!.length}' : '$active active'),
-          title: 'Students',
-          actions: [CircleBtn(icon: Ph.userPlus, filled: true, label: 'Add student', onTap: () => _open('/t/students/new'))],
-        ),
-        const SizedBox(height: 18),
-        ClassChips(value: _class, allowAll: true, onChanged: (c) => setState(() => _class = c)),
-        if (_subjects.length > 1) ...[
-          const SizedBox(height: 8),
-          SubjectChips(
-            subjects: _subjects,
-            value: _subject,
-            allowAll: true,
-            counts: inClass == null ? null : {for (final x in _subjects) x.id: inClass.where((s) => _studies(s, x.id)).length},
-            onChanged: (v) => setState(() => _subject = v),
-          ),
-        ],
-        const SizedBox(height: 16),
-        if (all == null && _error != null)
-          ErrorState(message: _error!, onRetry: _load)
-        else if (all == null)
-          const LoadingState()
-        else if (rows!.isEmpty)
-          EmptyState(
-            icon: Ph.users,
-            title: all.isEmpty
-                ? 'No students yet'
-                : group != null
-                    ? 'No students in $group'
-                    : _class != null
-                        ? 'No students in Class $_class'
-                        : 'No students take $subjectName',
-            body: group != null
-                ? 'Open a Class $_class student and add $subjectName to put them in this group.'
-                : 'Add a student to create their username and PIN.',
-            action: SizedBox(width: 200, child: PrimaryButton('Add a student', onTap: () => _open('/t/students/new'))),
-          )
-        else
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: gutter),
-            child: Column(children: [
-              for (final (i, s) in rows.indexed) ...[
-                if (i > 0) const SizedBox(height: gapRow),
-                RowTile(
-                  leading: AppAvatar(name: '${s['display_name']}', seed: '${s['id']}'),
-                  title: '${s['display_name']}',
-                  meta: [
-                    'Class ${s['class_level']}',
-                    if (subjectNames(s['subjects']).isNotEmpty) subjectNames(s['subjects']).join(', '),
-                    if (s['school'] != null) '${s['school']}',
-                    if (s['active'] != true) 'login off',
-                  ].join(' · '),
-                  trailing: s['avg_pct'] == null
-                      ? Text('-', style: numStyle(size: 15, color: faint))
-                      : Text(f.percent(s['avg_pct'] as num), style: numStyle(size: 15, color: s['active'] == true ? ink : faint)),
-                  onTap: () => _open('/t/students/${s['id']}'),
+      child: WithFloatingAdd(
+        add: FloatingAdd('Add student', icon: Ph.userPlus, onTap: () => _open('/t/students/new')),
+        child: PullToRefresh(
+          onRefresh: _load,
+          child: ListView(padding: EdgeInsets.zero, physics: const AlwaysScrollableScrollPhysics(), children: [
+            TabHeader(
+              kicker: all == null ? 'Students' : (group != null ? '$group · ${rows!.length}' : '$active active'),
+              title: 'Students',
+            ),
+            const SizedBox(height: 18),
+            FilterBar(children: [
+              ClassFilter(value: _class, onChanged: (c) => setState(() => _class = c)),
+              if (_subjects.length > 1)
+                SubjectFilter(
+                  subjects: _subjects,
+                  value: _subject,
+                  counts: inClass == null ? null : {for (final x in _subjects) x.id: inClass.where((s) => _studies(s, x.id)).length},
+                  onChanged: (v) => setState(() => _subject = v),
                 ),
-              ],
             ]),
-          ),
-        navClearance,
-      ]),
+            const SizedBox(height: 16),
+            if (all == null && _error != null)
+              ErrorState(message: _error!, onRetry: _load)
+            else if (all == null)
+              const LoadingState()
+            else if (rows!.isEmpty)
+              EmptyState(
+                icon: Ph.users,
+                title: all.isEmpty
+                    ? 'No students yet'
+                    : group != null
+                        ? 'No students in $group'
+                        : _class != null
+                            ? 'No students in Class $_class'
+                            : 'No students take $subjectName',
+                body: group != null
+                    ? 'Open a Class $_class student and add $subjectName to put them in this group.'
+                    : 'Add a student to create their username and PIN.',
+              )
+            else
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: gutter),
+                child: Column(children: [
+                  for (final (i, s) in rows.indexed) ...[
+                    if (i > 0) const SizedBox(height: gapRow),
+                    RowTile(
+                      leading: AppAvatar(name: '${s['display_name']}', seed: '${s['id']}'),
+                      title: '${s['display_name']}',
+                      meta: [
+                        'Class ${s['class_level']}',
+                        if (subjectNames(s['subjects']).isNotEmpty) subjectNames(s['subjects']).join(', '),
+                        if (s['school'] != null) '${s['school']}',
+                        if (s['active'] != true) 'login off',
+                      ].join(' · '),
+                      trailing: s['avg_pct'] == null
+                          ? Text('-', style: numStyle(size: 15, color: faint))
+                          : Text(f.percent(s['avg_pct'] as num), style: numStyle(size: 15, color: s['active'] == true ? ink : faint)),
+                      onTap: () => _open('/t/students/${s['id']}'),
+                    ),
+                  ],
+                ]),
+              ),
+            fabClearance,
+          ]),
+        ),
+      ),
     );
   }
 }
 
 // ---------------------------------------------------------------- add
+
+/// The last option in a school choice: opens "Add a school" instead of choosing one.
+const _addSchoolChoice = '+add';
 
 class AddStudentScreen extends StatefulWidget {
   const AddStudentScreen({super.key});
@@ -289,7 +295,7 @@ class _AddStudentScreenState extends State<AddStudentScreen> {
           ),
         ]),
         const FormLabel('Class'),
-        ClassChips(value: _class, padding: EdgeInsets.zero, onChanged: (c) => setState(() => _class = c)),
+        ClassField(value: _class, onChanged: (c) => setState(() => _class = c)),
         const FormLabel('Subjects'),
         SubjectToggles(subjects: _subjects, value: _subjectIds, onChanged: (v) => setState(() => _subjectIds = v)),
         if (_class != null && _subjectIds.isNotEmpty) ...[
@@ -297,10 +303,24 @@ class _AddStudentScreenState extends State<AddStudentScreen> {
           Fig('Joins ${[for (final x in _subjects) if (_subjectIds.contains(x.id)) groupName(_class!, x.name)].join(' and ')}.', style: labelStyle),
         ],
         const FormLabel('School'),
-        ChipRow(padding: EdgeInsets.zero, children: [
-          for (final s in _schools) SegChip('${s['name']}', selected: _schoolId == s['id'], onTap: () => setState(() => _schoolId = '${s['id']}')),
-          SegChip('Add school', selected: false, onTap: _addSchool),
-        ]),
+        SelectField(
+          value: _schools.where((s) => s['id'] == _schoolId).map((s) => '${s['name']}').firstOrNull,
+          placeholder: 'Choose a school',
+          onTap: () async {
+            final c = await showChoices<String>(
+              context,
+              title: 'School',
+              options: [for (final s in _schools) Choice('${s['id']}', '${s['name']}'), const Choice(_addSchoolChoice, 'Add a new school')],
+              selected: _schoolId,
+            );
+            if (c == null) return;
+            if (c.value == _addSchoolChoice) {
+              _addSchool();
+            } else {
+              setState(() => _schoolId = c.value);
+            }
+          },
+        ),
         const FormLabel('Login'),
         GroupedInputs(children: [
           BareField(

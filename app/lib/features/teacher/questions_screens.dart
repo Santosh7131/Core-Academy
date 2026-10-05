@@ -25,9 +25,11 @@ class QuestionsScreen extends StatefulWidget {
 class _QuestionsScreenState extends State<QuestionsScreen> {
   List<Map<String, dynamic>>? _rows;
   List<Subject> _subjects = [];
+  List<ChapterRow> _chapters = [];
   String? _error;
   int? _class;
   String? _subject;
+  String? _chapter;
   final _search = TextEditingController();
   Timer? _debounce;
 
@@ -44,10 +46,14 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
     super.dispose();
   }
 
+  /// The subject the list is narrowed to; with only one subject, that one.
+  String? get _subjectOrOnly => _subject ?? (_subjects.length == 1 ? _subjects.first.id : null);
+
   Future<void> _load() async {
     final params = [
       if (_class != null) 'class=$_class',
       if (_subject != null) 'subject=$_subject',
+      if (_chapter != null) 'chapter=$_chapter',
       if (_search.text.trim().isNotEmpty) 'q=${Uri.encodeQueryComponent(_search.text.trim())}',
     ];
     try {
@@ -65,82 +71,136 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
     }
   }
 
+  /// The chapters of the chosen class and subject, for the Chapter filter.
+  Future<void> _loadChapters() async {
+    final subject = _subjectOrOnly;
+    if (_class == null || subject == null) {
+      setState(() => _chapters = []);
+      return;
+    }
+    try {
+      final r = await api.get('/teacher/chapters?class=$_class&subject=$subject');
+      if (mounted) setState(() => _chapters = (r['chapters'] as List).cast<ChapterRow>());
+    } on ApiException {
+      if (mounted) setState(() => _chapters = []);
+    }
+  }
+
+  void _narrow({int? cls, String? subject, bool clearChapter = true}) {
+    setState(() {
+      _class = cls;
+      _subject = subject;
+      if (clearChapter) _chapter = null;
+    });
+    _loadChapters();
+    _load();
+  }
+
   Future<void> _open(String path) async {
     await context.push(path);
     _load();
+    _loadChapters();
   }
 
   @override
   Widget build(BuildContext context) {
     final rows = _rows;
+    final showChapter = _class != null && _subjectOrOnly != null && _chapters.isNotEmpty;
     return SafeArea(
       bottom: false,
-      child: ListView(padding: EdgeInsets.zero, children: [
-        TabHeader(
-          kicker: rows == null ? 'Question bank' : (rows.length == 300 ? 'Showing 300' : '${rows.length} question${rows.length == 1 ? '' : 's'}'),
-          title: 'Questions',
-          actions: [CircleBtn(icon: Ph.plus, filled: true, label: 'New question', onTap: () => _open('/t/questions/new'))],
-        ),
-        const SizedBox(height: 18),
-        ClassChips(value: _class, allowAll: true, onChanged: (c) {
-          setState(() => _class = c);
-          _load();
-        }),
-        if (_subjects.length > 1) ...[
-          const SizedBox(height: 8),
-          SubjectChips(subjects: _subjects, value: _subject, allowAll: true, onChanged: (v) {
-            setState(() => _subject = v);
-            _load();
-          }),
-        ],
-        Padding(
-          padding: const EdgeInsets.fromLTRB(gutter, 12, gutter, 0),
-          child: GroupedInputs(children: [
-            BareField(
-              controller: _search,
-              placeholder: 'Search questions',
-              action: TextInputAction.search,
-              onChanged: (_) {
-                _debounce?.cancel();
-                _debounce = Timer(const Duration(milliseconds: 350), _load);
-              },
+      child: WithFloatingAdd(
+        add: FloatingAdd('New question', onTap: () => _open('/t/questions/new')),
+        child: PullToRefresh(
+          onRefresh: _load,
+          child: ListView(padding: EdgeInsets.zero, physics: const AlwaysScrollableScrollPhysics(), children: [
+            TabHeader(
+              kicker: rows == null ? 'Question bank' : (rows.length == 300 ? 'Showing 300' : '${rows.length} question${rows.length == 1 ? '' : 's'}'),
+              title: 'Questions',
             ),
+            const SizedBox(height: 18),
+            FilterBar(children: [
+              ClassFilter(value: _class, onChanged: (c) => _narrow(cls: c, subject: _subject)),
+              if (_subjects.length > 1) SubjectFilter(subjects: _subjects, value: _subject, onChanged: (v) => _narrow(cls: _class, subject: v)),
+              if (showChapter)
+                ChapterFilter(
+                  chapters: _chapters,
+                  value: _chapter,
+                  subtitle: groupName(_class!, _subjects.firstWhere((s) => s.id == _subjectOrOnly).name),
+                  onChanged: (v) {
+                    setState(() => _chapter = v);
+                    _load();
+                  },
+                ),
+            ]),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(gutter, 10, gutter, 0),
+              child: GroupedInputs(children: [
+                BareField(
+                  controller: _search,
+                  placeholder: 'Search questions',
+                  action: TextInputAction.search,
+                  onChanged: (_) {
+                    _debounce?.cancel();
+                    _debounce = Timer(const Duration(milliseconds: 350), _load);
+                  },
+                ),
+              ]),
+            ),
+            if (rows == null && _error != null)
+              ErrorState(message: _error!, onRetry: _load)
+            else if (rows == null)
+              const LoadingState()
+            else if (rows.isEmpty)
+              EmptyState(
+                icon: Ph.books,
+                title: 'No questions here',
+                body: 'Add a question by hand, or upload a question paper in Upload and let AI type it out.',
+              )
+            else
+              ..._grouped(rows),
+            fabClearance,
           ]),
         ),
-        const SizedBox(height: 16),
-        if (rows == null && _error != null)
-          ErrorState(message: _error!, onRetry: _load)
-        else if (rows == null)
-          const LoadingState()
-        else if (rows.isEmpty)
-          EmptyState(
-            icon: Ph.books,
-            title: 'No questions here',
-            body: 'Add a question by hand, or upload a question paper in Papers and let AI type it out.',
-            action: SizedBox(width: 200, child: PrimaryButton('New question', onTap: () => _open('/t/questions/new'))),
-          )
-        else
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: gutter),
-            child: Column(children: [
-              for (final (i, q) in rows.indexed) ...[
-                if (i > 0) const SizedBox(height: gapRow),
-                RowTile(
-                  titleWidget: MathText('${q['text']}', style: rowTitleStyle, maxLines: 2),
-                  meta: [
-                    q['subject'] == null ? 'Class ${q['class_level']}' : groupName(q['class_level'] as int, '${q['subject']}'),
-                    if (q['chapter'] != null) '${q['chapter']}',
-                    if ((q['used_in'] as int) > 0) 'in ${q['used_in']} test${q['used_in'] == 1 ? '' : 's'}',
-                  ].join(' · '),
-                  trailing: switch (q['source']) { 'paper' => const TagChip('From paper'), 'library' => const TagChip('Ready-made'), _ => null },
-                  onTap: () => _open('/t/questions/${q['id']}'),
-                ),
-              ],
-            ]),
-          ),
-        navClearance,
-      ]),
+      ),
     );
+  }
+
+  /// Rows under a section rule per chapter. The API sorts by class, then chapter order.
+  List<Widget> _grouped(List<Map<String, dynamic>> rows) {
+    final out = <Widget>[];
+    String? lastKey;
+    final counts = <String, int>{};
+    String keyOf(Map<String, dynamic> q) => '${q['class_level']}|${q['subject_id']}|${q['chapter_id']}';
+    for (final q in rows) {
+      counts.update(keyOf(q), (n) => n + 1, ifAbsent: () => 1);
+    }
+    for (final q in rows) {
+      final key = keyOf(q);
+      if (key != lastKey) {
+        final chapter = q['chapter'] == null ? 'No chapter' : '${q['chapter']}';
+        // Without a class and subject chosen, a chapter name alone could belong to any group.
+        final label = _class != null && _subjectOrOnly != null
+            ? chapter
+            : '${q['subject'] == null ? 'Class ${q['class_level']}' : groupName(q['class_level'] as int, '${q['subject']}')} · $chapter';
+        out.add(SectionRule(label, count: counts[key]));
+        lastKey = key;
+      } else {
+        out.add(const SizedBox(height: gapRow));
+      }
+      out.add(Padding(
+        padding: const EdgeInsets.symmetric(horizontal: gutter),
+        child: RowTile(
+          titleWidget: MathText('${q['text']}', style: rowTitleStyle, maxLines: 2),
+          meta: [
+            q['subject'] == null ? 'Class ${q['class_level']}' : groupName(q['class_level'] as int, '${q['subject']}'),
+            (q['used_in'] as int) > 0 ? 'in ${q['used_in']} test${q['used_in'] == 1 ? '' : 's'}' : 'not in a test yet',
+          ].join(' · '),
+          trailing: switch (q['source']) { 'paper' => const TagChip('From paper'), 'library' => const TagChip('Ready-made'), _ => null },
+          onTap: () => _open('/t/questions/${q['id']}'),
+        ),
+      ));
+    }
+    return out;
   }
 }
 
@@ -202,6 +262,9 @@ Future<({String key, Uint8List bytes})?> pickAndUploadImage(BuildContext context
   await api.putBytes('${up['put_url']}', bytes);
   return (key: '${up['key']}', bytes: bytes);
 }
+
+/// The last option in a chapter choice: opens "Add a chapter" instead of choosing one.
+const _addChapterChoice = '+add';
 
 class QuestionEditor extends StatefulWidget {
   const QuestionEditor({super.key, this.id});
@@ -420,9 +483,8 @@ class _QuestionEditorState extends State<QuestionEditor> {
       footer: PrimaryButton(_busy ? 'Saving' : 'Save question', onTap: missing == null && !_busy ? _save : null, disabledReason: _busy ? null : missing),
       children: [
         const FormLabel('Class'),
-        ClassChips(
+        ClassField(
           value: _class,
-          padding: EdgeInsets.zero,
           onChanged: (c) {
             setState(() {
               _class = c;
@@ -432,10 +494,9 @@ class _QuestionEditorState extends State<QuestionEditor> {
           },
         ),
         const FormLabel('Subject'),
-        SubjectChips(
+        SubjectField(
           subjects: _subjects,
           value: _subjectId,
-          padding: EdgeInsets.zero,
           onChanged: (v) {
             setState(() {
               _subjectId = v;
@@ -447,10 +508,29 @@ class _QuestionEditorState extends State<QuestionEditor> {
         ),
         if (_class != null && _subjectId != null) ...[
           const FormLabel('Chapter'),
-          ChipRow(padding: EdgeInsets.zero, children: [
-            for (final ch in _chapters) SegChip('${ch['name']}', selected: _chapterId == ch['id'], onTap: () => setState(() => _chapterId = '${ch['id']}')),
-            SegChip('Add chapter', selected: false, onTap: _addChapter),
-          ]),
+          SelectField(
+            value: _chapters.where((c) => c['id'] == _chapterId).map((c) => '${c['name']}').firstOrNull,
+            placeholder: 'No chapter',
+            onTap: () async {
+              final c = await showChoices<String>(
+                context,
+                title: 'Chapter',
+                subtitle: groupName(_class!, _subjects.where((s) => s.id == _subjectId).map((s) => s.name).firstOrNull ?? ''),
+                options: [
+                  const Choice(null, 'No chapter'),
+                  for (final ch in _chapters) Choice('${ch['id']}', '${ch['name']}'),
+                  const Choice(_addChapterChoice, 'Add a new chapter'),
+                ],
+                selected: _chapterId,
+              );
+              if (c == null) return;
+              if (c.value == _addChapterChoice) {
+                _addChapter();
+              } else {
+                setState(() => _chapterId = c.value);
+              }
+            },
+          ),
         ],
         const FormLabel('Question'),
         GroupedInputs(children: [

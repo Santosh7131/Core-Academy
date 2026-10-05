@@ -63,4 +63,6 @@ abstract final class Ph {
   static const sortAscending = IconData(0xe444, fontFamily: _family);
   static const funnel = IconData(0xe266, fontFamily: _family);
   static const crop = IconData(0xe1d4, fontFamily: _family);
+  static const fileText = IconData(0xe23a, fontFamily: _family);
+  static const arrowCircleUp = IconData(0xe030, fontFamily: _family);
 }

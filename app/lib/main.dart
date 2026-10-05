@@ -7,6 +7,7 @@ import 'core/api.dart';
 import 'core/push.dart';
 import 'core/screen_guard.dart';
 import 'core/session.dart';
+import 'core/updater.dart';
 import 'router.dart';
 import 'theme.dart';
 
@@ -31,26 +32,6 @@ bool _resolveDark() {
   return changed;
 }
 
-/// No route animation (Santosh's no-motion rule): screens swap instantly.
-class _NoMotionTransitions extends PageTransitionsBuilder {
-  const _NoMotionTransitions();
-
-  @override
-  Widget buildTransitions<T>(PageRoute<T> route, BuildContext context, Animation<double> a, Animation<double> b, Widget child) =>
-      child;
-}
-
-/// No stretch or glow when a list hits its end.
-class _NoMotionScroll extends MaterialScrollBehavior {
-  const _NoMotionScroll();
-
-  @override
-  Widget buildOverscrollIndicator(BuildContext context, Widget child, ScrollableDetails details) => child;
-
-  @override
-  ScrollPhysics getScrollPhysics(BuildContext context) => const ClampingScrollPhysics();
-}
-
 class CoreAcademyApp extends StatefulWidget {
   const CoreAcademyApp({super.key});
 
@@ -67,6 +48,7 @@ class _CoreAcademyAppState extends State<CoreAcademyApp> with WidgetsBindingObse
     WidgetsBinding.instance.addObserver(this);
     session.addListener(_onSession);
     session.restore();
+    updater.start();
   }
 
   @override
@@ -80,6 +62,11 @@ class _CoreAcademyAppState extends State<CoreAcademyApp> with WidgetsBindingObse
     ScreenGuard.forRole(session.user?['role'] as String?);
     Push.forSession(session.signedIn ? api.token : null);
     if (_resolveDark()) _rebuildEverything();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) updater.resumed();
   }
 
   @override
@@ -102,9 +89,10 @@ class _CoreAcademyAppState extends State<CoreAcademyApp> with WidgetsBindingObse
   @override
   Widget build(BuildContext context) {
     final b = isDark ? Brightness.dark : Brightness.light;
+    // Subtle motion: screens fade forward over a short slide (Android's own transition).
     final theme = buildTheme(b).copyWith(
       pageTransitionsTheme: PageTransitionsTheme(builders: {
-        for (final p in TargetPlatform.values) p: const _NoMotionTransitions(),
+        for (final p in TargetPlatform.values) p: const FadeForwardsPageTransitionsBuilder(),
       }),
     );
     return AnnotatedRegion<SystemUiOverlayStyle>(
@@ -119,7 +107,6 @@ class _CoreAcademyAppState extends State<CoreAcademyApp> with WidgetsBindingObse
         title: 'Core Academy',
         debugShowCheckedModeBanner: false,
         theme: theme,
-        scrollBehavior: const _NoMotionScroll(),
         routerConfig: _router,
       ),
     );

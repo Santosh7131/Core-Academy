@@ -9,6 +9,7 @@ import '../../core/format.dart' as f;
 import '../../core/session.dart';
 import '../../theme.dart';
 import '../../ui/kit.dart';
+import '../../ui/update_card.dart';
 import 'common.dart';
 import 'subjects.dart';
 
@@ -66,34 +67,38 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
     final d = _d;
     return SafeArea(
       bottom: false,
-      child: ListView(padding: EdgeInsets.zero, children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(gutter, 22, gutter, 0),
-          child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-            Expanded(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Kicker('${session.tuitionName} · ${DateFormat('d MMMM').format(now)}'),
-                const SizedBox(height: 6),
-                Text(DateFormat('EEEE').format(now), style: displayStyle),
-              ]),
-            ),
-            CircleBtn(icon: Ph.arrowsClockwise, label: 'Refresh', onTap: _load),
-            const SizedBox(width: 10),
-            Pressable(
-              label: 'Settings',
-              onTap: () => context.push('/t/settings'),
-              child: AppAvatar(name: '${session.user?['display_name'] ?? ''}', seed: '${session.user?['id'] ?? ''}', size: 40),
-            ),
-          ]),
-        ),
-        if (d == null && _error != null)
-          ErrorState(message: _error!, onRetry: _load)
-        else if (d == null)
-          const LoadingState()
-        else
-          ..._body(d),
-        navClearance,
-      ]),
+      child: PullToRefresh(
+        onRefresh: _load,
+        child: ListView(padding: EdgeInsets.zero, physics: const AlwaysScrollableScrollPhysics(), children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(gutter, 22, gutter, 0),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Kicker('${session.tuitionName} · ${DateFormat('d MMMM').format(now)}'),
+                  const SizedBox(height: 6),
+                  Text(DateFormat('EEEE').format(now), style: displayStyle),
+                ]),
+              ),
+              RefreshButton(onRefresh: _load),
+              const SizedBox(width: 10),
+              Pressable(
+                label: 'Settings',
+                onTap: () => context.push('/t/settings'),
+                child: AppAvatar(name: '${session.user?['display_name'] ?? ''}', seed: '${session.user?['id'] ?? ''}', size: 40),
+              ),
+            ]),
+          ),
+          const UpdateBanner(),
+          if (d == null && _error != null)
+            ErrorState(message: _error!, onRetry: _load)
+          else if (d == null)
+            const LoadingState()
+          else
+            ..._body(d),
+          navClearance,
+        ]),
+      ),
     );
   }
 

@@ -1,0 +1,72 @@
+/* Comps for version 1.2: select filters, visible add buttons, renamed tabs, named papers.
+   Builds on tokens.css + comp.css. */
+.hdr{display:flex;align-items:flex-end;gap:12px;padding-top:14px}
+.hdr .kick{margin-bottom:6px}
+.rows{display:flex;flex-direction:column;gap:10px}
+.row .rowt{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.pad-nav{height:118px}
+
+/* Filters: one row of select pills. A pill reads as a value plus a caret; an applied filter
+   (anything but "All") takes the filled action ground so it is obvious what is narrowed. */
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin-top:18px}
+.sel{height:36px;padding:0 12px 0 14px;border-radius:999px;display:inline-flex;align-items:center;gap:6px;
+     font-size:12.5px;font-weight:600;letter-spacing:-.025em;background:var(--surface);color:var(--body);box-shadow:var(--e1)}
+.sel i{font-size:13px;color:var(--faint)}
+.sel.on{background:var(--action);color:var(--action-ink);box-shadow:var(--e2)}
+.sel.on i{color:var(--action-ink);opacity:.7}
+:root[data-theme="dark"] .sel:not(.on){border:1px solid var(--hair)}
+
+/* Search: one floating field, placeholder only. */
+.search{margin-top:10px;height:46px;border-radius:16px;background:var(--surface);box-shadow:var(--e1);
+        display:flex;align-items:center;gap:10px;padding:0 16px;font-size:13.8px;font-weight:500;color:var(--faint);letter-spacing:-.022em}
+.search i{font-size:17px}
+:root[data-theme="dark"] .search{border:1px solid var(--hair)}
+
+/* Add button, option A: a labelled pill in the header. */
+.add{height:42px;padding:0 16px 0 13px;border-radius:999px;display:inline-flex;align-items:center;gap:7px;flex:none;
+     font-size:13.5px;font-weight:700;letter-spacing:-.03em;background:var(--action);color:var(--action-ink);box-shadow:var(--e4);margin-bottom:4px}
+.add i{font-size:17px}
+/* Add button, option B: a labelled floating button above the tab bar. */
+.fab{position:absolute;right:20px;bottom:112px;height:54px;padding:0 22px 0 18px;border-radius:999px;display:flex;align-items:center;gap:8px;
+     font-size:14.5px;font-weight:700;letter-spacing:-.03em;background:var(--action);color:var(--action-ink);box-shadow:var(--e4);z-index:3}
+.fab i{font-size:19px}
+:root[data-theme="dark"] :is(.add,.fab){border:1px solid #3A3A46}
+
+/* Tab bar: solid floating surface, no blur. */
+.navbar{position:absolute;left:16px;right:16px;bottom:34px;height:64px;border-radius:999px;
+        background:var(--surface);box-shadow:var(--e4);display:flex;align-items:center;justify-content:space-around;padding:0 8px;z-index:2}
+.ni{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:10.5px;font-weight:600;letter-spacing:-.01em;color:var(--muted);width:60px}
+.ni i{font-size:22px}
+.ni.on{color:var(--ink)}
+.ni.ai i{color:var(--accent)}
+
+/* Centred card for short choices (guide §5): replaces dropdown menus and bottom sheets. */
+.scrim{position:absolute;inset:0;background:rgba(0,0,0,.32);z-index:5;display:grid;place-items:center}
+:root[data-theme="dark"] .scrim{background:rgba(0,0,0,.62)}
+.choice{width:357px;max-height:72%;border-radius:28px;background:var(--surface);box-shadow:var(--e4);
+        padding:20px 0 12px;display:flex;flex-direction:column}
+:root[data-theme="dark"] .choice{border:1px solid var(--hair)}
+.choice .ttl{display:flex;align-items:center;justify-content:space-between;padding:0 18px 0 22px;margin-bottom:6px}
+.choice .ttl .sect{font-size:23px;font-weight:800;letter-spacing:-.04em}
+.choice .sub{padding:0 22px;margin-bottom:10px}
+.opt2{display:flex;align-items:center;gap:12px;padding:13px 22px;font-size:14.5px;font-weight:600;letter-spacing:-.026em;color:var(--ink)}
+.opt2 .n{font-family:var(--mono);font-size:12px;color:var(--faint);letter-spacing:-.03em}
+.opt2.on{background:var(--sunk)}
+.opt2 .ck{margin-left:auto;font-size:18px;color:var(--ink)}
+.opt2 + .opt2{border-top:1px solid var(--hair)}
+
+/* Upload tab */
+.upl{margin-top:18px;height:56px;border-radius:16px;display:flex;align-items:center;justify-content:center;gap:9px;
+     font-size:15px;font-weight:700;letter-spacing:-.03em;background:var(--accent);color:#fff;box-shadow:var(--e4)}
+.upl i{font-size:20px}
+.note{margin-top:10px;font-size:12px;font-weight:500;color:var(--muted);letter-spacing:-.015em;line-height:1.45;text-align:center;padding:0 12px}
+.pbadge{width:40px;height:48px;border-radius:9px;background:var(--sunk);display:grid;place-items:center;flex:none;color:var(--faint);font-size:19px}
+
+/* Paper as a set */
+.back{display:flex;align-items:center;justify-content:space-between;padding-top:10px}
+.facts{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.qrow{display:flex;gap:12px;align-items:flex-start}
+.qn{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--faint);letter-spacing:-.03em;width:22px;flex:none;padding-top:2px}
+.sticky{position:absolute;left:0;right:0;bottom:0;padding:14px 20px 34px;background:var(--bg);border-top:1px solid var(--hair);z-index:3}
+.sticky .btn{height:54px}
+.sticky .reason{margin-top:8px}
