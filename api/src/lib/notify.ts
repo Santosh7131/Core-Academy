@@ -48,24 +48,38 @@ const count = (n: number, one: string) => `${n} ${n === 1 ? one : `${one}s`}`;
 
 type Sent = { title: string; people: number; phones: number };
 
-/** Tells students about tests that have opened. Each test is claimed once, so it is told once. */
+/**
+ * Tells each student about every open test they have not been told about: when it opens, and
+ * later if they join its group or are added to it. Each student and test is claimed once in
+ * test_notices, so nobody is told twice. A test closing within 5 minutes is not announced.
+ */
 async function announce(now: Date): Promise<Sent[]> {
-  const tests = await q<{ id: string; title: string; time_limit_min: number | null; closes_at: Date | null; questions: number }>(
-    `update tests set announced_at = now()
-      where status = 'published' and announced_at is null
-        and (opens_at is null or opens_at <= now()) and (closes_at is null or closes_at > now())
-      returning id, title, time_limit_min, closes_at,
-                (select count(*) from test_questions tq where tq.test_id = tests.id) as questions`,
+  const fresh = await q<{ id: string; title: string; time_limit_min: number | null; closes_at: Date | null; questions: number; students: string[] }>(
+    `with ${ASSIGNED_CTE},
+     open as (
+       select t.id from tests t
+        where t.status = 'published' and (t.opens_at is null or t.opens_at <= now()) and (t.closes_at is null or t.closes_at > now())),
+     -- Marks every open test as announced, even one nobody is in yet, so the scheduler moves on.
+     marked as (update tests set announced_at = now() where announced_at is null and id in (select id from open) returning id),
+     told as (
+       insert into test_notices (test_id, student_id)
+       select a.test_id, a.student_id from assigned a join tests t on t.id = a.test_id
+        where a.test_id in (select id from open) and (t.closes_at is null or t.closes_at > now() + interval '5 minutes')
+       on conflict do nothing
+       returning test_id, student_id)
+     select t.id, t.title, t.time_limit_min, t.closes_at,
+            (select count(*) from test_questions tq where tq.test_id = t.id) as questions,
+            array_agg(x.student_id) as students
+       from told x join tests t on t.id = x.test_id
+      group by t.id, t.title, t.time_limit_min, t.closes_at`,
   );
   const out: Sent[] = [];
-  for (const t of tests) {
-    if (t.closes_at && t.closes_at.getTime() - now.getTime() < 5 * 60_000) continue; // closing anyway
-    const people = await q<{ student_id: string }>(`with ${ASSIGNED_CTE} select student_id from assigned where test_id = $1`, [t.id]);
+  for (const t of fresh) {
     const facts = [count(t.questions, 'question')];
     if (t.time_limit_min) facts.push(`${t.time_limit_min} min`);
     if (t.closes_at) facts.push(`closes ${when(t.closes_at, now)}`);
-    const phones = await pushToUsers(people.map((p) => p.student_id), { title: t.title, body: `New test · ${facts.join(' · ')}` });
-    out.push({ title: t.title, people: people.length, phones });
+    const phones = await pushToUsers(t.students, { title: t.title, body: `New test · ${facts.join(' · ')}` });
+    out.push({ title: t.title, people: t.students.length, phones });
   }
   return out;
 }
@@ -181,7 +195,10 @@ export async function runIfDue(now = new Date()) {
   return { push: true, ran: true, announced, reminded, summary, next: await planNext() };
 }
 
-/** After a test is published or its times change: announce it if it is open, and re-plan. */
+/**
+ * After anything that can give a student a new open test (a test published or changed, a student
+ * added, put in a group or turned back on): tell them now, and re-plan.
+ */
 export async function afterTestChange() {
   if (!pushConfigured()) return;
   try {

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/api.dart';
+import '../../core/changes.dart';
 import '../../core/session.dart';
 import '../../theme.dart';
 import '../../ui/kit.dart';
@@ -15,9 +16,14 @@ class SettingsScreen extends StatefulWidget {
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
-class _SettingsScreenState extends State<SettingsScreen> {
+class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObserver, AutoRefresh<SettingsScreen> {
+  @override
+  Set<Area> get refreshAreas => {Area.settings};
+
+  @override
+  Future<void> refreshQuietly() => _load();
+
   Map<String, dynamic>? _s;
-  List<Map<String, dynamic>> _schools = [];
   List<Map<String, dynamic>> _chapters = [];
   List<Map<String, dynamic>> _subjectRows = [];
   List<Subject> _subjects = [];
@@ -45,12 +51,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _load() async {
+    markLoaded();
     try {
       final s = await api.get('/teacher/settings');
-      final schools = await api.get('/teacher/schools');
       final subjects = await api.get('/teacher/subjects');
       _s = Map<String, dynamic>.from(s);
-      _schools = (schools['schools'] as List).cast<Map<String, dynamic>>();
       _subjectRows = (subjects['subjects'] as List).cast<Map<String, dynamic>>();
       _subjects = [for (final r in _subjectRows) Subject.fromJson(r)];
       if (!_subjects.any((x) => x.id == _chapterSubject)) {
@@ -117,7 +122,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ]),
     );
     if (choice == 'rename') {
-      final name = await _ask('Rename', switch (kind) { 'schools' => 'School name', 'subjects' => 'Subject name', _ => 'Chapter name' },
+      final name = await _ask('Rename', kind == 'subjects' ? 'Subject name' : 'Chapter name',
           initial: '${row['name']}');
       if (name != null && name.trim().isNotEmpty) {
         await _run(() => api.patch('/teacher/$kind/${row['id']}', {'name': name.trim()}), 'Renamed.');
@@ -128,7 +133,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         context,
         title: 'Delete ${row['name']}?',
         body: switch (kind) {
-          'schools' => 'Students from this school keep their logins; their school is just left blank.',
           'subjects' => 'Students who take it are taken out of its groups. A subject with chapters, questions or tests cannot be deleted.',
           _ => 'Questions in this chapter stay in the bank without a chapter.',
         },
@@ -170,19 +174,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               await api.patch('/teacher/settings', {'tuition_name': _tuition.text.trim(), 'display_name': _name.text.trim()});
               await session.restore();
             }, 'Names saved.')),
-        SectionRule('Schools', count: _schools.length, padding: rule),
-        for (final (i, sc) in _schools.indexed) ...[
-          if (i > 0) const SizedBox(height: gapRow),
-          RowTile(title: '${sc['name']}', meta: '${sc['students']} students', chevron: true, onTap: () => _editRow('schools', sc)),
-        ],
-        const SizedBox(height: gapRow),
-        SecondaryButton('Add school', icon: Ph.plus, onTap: () async {
-          final name = await _ask('Add a school', 'School name', action: 'Add');
-          if (name != null && name.trim().isNotEmpty) {
-            await _run(() => api.post('/teacher/schools', {'name': name.trim()}), 'School added.');
-            _load();
-          }
-        }),
         SectionRule('Subjects', count: _subjectRows.length, padding: rule),
         for (final (i, sj) in _subjectRows.indexed) ...[
           if (i > 0) const SizedBox(height: gapRow),

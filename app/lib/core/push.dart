@@ -4,6 +4,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 
 import 'api.dart';
+import 'changes.dart';
 
 /// Push notifications through Firebase: new tests and reminders for students, the daily summary
 /// for the teacher. The server sends them; the app only hands it this phone's Firebase token.
@@ -13,6 +14,7 @@ class Push {
   static Future<bool>? _started;
   static String? _registeredFor;
   static StreamSubscription<String>? _refresh;
+  static StreamSubscription<RemoteMessage>? _open;
 
   /// Starts Firebase without holding up the first frame.
   static void start() {
@@ -37,6 +39,10 @@ class Push {
       _refresh ??= messaging.onTokenRefresh.listen((t) {
         if (api.token != null) api.post('/devices', {'token': t}).ignore();
       });
+      // Android shows the notification by itself only while the app is in the background. With
+      // the app open the message comes here instead, and the screens load again, so a new test is
+      // on the student's home screen straight away.
+      _open ??= FirebaseMessaging.onMessage.listen((_) => changes.reportAreas({Area.student, Area.tests}));
     } catch (_) {
       _registeredFor = null; // offline, or no Google Play services: try again next start
     }

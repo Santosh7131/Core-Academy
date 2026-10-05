@@ -49,9 +49,10 @@ teacherRoutes.get('/dashboard', async (c) => {
        from tests t
       where t.status = 'published'
         and (t.opens_at is null or t.opens_at <= now())
-        and (t.closes_at > now() or exists (select 1 from attempts x where x.test_id = t.id and x.submitted_at is null))
-      order by t.closes_at nulls last
-      limit 10`,
+        and (t.closes_at is null or t.closes_at > now()
+             or exists (select 1 from attempts x where x.test_id = t.id and x.submitted_at is null))
+      order by t.closes_at nulls last, coalesce(t.opens_at, t.created_at) desc
+      limit 20`,
   );
   const attention = await q(
     `with ${ASSIGNED_CTE},
@@ -94,11 +95,11 @@ teacherRoutes.get('/students', async (c) => {
   const cls = c.req.query('class');
   const subject = c.req.query('subject');
   const rows = await q(
-    `select u.id, u.display_name, u.username, u.class_level, u.school_id, s.name as school, u.active, u.last_seen_at,
+    `select u.id, u.display_name, u.username, u.class_level, u.active, u.last_seen_at,
             (select avg(score / nullif(max_score, 0)) from attempts a where a.student_id = u.id and a.submitted_at is not null) as avg_pct,
             (select count(*) from attempts a where a.student_id = u.id and a.submitted_at is not null) as tests_done,
             ${STUDENT_SUBJECTS}
-       from users u left join schools s on s.id = u.school_id
+       from users u
       where u.role = 'student' and ($1::smallint is null or u.class_level = $1)
         and ($2::uuid is null or exists (select 1 from student_subjects ss where ss.student_id = u.id and ss.subject_id = $2))
       order by u.active desc, u.class_level, u.display_name`,
@@ -118,7 +119,6 @@ teacherRoutes.post('/students', async (c) => {
   const b = await readBody(c);
   const displayName = str(b, 'display_name', { max: 60 })!;
   const classLevel = int(b, 'class_level', { min: 6, max: 12 })!;
-  const schoolId = uuidOpt(b.school_id, 'school');
   const username = checkUsername(b.username);
   // The app before subjects sends none: its students study maths.
   const subjects = 'subject_ids' in b ? subjectIds(b.subject_ids) : [MATHS];
@@ -127,14 +127,15 @@ teacherRoutes.post('/students', async (c) => {
   try {
     const u = await tx(async (cx) => {
       const row = await q1(
-        `insert into users (role, username, display_name, class_level, school_id, secret_hash, secret_salt)
-         values ('student', $1, $2, $3, $4, $5, $6) returning id, username, display_name, class_level, school_id`,
-        [username, displayName, classLevel, schoolId, hash, salt],
+        `insert into users (role, username, display_name, class_level, secret_hash, secret_salt)
+         values ('student', $1, $2, $3, $4, $5) returning id, username, display_name, class_level`,
+        [username, displayName, classLevel, hash, salt],
         cx,
       );
       await setStudentSubjects(cx, row.id, subjects);
       return row;
     });
+    waitUntil(afterTestChange());
     return c.json({ student: u, login: { username, pin } }, 201);
   } catch (e: any) {
     if (e.code === '23505') throw new HttpError(409, 'username_taken', `The username ${username} is already taken.`);
@@ -147,9 +148,9 @@ teacherRoutes.get('/students/:id', async (c) => {
   const id = uuid(c.req.param('id'), 'student id');
   await q('select finalize_expired_attempts()');
   const s = await q1(
-    `select u.id, u.display_name, u.username, u.class_level, u.school_id, sc.name as school, u.active, u.last_seen_at, u.created_at,
+    `select u.id, u.display_name, u.username, u.class_level, u.active, u.last_seen_at, u.created_at,
             ${STUDENT_SUBJECTS}
-       from users u left join schools sc on sc.id = u.school_id where u.id = $1 and u.role = 'student'`,
+       from users u where u.id = $1 and u.role = 'student'`,
     [id],
   );
   if (!s) throw notFound('This student');
@@ -188,16 +189,16 @@ teacherRoutes.patch('/students/:id', async (c) => {
   const u = await tx(async (cx) => {
     const row = await q1(
       `update users set display_name = coalesce($2, display_name),
-                        class_level = coalesce($3, class_level),
-                        school_id = case when $5 then $4::uuid else school_id end
-        where id = $1 and role = 'student' returning id, display_name, class_level, school_id`,
-      [id, str(b, 'display_name', { max: 60, optional: true }) ?? null, int(b, 'class_level', { min: 6, max: 12, optional: true }) ?? null,
-        uuidOpt(b.school_id, 'school'), 'school_id' in b],
+                        class_level = coalesce($3, class_level)
+        where id = $1 and role = 'student' returning id, display_name, class_level`,
+      [id, str(b, 'display_name', { max: 60, optional: true }) ?? null, int(b, 'class_level', { min: 6, max: 12, optional: true }) ?? null],
       cx,
     );
     if (row && subjects) await setStudentSubjects(cx, id, subjects);
     return row;
   });
+  // New subjects can put the student in groups with open tests.
+  if (u && subjects) waitUntil(afterTestChange());
   if (!u) throw notFound('This student');
   return c.json({ student: u });
 });
@@ -217,45 +218,30 @@ teacherRoutes.post('/students/:id/reset-pin', async (c) => {
   return c.json({ login: { username: u.username, pin } });
 });
 
+/** Deletes a student with their login and every result. Turning the login off keeps the results instead. */
+teacherRoutes.delete('/students/:id', async (c) => {
+  const id = uuid(c.req.param('id'), 'student id');
+  const u = await q1(`delete from users where id = $1 and role = 'student' returning id`, [id]);
+  if (!u) throw notFound('This student');
+  return c.json({ ok: true });
+});
+
 teacherRoutes.post('/students/:id/active', async (c) => {
   const id = uuid(c.req.param('id'), 'student id');
   const active = bool(await readBody(c), 'active');
   const u = await q1(`update users set active = $2 where id = $1 and role = 'student' returning id, active`, [id, active]);
   if (!u) throw notFound('This student');
   if (!active) await killSessions(id);
+  else waitUntil(afterTestChange());
   return c.json({ student: u });
 });
 
-// ---------------------------------------------------------------- schools and chapters
+// ---------------------------------------------------------------- schools (gone)
 
-teacherRoutes.get('/schools', async (c) => {
-  const rows = await q(
-    `select s.id, s.name, (select count(*) from users u where u.school_id = s.id and u.role = 'student') as students
-       from schools s order by s.name`,
-  );
-  return c.json({ schools: rows });
-});
-
-teacherRoutes.post('/schools', async (c) => {
-  const name = str(await readBody(c), 'name', { max: 80 })!;
-  try {
-    return c.json({ school: await q1('insert into schools (name) values ($1) returning id, name', [name]) }, 201);
-  } catch (e: any) {
-    if (e.code === '23505') throw new HttpError(409, 'duplicate', `${name} is already in the list.`);
-    throw e;
-  }
-});
-
-teacherRoutes.patch('/schools/:id', async (c) => {
-  const name = str(await readBody(c), 'name', { max: 80 })!;
-  const s = await q1('update schools set name = $2 where id = $1 returning id, name', [uuid(c.req.param('id')), name]);
-  if (!s) throw notFound('This school');
-  return c.json({ school: s });
-});
-
-teacherRoutes.delete('/schools/:id', async (c) => {
-  await pool.query('delete from schools where id = $1', [uuid(c.req.param('id'))]);
-  return c.json({ ok: true });
+// The app before 1.3 still asks for its school list; it gets an empty one until it updates.
+teacherRoutes.get('/schools', (c) => c.json({ schools: [] }));
+teacherRoutes.post('/schools', () => {
+  throw new HttpError(410, 'gone', 'Schools are no longer used. Update the app to the newest version.');
 });
 
 // ---------------------------------------------------------------- subjects and groups
@@ -401,6 +387,7 @@ function readQuestion(b: Record<string, any>) {
 const QUESTION_COLS = `qq.id, qq.class_level, qq.chapter_id, ch.name as chapter, qq.subject_id,
   (select name from subjects where id = qq.subject_id) as subject, qq.text, qq.options, qq.correct_option,
   qq.solution, qq.marks, qq.keep_option_order, qq.image_key, qq.source, qq.paper_id, qq.created_at, qq.updated_at,
+  (select exam_name from papers where id = qq.paper_id) as paper, (select category from papers where id = qq.paper_id) as category,
   (select count(*) from test_questions tq where tq.question_id = qq.id) as used_in`;
 
 // A question's subject: its chapter's subject, else the one sent, else (on create) Maths.
@@ -411,21 +398,56 @@ async function withImage<T extends { image_key: string | null }>(row: T) {
   return { ...row, image_url: await maybeViewUrl(row.image_key) };
 }
 
+/**
+ * Where questions came from, for the Questions tab: one group per paper category ("NCERT
+ * Exemplar"), papers with no category, the ready-made library, and questions typed by hand.
+ * Keys: 'cat:<category>', 'papers', 'library', 'manual'.
+ */
+teacherRoutes.get('/question-groups', async (c) => {
+  const rows = await q(
+    `select case when qq.source = 'paper' then coalesce('cat:' || pa.category, 'papers') else qq.source end as key,
+            min(pa.category) as category, count(*) as questions, count(distinct qq.paper_id) as papers,
+            array_agg(distinct qq.class_level order by qq.class_level) as classes,
+            array_agg(distinct sj.name) filter (where sj.name is not null) as subjects,
+            max(qq.created_at) as latest
+       from questions qq left join papers pa on pa.id = qq.paper_id left join subjects sj on sj.id = qq.subject_id
+      group by 1`,
+  );
+  return c.json({ groups: rows });
+});
+
+/** A group key as filters: the source, and for papers which category (null: none). */
+function groupFilter(group: string | undefined) {
+  if (!group) return { source: null, category: null, uncategorised: false };
+  if (group === 'library' || group === 'manual') return { source: group, category: null, uncategorised: false };
+  if (group === 'papers') return { source: 'paper', category: null, uncategorised: true };
+  if (group.startsWith('cat:') && group.length > 4) return { source: 'paper', category: group.slice(4), uncategorised: false };
+  throw bad('That question group is not known.');
+}
+
 teacherRoutes.get('/questions', async (c) => {
   const cls = c.req.query('class');
   const chapter = c.req.query('chapter');
   const subject = c.req.query('subject');
   const search = c.req.query('q');
+  const g = groupFilter(c.req.query('group'));
   const rows = await q(
-    `select ${QUESTION_COLS} from questions qq left join chapters ch on ch.id = qq.chapter_id
+    `select ${QUESTION_COLS} from questions qq left join chapters ch on ch.id = qq.chapter_id left join papers pa on pa.id = qq.paper_id
       where ($1::smallint is null or qq.class_level = $1)
         and ($2::uuid is null or qq.chapter_id = $2)
         and ($3::text is null or qq.text ilike '%' || $3 || '%')
         and ($4::uuid is null or qq.subject_id = $4)
-      order by qq.class_level, (select sort_order from subjects where id = qq.subject_id), qq.subject_id,
-               ch.sort_order nulls last, ch.name, qq.created_at desc
-      limit 300`,
-    [cls ? Number(cls) : null, chapter ? uuid(chapter, 'chapter') : null, search?.trim() || null, subject ? uuid(subject, 'subject') : null],
+        and ($5::text is null or qq.source = $5)
+        and ($6::text is null or pa.category = $6)
+        and (not $7 or pa.category is null)
+      order by ${g.source === 'paper'
+        // A paper group: newest paper first, each paper's questions in the order they were printed.
+        ? `pa.created_at desc, qq.paper_id, (select d.page_no * 1000 + d.seq from paper_drafts d where d.question_id = qq.id limit 1)`
+        : `qq.class_level, (select sort_order from subjects where id = qq.subject_id), qq.subject_id,
+               ch.sort_order nulls last, ch.name, qq.created_at desc`}
+      limit ${g.source ? 1000 : 300}`,
+    [cls ? Number(cls) : null, chapter ? uuid(chapter, 'chapter') : null, search?.trim() || null, subject ? uuid(subject, 'subject') : null,
+      g.source, g.category, g.uncategorised],
   );
   return c.json({ questions: await Promise.all(rows.map(withImage)) });
 });
@@ -453,25 +475,48 @@ teacherRoutes.post('/questions', async (c) => {
 });
 
 teacherRoutes.patch('/questions/:id', async (c) => {
+  const id = uuid(c.req.param('id'));
   const x = readQuestion(await readBody(c));
-  const row = await q1(
-    `update questions set class_level = $2, chapter_id = $3, text = $4, options = $5, correct_option = $6, solution = $7,
-                          marks = $8, keep_option_order = $9, image_key = $10, updated_at = now(),
-                          subject_id = ${QUESTION_SUBJECT('$3::uuid', '$11::uuid', 'subject_id')}
-      where id = $1 returning id`,
-    [uuid(c.req.param('id')), x.class_level, x.chapter_id, x.text, x.options, x.correct_option, x.solution, x.marks, x.keep_option_order, x.image_key,
-      x.subject_id],
-  );
-  if (!row) throw notFound('This question');
-  return c.json({ id: row.id });
+  const regraded = await tx(async (cx) => {
+    const before = await q1('select correct_option, marks from questions where id = $1 for update', [id], cx);
+    if (!before) throw notFound('This question');
+    await cx.query(
+      `update questions set class_level = $2, chapter_id = $3, text = $4, options = $5, correct_option = $6, solution = $7,
+                            marks = $8, keep_option_order = $9, image_key = $10, updated_at = now(),
+                            subject_id = ${QUESTION_SUBJECT('$3::uuid', '$11::uuid', 'subject_id')}
+        where id = $1`,
+      [id, x.class_level, x.chapter_id, x.text, x.options, x.correct_option, x.solution, x.marks, x.keep_option_order, x.image_key,
+        x.subject_id],
+    );
+    // A corrected answer or new marks re-mark every submitted test that had this question, so
+    // a student who chose the right option gets the mark even if the key was wrong when she wrote it.
+    if (before.correct_option === x.correct_option && Number(before.marks) === Number(x.marks)) return 0;
+    const r = await cx.query('select grade_attempt(a.id) from attempts a where a.submitted_at is not null and $1 = any(a.question_order)', [id]);
+    return r.rowCount ?? 0;
+  });
+  return c.json({ id, regraded });
 });
 
+/**
+ * Deletes a question. It is taken out of tests nobody has written; a test students have written
+ * keeps it, so their results stay whole, and then the question cannot be deleted.
+ */
 teacherRoutes.delete('/questions/:id', async (c) => {
   const id = uuid(c.req.param('id'));
-  const used = await q1('select count(*) as n from test_questions where question_id = $1', [id]);
-  if (used.n > 0) throw new HttpError(409, 'in_use', 'This question is in a test. Remove it from the test first.');
-  await pool.query('delete from questions where id = $1', [id]);
-  return c.json({ ok: true });
+  const written = await q1(
+    `select count(*) as n from test_questions tq where tq.question_id = $1
+        and exists (select 1 from attempts a where a.test_id = tq.test_id)`,
+    [id],
+  );
+  if (written.n > 0) {
+    throw new HttpError(409, 'in_use', 'Students have written a test with this question, so it stays to keep their results whole.');
+  }
+  const removed = await tx(async (cx) => {
+    const r = await cx.query('delete from test_questions where question_id = $1', [id]);
+    await cx.query('delete from questions where id = $1', [id]);
+    return r.rowCount ?? 0;
+  });
+  return c.json({ ok: true, removed_from_tests: removed });
 });
 
 /** A direct upload URL for a question diagram. */
@@ -506,6 +551,7 @@ function readTest(b: Record<string, any>) {
     assign_group: assignGroup,
     question_ids: [...new Set(ids.map((x: string) => uuid(x, 'question id')))],
     student_ids: [...new Set(students.map((x: string) => uuid(x, 'student id')))],
+    paper_id: uuidOpt(b.paper_id, 'paper'),
   };
 }
 
@@ -544,10 +590,11 @@ teacherRoutes.post('/tests', async (c) => {
   const t = readTest(await readBody(c));
   const id = await tx(async (cx) => {
     const row = await q1(
-      `insert into tests (title, class_level, time_limit_min, opens_at, closes_at, shuffle, assign_all, created_by, subject_id, assign_group)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, coalesce($9, '${MATHS}'::uuid), coalesce($10, false)) returning id`,
+      `insert into tests (title, class_level, time_limit_min, opens_at, closes_at, shuffle, assign_all, created_by, subject_id, assign_group,
+                          paper_id)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, coalesce($9, '${MATHS}'::uuid), coalesce($10, false), $11) returning id`,
       [t.title, t.class_level, t.time_limit_min, t.opens_at, t.closes_at, t.shuffle, t.assign_all, c.get('user').id,
-        t.subject_id, t.assign_group],
+        t.subject_id, t.assign_group, t.paper_id],
       cx,
     );
     await saveTestChildren(cx, row.id, t);
@@ -627,12 +674,15 @@ teacherRoutes.post('/tests/:id/publish', async (c) => {
   return c.json({ test: t });
 });
 
+/** Deletes a test. One students have written goes only with ?with_results=1, and takes their results with it. */
 teacherRoutes.delete('/tests/:id', async (c) => {
   const id = uuid(c.req.param('id'), 'test id');
-  const n = await q1('select count(*) as n from attempts where test_id = $1', [id]);
-  if (n.n > 0) throw new HttpError(409, 'has_attempts', 'Students have written this test. Unpublish it instead of deleting.');
+  const n = await q1('select count(distinct student_id) as n from attempts where test_id = $1', [id]);
+  if (n.n > 0 && c.req.query('with_results') !== '1') {
+    throw new HttpError(409, 'has_attempts', `${n.n} student${n.n === 1 ? ' has' : 's have'} written this test. Deleting it deletes their results too.`);
+  }
   await pool.query('delete from tests where id = $1', [id]);
-  return c.json({ ok: true });
+  return c.json({ ok: true, results_deleted: n.n });
 });
 
 teacherRoutes.get('/tests/:id/results', async (c) => {
@@ -738,8 +788,9 @@ teacherRoutes.get('/settings', async (c) => {
             (select count(*) from papers where is_sample) as papers`,
   );
   const ai = await q1(
-    `select count(*) filter (where created_at > now() - interval '1 day') as calls_today,
-            count(*) filter (where not ok and created_at > now() - interval '1 day') as failed_today
+    // Pages read, and real failures: a busy minute that AI waited out is not a failure.
+    `select count(*) filter (where task = 'read_paper_page' and ok and created_at > now() - interval '1 day') as calls_today,
+            count(*) filter (where not ok and coalesce(error, '') not like '429%' and created_at > now() - interval '1 day') as failed_today
        from ai_usage`,
   );
   return c.json({ tuition_name: s?.name ?? 'Core Academy', me: c.get('user'), sample, ai });
@@ -781,8 +832,7 @@ teacherRoutes.delete('/sample-data', async (c) => {
     const papers = await del('delete from papers where is_sample');
     const users = await del(`delete from users where is_sample and role = 'student'`);
     const chapters = await del('delete from chapters where is_sample');
-    const schools = await del('delete from schools where is_sample and not exists (select 1 from users u where u.school_id = schools.id)');
-    return { tests, questions, papers, users, chapters, schools };
+    return { tests, questions, papers, users, chapters };
   });
   await deleteObjects(keys.map((r) => r.k)).catch(() => {});
   return c.json({ removed: counts });

@@ -1,10 +1,9 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/api.dart';
+import '../../core/changes.dart';
 import '../../core/format.dart' as f;
 import '../../core/session.dart';
 import '../../theme.dart';
@@ -13,7 +12,7 @@ import '../../ui/update_card.dart';
 import 'common.dart';
 import 'subjects.dart';
 
-/// The teacher's home: today's figures, live tests, who needs attention, recent activity.
+/// The teacher's home: today's figures, open tests, who needs attention, recent activity.
 class TodayScreen extends StatefulWidget {
   const TodayScreen({super.key});
 
@@ -21,33 +20,28 @@ class TodayScreen extends StatefulWidget {
   State<TodayScreen> createState() => _TodayScreenState();
 }
 
-class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
+class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver, AutoRefresh<TodayScreen> {
   Map<String, dynamic>? _d;
   String? _error;
-  Timer? _timer;
+
+  @override
+  Set<Area> get refreshAreas => {Area.tests, Area.students, Area.papers};
+
+  // Students start and submit tests all the time: check every 30 s while this is on screen.
+  @override
+  Duration? get pollEvery => const Duration(seconds: 30);
+
+  @override
+  Future<void> refreshQuietly() => _load(quiet: true);
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     _load();
-    // Live counts refresh every 30 s while this screen is open.
-    _timer = Timer.periodic(const Duration(seconds: 30), (_) => _load(quiet: true));
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    WidgetsBinding.instance.removeObserver(this);
-    super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _load(quiet: true);
   }
 
   Future<void> _load({bool quiet = false}) async {
+    markLoaded();
     try {
       final d = await api.get('/teacher/dashboard');
       if (mounted) {
@@ -130,16 +124,16 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
           ],
         ),
       ),
-      SectionRule('Live now', count: live.length),
+      SectionRule('Open tests', count: live.length),
       if (live.isEmpty)
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: gutter),
           child: Text('No test is open right now.', style: bodyStyle.copyWith(color: muted)),
         )
       else ...[
-        // The three closing soonest (the API sorts by closing time); the rest are in Tests.
+        // Every published test students can write now, closing soonest first; the rest are in Tests.
         rows([
-          for (final t in live.take(3))
+          for (final t in live.take(5))
             RowTile(
               title: '${t['title']} · ${t['subject'] == null ? 'Class ${t['class_level']}' : groupName(t['class_level'] as int, '${t['subject']}')}',
               meta: _liveMeta(t),
@@ -152,7 +146,7 @@ class _TodayScreenState extends State<TodayScreen> with WidgetsBindingObserver {
               onTap: () => context.push('/t/tests/${t['id']}'),
             ),
         ]),
-        if (live.length > 3)
+        if (live.length > 5)
           Center(child: TextAction('See all ${live.length} open tests', onTap: () => context.go('/t/tests'))),
       ],
       if (attention.isNotEmpty) ...[

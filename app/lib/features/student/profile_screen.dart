@@ -24,7 +24,7 @@ class ProfileScreen extends StatelessWidget {
               );
           Widget line() => Container(height: 1, margin: const EdgeInsets.only(left: 17), color: hairline);
           return PushedPanel(
-            kicker: teacher ? 'Teacher' : 'Class ${u['class_level'] ?? ''}${u['school'] == null ? '' : ' · ${u['school']}'}',
+            kicker: teacher ? 'Teacher' : 'Class ${u['class_level'] ?? ''}',
             title: '${u['display_name'] ?? ''}',
             children: [
               const SizedBox(height: 22),

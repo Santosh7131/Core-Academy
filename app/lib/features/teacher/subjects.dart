@@ -65,14 +65,44 @@ class SubjectFilter extends StatelessWidget {
   }
 }
 
-/// The subject in a form.
+/// Asks for a new subject's name and adds it to the tuition. Null when cancelled.
+Future<Subject?> addSubject(BuildContext context, {String? suggestion}) async {
+  final ctl = TextEditingController(text: suggestion ?? '');
+  final name = await showCentredCard<String>(
+    context,
+    title: 'Add a subject',
+    builder: (ctx) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      GroupedInputs(children: [
+        BareField(
+          controller: ctl,
+          placeholder: 'Subject name, e.g. Social Science',
+          autofocus: true,
+          capitalization: TextCapitalization.words,
+          onSubmitted: (v) => Navigator.of(ctx).pop(v),
+        ),
+      ]),
+      const SizedBox(height: 16),
+      PrimaryButton('Add', onTap: () => Navigator.of(ctx).pop(ctl.text)),
+    ]),
+  );
+  if (name == null || name.trim().isEmpty) return null;
+  final r = await api.post('/teacher/subjects', {'name': name.trim()});
+  return Subject('${r['subject']['id']}', '${r['subject']['name']}');
+}
+
+/// The subject in a form. With [onAdded], the choice also offers "Add a subject".
 class SubjectField extends StatelessWidget {
-  const SubjectField({super.key, required this.subjects, required this.value, required this.onChanged, this.enabled = true});
+  const SubjectField({super.key, required this.subjects, required this.value, required this.onChanged, this.enabled = true, this.onAdded});
 
   final List<Subject> subjects;
   final String? value;
   final ValueChanged<String> onChanged;
   final bool enabled;
+
+  /// Called with a subject added from this field; it is then the chosen one.
+  final ValueChanged<Subject>? onAdded;
+
+  static const _add = '+add';
 
   @override
   Widget build(BuildContext context) => SelectField(
@@ -81,8 +111,25 @@ class SubjectField extends StatelessWidget {
         onTap: !enabled
             ? null
             : () async {
-                final c = await _pickSubject(context, subjects, value, allowAll: false);
-                if (c?.value != null) onChanged(c!.value!);
+                final c = await showChoices<String>(
+                  context,
+                  title: 'Subject',
+                  options: [
+                    for (final s in subjects) Choice(s.id, s.name),
+                    if (onAdded != null) const Choice(_add, 'Add a subject'),
+                  ],
+                  selected: value,
+                );
+                if (c?.value == null || !context.mounted) return;
+                if (c!.value != _add) return onChanged(c.value!);
+                try {
+                  final added = await addSubject(context);
+                  if (added != null) onAdded!(added);
+                } on ApiException catch (e) {
+                  if (context.mounted) {
+                    await showCentredCard<void>(context, title: 'That did not work', builder: (ctx) => Text(e.message));
+                  }
+                }
               },
       );
 }

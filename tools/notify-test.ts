@@ -127,6 +127,23 @@ try {
   await sleep(2000);
   if (LOG) check('publishing again does not repeat the announcement', pushesSince(mark).length === 0, pushesSince(mark));
 
+  // A student given the open test later is told the moment they are added, and only they are told.
+  const s2 = await api('POST', '/teacher/students', T, { display_name: 'Notify Test Two', class_level: 9, username: `${tag}.two`, pin: '2468' });
+  created.users.push(s2.body.student.id);
+  const S2 = (await login(`${tag}.two`, '2468')).body.token as string;
+  await api('POST', '/devices', S2, { token: `${tag}-phone-two` });
+  mark = logSize();
+  const added = await api('PATCH', `/teacher/tests/${test.body.id}`, T, {
+    title, class_level: 9, question_ids: created.questions, time_limit_min: 15,
+    assign_all: false, student_ids: created.users, opens_at: iso(-60_000), closes_at: iso(26 * 3600_000),
+  });
+  await sleep(2500);
+  check('the teacher adds a second student to the open test', added.status === 200, added.body);
+  if (LOG) {
+    const lines = pushesSince(mark).filter((l) => l.includes(title));
+    check('only the new student is told, once', lines.length === 1 && lines[0].includes('1 phone(s)'), lines);
+  }
+
   // An hour before closing: pretend students have known about it for three hours, then move the
   // closing time to 30 minutes from now.
   await db.query(`update tests set announced_at = now() - interval '3 hours' where id = $1`, [test.body.id]);
@@ -140,7 +157,7 @@ try {
   mark = logSize();
   const remind = await cron();
   const r = remind.body?.reminded?.find((x: any) => x.title === title);
-  check('the run reminds the student who has not started', remind.body?.ran === true && r?.people === 1 && r?.phones === 1, remind.body);
+  check('the run reminds both students, neither has started', remind.body?.ran === true && r?.people === 2 && r?.phones === 2, remind.body);
   if (LOG) {
     check('the reminder says when it closes',
       pushesSince(mark).some((l) => l.includes(`| ${title} | Closes today`) && l.endsWith('You have not started it yet.')), pushesSince(mark));
@@ -159,7 +176,7 @@ try {
   check('the student starts the test', start.status === 200 || start.status === 201, start.body);
   const second = await cron();
   const r2 = second.body?.reminded?.find((x: any) => x.title === title);
-  check('a student who has started is not reminded', second.body?.ran === true && r2?.people === 0, second.body);
+  check('a student who has started is not reminded, the other still is', second.body?.ran === true && r2?.people === 1, second.body);
 
   // Logging out removes the phone.
   await api('POST', '/auth/logout', S);

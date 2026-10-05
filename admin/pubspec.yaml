@@ -1,0 +1,32 @@
+name: admin
+description: "Core Academy Admin: the developer's view of the app."
+publish_to: 'none'
+# The number after + must go up every release; installed copies compare it to offer an update.
+version: 1.0.1+2
+
+environment:
+  sdk: ^3.13.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_secure_storage: ^11.2.0
+  http: ^1.6.0
+  intl: ^0.20.3
+  shared_preferences: ^2.5.5
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  fonts:
+    - family: Geist
+      fonts: [{asset: assets/fonts/Geist.ttf}]
+    - family: GeistMono
+      fonts: [{asset: assets/fonts/GeistMono.ttf}]
+    # Phosphor Light icons (MIT); see lib/ui/icons.dart
+    - family: PhosphorLight
+      fonts: [{asset: assets/fonts/PhosphorLight.ttf}]

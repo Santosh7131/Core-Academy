@@ -37,6 +37,7 @@ final teacherRoutes = <RouteBase>[
   _page('/t/papers/new', (_) => const UploadPaperScreen()),
   _page('/t/papers/:id', (s) => PaperReviewScreen(id: s.pathParameters['id']!, autoRead: s.uri.queryParameters['read'] == '1')),
   _page('/t/questions/new', (_) => const QuestionEditor()),
+  _page('/t/questions/in/:group', (s) => QuestionListScreen(group: s.pathParameters['group']!, title: s.uri.queryParameters['title'] ?? 'Questions')),
   _page('/t/questions/:id', (s) => QuestionEditor(id: s.pathParameters['id']!)),
   _page('/t/tests/new', (_) => const TestEditor()),
   _page('/t/tests/:id/edit', (s) => TestEditor(id: s.pathParameters['id']!)),

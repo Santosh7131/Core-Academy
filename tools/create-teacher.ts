@@ -1,4 +1,4 @@
-// Creates the teacher login, and the first school, on a branch that gets no sample data:
+// Creates the teacher login on a branch that gets no sample data:
 // main, when the app goes live. Refuses if the branch already has a teacher.
 // Usage: node tools/create-teacher.ts --env .env.main
 // The login goes to tools/out/logins.<branch>.md (git-ignored), never printed or committed.
@@ -18,7 +18,6 @@ try {
   await db.query('begin');
   const existing = (await db.query(`select username from users where role = 'teacher' limit 1`)).rows[0];
   if (existing) throw new Error(`Branch ${branch} already has a teacher ("${existing.username}"). Nothing changed.`);
-  await db.query(`insert into schools (name) values ('DAV Adambakkam') on conflict (name) do nothing`);
   const password = randomBytes(9).toString('base64url');
   const { hash, salt } = await hashSecret(password);
   await db.query(

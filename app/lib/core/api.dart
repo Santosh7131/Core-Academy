@@ -5,6 +5,9 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
+import 'changes.dart';
+import 'device.dart';
+
 const _liveApi = 'https://br-cold-shape-azcvozbw-api.compute.c-3.ap-southeast-1.aws.neon.tech';
 const _devApi = 'https://br-nameless-shape-azg23hcy-api.compute.c-3.ap-southeast-1.aws.neon.tech';
 
@@ -42,6 +45,7 @@ class Api {
 
   Future<dynamic> _send(String method, String path, {Object? body, Duration? timeout}) async {
     final req = http.Request(method, Uri.parse('$apiBase$path'));
+    req.headers.addAll(Device.headers);
     if (token != null) req.headers['authorization'] = 'Bearer $token';
     if (body != null) {
       req.headers['content-type'] = 'application/json';
@@ -63,7 +67,11 @@ class Api {
     } catch (_) {
       json = null;
     }
-    if (res.statusCode >= 200 && res.statusCode < 300) return json;
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      // Screens showing what this write changed load it again.
+      if (method != 'GET') changes.report(path);
+      return json;
+    }
     final err = json is Map ? json['error'] : null;
     final e = ApiException(
       res.statusCode,

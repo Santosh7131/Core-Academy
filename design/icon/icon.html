@@ -4,7 +4,8 @@
   (actionFill #0E0E11, actionInk #FAFAFB). No accent: violet belongs to the AI paper reader.
   Rendered by tools/make-icon.ps1:  ?layer=foreground  adaptive-icon foreground (108-unit canvas,
   mark inside the 66-unit safe circle);  ?layer=legacy  the rounded-square icon for old Androids;
-  ?layer=preview  a review sheet.
+  ?layer=preview  a review sheet.  &app=admin draws the admin app's icon: the same mark with the
+  two colours swapped, so the two apps never get mixed up on a home screen.
 -->
 <html>
 <head>
@@ -22,8 +23,11 @@
 </head>
 <body>
 <script>
-  const layer = new URLSearchParams(location.search).get('layer') || 'preview';
-  const INK = '#0E0E11', PAPER = '#FAFAFB';
+  const params = new URLSearchParams(location.search);
+  const layer = params.get('layer') || 'preview';
+  const admin = params.get('app') === 'admin';
+  // The admin app's icon is the same mark in the same two colours, swapped, so the two apps never get mixed up.
+  const INK = admin ? '#FAFAFB' : '#0E0E11', PAPER = admin ? '#0E0E11' : '#FAFAFB';
   // The mark on a 108-unit canvas, nudged right because the open side of the C reads lighter.
   const mark = (color, scale = 1) => `
     <g transform="translate(55.5 54) scale(${scale}) translate(-54 -54)">

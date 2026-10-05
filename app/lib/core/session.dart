@@ -58,6 +58,15 @@ class Session extends ChangeNotifier {
 
   Future<void> login(String username, String secret) async {
     final r = await api.post('/auth/login', {'username': username.trim().toLowerCase(), 'secret': secret});
+    if (r['user']?['role'] == 'developer') {
+      // The developer's login is for the admin app; leave no session behind in this one.
+      api.token = r['token'] as String;
+      try {
+        await api.post('/auth/logout');
+      } catch (_) {}
+      api.token = null;
+      throw ApiException(403, 'admin_app', 'This login is for the Core Academy Admin app.');
+    }
     api.token = r['token'] as String;
     await _storage.write(key: 'token', value: api.token);
     user = Map<String, dynamic>.from(r['user']);

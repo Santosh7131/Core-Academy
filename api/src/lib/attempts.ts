@@ -17,12 +17,15 @@ export function shuffle<T>(items: T[]): T[] {
 
 // Students each published test is given to: the whole class, the class's group for the test's
 // subject, or the chosen students.
+// A test is for a group: the students of its class who take its subject. "Whole class" tests
+// (assign_all, from before groups) also stay inside the subject, so a 10th Maths test never
+// reaches a student who takes only Science.
 export const ASSIGNED_CTE = `assigned as (
   select t.id as test_id, u.id as student_id
     from tests t join users u on u.role = 'student' and u.active and u.class_level = t.class_level
    where t.status = 'published'
-     and (t.assign_all or t.assign_group and exists (
-           select 1 from student_subjects ss where ss.student_id = u.id and ss.subject_id = t.subject_id))
+     and (t.assign_all or t.assign_group)
+     and exists (select 1 from student_subjects ss where ss.student_id = u.id and ss.subject_id = t.subject_id)
   union
   select t.id, ts.student_id
     from tests t join test_students ts on ts.test_id = t.id join users u on u.id = ts.student_id and u.active
@@ -30,8 +33,7 @@ export const ASSIGNED_CTE = `assigned as (
 )`;
 
 /** SQL condition: test t is given to student $1 in class $2. */
-export const ASSIGNED = `(t.assign_all and t.class_level = $2
-   or t.assign_group and t.class_level = $2
+export const ASSIGNED = `((t.assign_all or t.assign_group) and t.class_level = $2
       and exists (select 1 from student_subjects ss where ss.student_id = $1 and ss.subject_id = t.subject_id)
    or exists (select 1 from test_students ts where ts.test_id = t.id and ts.student_id = $1))`;
 

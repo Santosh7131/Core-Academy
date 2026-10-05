@@ -1,9 +1,12 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { requireUser, type AppEnv } from './lib/auth.ts';
+import { geminiConfigured } from './lib/gemini.ts';
 import { aiConfigured } from './lib/groq.ts';
 import { HttpError } from './lib/http.ts';
+import { countRequest, logError } from './lib/metrics.ts';
 import { pushConfigured } from './lib/push.ts';
+import { adminRoutes } from './routes/admin.ts';
 import { authRoutes } from './routes/auth.ts';
 import { notifyRoutes } from './routes/notify.ts';
 import { paperRoutes } from './routes/papers.ts';
@@ -13,10 +16,24 @@ import { teacherRoutes } from './routes/teacher.ts';
 const app = new Hono<AppEnv>();
 
 // The Android app does not need CORS; the web version planned for later will.
-app.use('*', cors({ origin: '*', allowHeaders: ['authorization', 'content-type'], allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] }));
+app.use('*', cors({
+  origin: '*',
+  allowHeaders: ['authorization', 'content-type', 'x-install-id', 'x-app', 'x-device', 'x-os'],
+  allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+}));
+
+// Requests per route per day, for the admin app (lib/metrics.ts says which ones count).
+app.use('*', async (c, next) => {
+  const started = performance.now();
+  await next();
+  countRequest(c, performance.now() - started);
+});
 
 app.get('/', (c) =>
-  c.json({ name: 'Core Academy API', branch: process.env.NEON_BRANCH ?? null, ai: aiConfigured(), push: pushConfigured() }));
+  c.json({
+    name: 'Core Academy API', branch: process.env.NEON_BRANCH ?? null,
+    ai: aiConfigured(), gemini: geminiConfigured(), push: pushConfigured(),
+  }));
 
 app.route('/auth', authRoutes);
 app.route('/student', studentRoutes);
@@ -28,6 +45,11 @@ teacher.route('/', teacherRoutes);
 teacher.route('/', paperRoutes);
 app.route('/teacher', teacher);
 
+const admin = new Hono<AppEnv>();
+admin.use('*', requireUser('developer'));
+admin.route('/', adminRoutes);
+app.route('/admin', admin);
+
 app.notFound((c) => c.json({ error: { code: 'not_found', message: 'Not found.' } }, 404));
 
 app.onError((err, c) => {
@@ -35,6 +57,7 @@ app.onError((err, c) => {
     return c.json({ error: { code: err.code, message: err.message } }, err.status as 400);
   }
   console.error(err);
+  logError(c, err);
   return c.json({ error: { code: 'server_error', message: 'Something went wrong on the server. Please try again.' } }, 500);
 });
 

@@ -9,6 +9,7 @@ import '../../core/pending_answers.dart';
 import '../../theme.dart';
 import '../../ui/kit.dart';
 import '../../ui/math_text.dart';
+import '../../ui/option_mark.dart';
 import '../../ui/tokens.dart';
 
 class _Q {
@@ -414,9 +415,14 @@ class _OptionRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Pressable(
-        onTap: onTap,
+        onTap: () {
+          optionTick();
+          onTap();
+        },
         label: 'Option $letter: ${plainMath(text)}${selected ? ', chosen' : ''}',
-        child: Container(
+        child: AnimatedContainer( // motion: approved
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
           constraints: const BoxConstraints(minHeight: 58),
           padding: const EdgeInsets.fromLTRB(17, 13, 17, 13),
           decoration: BoxDecoration(
@@ -426,17 +432,7 @@ class _OptionRow extends StatelessWidget {
             boxShadow: selected ? e2 : e1,
           ),
           child: Row(children: [
-            Container(
-              width: 28,
-              height: 28,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: selected ? actionFill : null,
-                border: selected ? null : Border.all(color: ringIdle, width: 1.8),
-              ),
-              child: Text(letter, style: tagStyle.copyWith(fontSize: 12, color: selected ? actionInk : muted)),
-            ),
+            OptionMark(letter: letter, selected: selected),
             const SizedBox(width: 14),
             Expanded(child: MathText(text, style: optionStyle, display: true)),
           ]),

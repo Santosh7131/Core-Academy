@@ -49,6 +49,9 @@ object Updater {
                         "canInstall" to canInstall(activity),
                         "silent" to (Build.VERSION.SDK_INT >= 31),
                         "dir" to File(activity.cacheDir, "updates").absolutePath,
+                        // For the developer's admin app: which phones an account uses.
+                        "model" to "${Build.MANUFACTURER} ${Build.MODEL}",
+                        "os" to "Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})",
                     ),
                 )
             }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/api.dart';
+import '../../core/changes.dart';
 import '../../core/format.dart' as f;
 import '../../core/session.dart';
 import '../../theme.dart';
@@ -15,31 +16,30 @@ class StudentHome extends StatefulWidget {
   State<StudentHome> createState() => _StudentHomeState();
 }
 
-class _StudentHomeState extends State<StudentHome> with WidgetsBindingObserver {
+class _StudentHomeState extends State<StudentHome> with WidgetsBindingObserver, AutoRefresh<StudentHome> {
   List<Map<String, dynamic>>? _tests;
   String? _error;
   bool _loading = false;
 
   @override
+  Set<Area> get refreshAreas => {Area.student};
+
+  // A new test from the teacher shows up within a minute while this is on screen.
+  @override
+  Duration? get pollEvery => const Duration(seconds: 60);
+
+  @override
+  Future<void> refreshQuietly() => _load();
+
+  @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     _load();
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _load();
   }
 
   Future<void> _load() async {
     if (_loading) return;
+    markLoaded();
     setState(() => _loading = true);
     try {
       final r = await api.get('/student/home');

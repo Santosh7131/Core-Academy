@@ -10,6 +10,7 @@ can photograph a school question paper so Groq AI types its questions out for he
 | Folder | What it is |
 |---|---|
 | `app/` | The Flutter app (Android). Students and the teacher use the same app. |
+| `admin/` | The developer's admin app (Android), "CA Admin": who uses the app, on which phones, and how the server is doing. |
 | `api/` | The API: Hono on Neon Functions, with Postgres and object storage on Neon. The schema and the marking functions are in `api/migrations/`. |
 | `design/` | Soft Structuralism comps (`design/comps/`), their screenshots and the token CSS. |
 | `tools/` | Scripts to migrate, seed, test, audit, and drive the test phone. |
@@ -30,9 +31,19 @@ can photograph a school question paper so Groq AI types its questions out for he
 The tuition teaches more than one subject. Each student studies one or more subjects, and a
 group is a class and a subject together: "10th Science" is every Class 10 student who studies
 Science. Chapters, questions, papers and tests each belong to a subject, and a test goes to
-its group, its whole class, or chosen students. Maths and Science are built in, and more
-subjects can be added in Settings. Students added by the 1.0.0 app, and everything made
-before subjects existed, count as Maths.
+its group or to chosen students in it. A test never leaves its group: an older "whole class"
+test also reaches only the class's students who take its subject. Maths and Science are built
+in, and more subjects can be added in Settings or straight from a paper's subject choice.
+Students added by the 1.0.0 app, and everything made before subjects existed, count as Maths.
+
+## Fixing and deleting
+
+Correcting a question's right option, or its marks, marks again every test already written
+with it, so a student who chose the right answer gets the mark even when the key was wrong at
+the time. Questions, tests, papers and students can all be deleted. A question leaves the tests
+nobody has written; one in a test students have written stays, so their results stay whole. A
+written test, or a student, goes only after a second warning, and takes those results with it.
+Deleting a paper also deletes the questions saved from it that no test uses.
 
 ## Ready-made questions
 
@@ -53,11 +64,38 @@ matched by `library_key`, and a chapter test that has been published or written 
 
 ## Question papers
 
-The Upload tab keeps every paper the teacher photographs under its own name, such as
-"Half-yearly exam 2025", with its class, subject, school and year. AI reads the pages into
-drafts. Once each draft is checked and saved, the paper opens as a numbered set of its
-questions, and "Make a test from this paper" puts them all into a new draft test for the
-paper's class and subject. The questions also join the question bank under their chapters.
+The teacher adds the pages first: photos, gallery images or a PDF. AI then works out the
+paper's name, class, subject, where it comes from (its category, such as "NCERT Exemplar")
+and, for a one-chapter paper, the chapter. It asks the teacher only for what it could not
+find. Every page is read into drafts, together with any answer key the paper prints, on
+whichever page it is.
+
+Answers come from that key first. For the rest, two models from different families
+(`GROQ_SOLVE_MODELS` and `GROQ_CHECK_MODELS`) each work the question out, and an answer is
+marked only when both pick the same option and each is at least 90% sure. Questions that need
+a figure are left to the teacher. Each marked answer says where it came from, so the teacher
+can check it before saving. Once every question is saved or skipped, the app asks whether to
+publish the paper as a test for its class and subject straight away; the test remembers the
+paper it came from.
+
+The Questions tab groups the bank by source: one row per paper category, other uploaded
+papers, questions typed by hand, and the ready-made library. Each opens with its own class,
+subject and chapter filters.
+
+Pages are read by Google's Gemini 3.5 Flash-Lite on its free tier (`GEMINI_API_KEY`), which
+takes about 2 seconds a page. Groq's vision model reads instead whenever Gemini is busy or
+refuses a page, and Groq always works out the answers. Without a Gemini key, Groq reads too.
+Groq limits each account, not each key, so keys made in one account share one budget: about
+1,000 requests a day per model, and 7,000 input tokens a minute for the vision model, which is
+only two or three pages a minute. The app waits out a limit on its own and shows how long it
+is waiting. Using several Groq accounts to get past the limits is against Groq's rules.
+
+## Screens stay current
+
+Every change made in the app tells the screens showing that data to load again, and a tab
+loads again when it comes back into view or the app returns to the front. Home, a test's
+results and the student's home also check every 30 to 60 seconds while on screen, and stop
+after 15 minutes without a touch, so a phone left open does not keep the database awake.
 
 ## Updates
 
@@ -74,16 +112,63 @@ Versions 1.1.0 and earlier have no updater, so 1.2.0 has to be installed by hand
 Debug builds never offer an update unless they are built with
 `--dart-define=UPDATE_FEED=...`.
 
+## The admin app
+
+`admin/` is a separate Android app for the developer, "CA Admin" (app id `com.coreacademy.admin`).
+It takes only a developer login, and reads either the live database or dev. It shows:
+
+- every account, when it was last seen, and who is online now;
+- each phone an account is signed in on, with its model, Android version and app version, and
+  phones shared by more than one account (apps from 1.2.1 report this; an older app's login
+  counts as one phone until it updates);
+- the login history, wrong PINs and lockouts;
+- which app versions the phones run;
+- the database and storage sizes, and an estimate of this month's compute hours, taken from
+  when the database woke and its last request (Neon's own usage figures read 0 on the free plan;
+  its console has the exact number);
+- API requests a day, the slowest routes and server errors, and the AI reader's use.
+
+It changes only two things: it can sign an account out of one phone, and unlock a locked login.
+Only signed-in requests and logins are counted, since they use the database anyway; the
+notification trigger and anonymous traffic never wake it.
+
+It looks the same as the main app because it uses the main app's own theme and components.
+`admin/lib/theme.dart`, `ui/tokens.dart` and `ui/kit.dart` are copies: change the originals in
+`app/lib`, then copy them over again with `node tools/sync-admin-ui.mjs`. The icons come from
+`tools/gen-icons.mjs`, which writes both apps' sets.
+
+The developer login is made per branch, with the password typed at a hidden prompt:
+
+```bash
+node tools/create-developer.ts --env .env.main --username <name>
+```
+
+The admin app updates itself like the main app, but privately: a release goes into the branch's
+storage, and only the developer login can download it. The first install is by hand (the APK is
+copied to `tools/out`).
+
+```powershell
+.\tools\release-admin.ps1 -Notes notes.txt
+```
+
+To run it against an API on the PC: `adb reverse tcp:8787 tcp:8787`, then in `admin/`,
+`flutter run --dart-define=DEV_API=http://127.0.0.1:8787`.
+
 ## Notifications
 
-Push notifications go through Firebase Cloud Messaging. Students are told about a new test as
-soon as it opens, and get a reminder an hour before it closes if they have not started it
+Push notifications go through Firebase Cloud Messaging. Each student is told once about each
+test, the moment it is open for them: when it is published, or later if they join its group or
+are added to it (`test_notices` records who was told). They get a reminder an hour before it
+closes if they have not started it
 (only for tests that were open two hours or more; for a shorter one, the first notification
 already gave the closing time). At 8 pm India time the teacher gets a summary of the day, if
 anything happened.
 
 The app registers the phone after logging in and on every start. The registration belongs to
-that login, so logging out, or a PIN reset, stops the notifications. Publishing an open test
+that login, so logging out, or a PIN reset, stops the notifications. Android shows a
+notification only while the app is in the background. One that arrives with the app open makes
+the screens load again instead, so the new test is on the student's home screen at once.
+Publishing an open test
 announces it straight away. Everything else comes from `/cron/notify`, which a Neon trigger
 calls every five minutes. That run reads the time of the next
 notification from `notify/next.json` in the bucket and only queries the database when it is
@@ -142,13 +227,16 @@ reach the repo.
 
 **3. The API on your PC**
 
-Put the Groq keys in `api/.env.secrets` as `GROQ_API_KEYS=key1,key2` (git-ignored). Then,
-in PowerShell:
+Put the AI keys in `api/.env.secrets` (git-ignored): the Groq keys as
+`GROQ_API_KEYS=key1,key2` and the Gemini key as `GEMINI_API_KEY=key`. Then, in PowerShell:
 
 ```powershell
 $env:GROQ_API_KEYS = ((Get-Content api\.env.secrets) -match '^GROQ_API_KEYS=')[0].Substring(14)
+$env:GEMINI_API_KEY = ((Get-Content api\.env.secrets) -match '^GEMINI_API_KEY=')[0].Substring(15)
 neon dev --source ./api/src/index.ts --port 8787
 ```
+
+`tools/upload-groq-keys.ps1 -Branch dev` puts both keys on a deployed branch.
 
 **4. The app on the phone**
 
@@ -195,8 +283,8 @@ and the scripts that read it would then point at the live database.
 | Command | What it proves |
 |---|---|
 | `npm run typecheck` | The API type-checks. |
-| `npm run test:api` | 68 end-to-end checks of the marking rules, groups, logins and named question papers against the deployed dev API (add `-- --env .env.main` for the live one). It creates its own students, subject, tests and paper, gives its tests only to those students, then removes them all. |
-| `node tools/notify-test.ts --log server.log` | 23 checks of the notifications against the API on your PC, run with `PUSH_DRY_RUN=1` so each notification is written to the log instead of sent. Dev only. |
+| `npm run test:api` | 109 end-to-end checks of the marking rules, groups, logins, question papers (including ones uploaded before their details are known, printed answer keys and question groups) and the admin app's API against the deployed dev API (add `-- --env .env.main` for the live one; the admin checks run only where the logins file has a developer login). It creates its own students, subject, tests and paper, gives its tests only to those students, then removes them all. |
+| `node tools/notify-test.ts --log server.log` | 25 checks of the notifications against the API on your PC, run with `PUSH_DRY_RUN=1` so each notification is written to the log instead of sent. Dev only. |
 | `node tools/check-answers.ts` | Every sample question's marked answer is right, and no other option equals it. |
 | `node tools/ai-test.ts` | How accurately the AI reads the 2-page sample paper (render it first with `tools/make-sample-paper.ps1`). |
 | `flutter analyze` and `flutter test` (in `app/`) | The app's lints and unit tests. |
@@ -207,7 +295,8 @@ and the scripts that read it would then point at the live database.
 The app follows Soft Structuralism. `tools/extract-tokens.mjs` copies the token layer
 verbatim from the design guide into `app/lib/theme.dart` and `design/comps/tokens.css`; the
 guide itself stays out of the repo. The one accent colour, violet, belongs to the AI paper
-reader and nothing else. Nothing moves: no spinners, slide transitions or animated charts.
+reader and nothing else. Motion stays small: the press scale, short fades between screens,
+the refresh turn and a chosen option settling into place. No spinners or animated charts.
 
 To view the comps, run `python -m http.server 8777 --bind 127.0.0.1 --directory design/comps`.
 
@@ -222,7 +311,7 @@ live only in those files and on the deployed function, never in the app.
 ## Going live
 
 The `main` branch holds the live data. It never gets sample data: it starts with just the
-teacher login and the first school. This is how it was set up:
+teacher login. This is how it was set up:
 
 ```bash
 neon env pull --branch main --file .env.main -s postgres

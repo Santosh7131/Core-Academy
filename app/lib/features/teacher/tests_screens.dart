@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../core/api.dart';
+import '../../core/changes.dart';
 import '../../core/format.dart' as f;
 import '../../theme.dart';
 import '../../ui/kit.dart';
@@ -51,7 +52,16 @@ class TestsScreen extends StatefulWidget {
   State<TestsScreen> createState() => _TestsScreenState();
 }
 
-class _TestsScreenState extends State<TestsScreen> {
+class _TestsScreenState extends State<TestsScreen> with WidgetsBindingObserver, AutoRefresh<TestsScreen> {
+  @override
+  Set<Area> get refreshAreas => {Area.tests};
+
+  @override
+  Future<void> refreshQuietly() => _load();
+
+  @override
+  Duration? get pollEvery => const Duration(seconds: 60);
+
   List<Map<String, dynamic>>? _rows;
   List<Subject> _subjects = [];
   String? _error;
@@ -66,6 +76,7 @@ class _TestsScreenState extends State<TestsScreen> {
   }
 
   Future<void> _load() async {
+    markLoaded();
     try {
       final r = await api.get('/teacher/tests');
       final subjects = _subjects.isEmpty ? await loadSubjects() : _subjects;
@@ -179,7 +190,7 @@ class _TestEditorState extends State<TestEditor> {
   DateTime? _closes;
   bool _shuffle = true;
 
-  /// Who writes it: 'group' (the class's students who take the subject), 'class' or 'students'.
+  /// Who writes it: 'group' (the class's students who take the subject) or 'students' (some of them).
   String _audience = 'group';
   Set<String> _studentIds = {};
   List<Map<String, dynamic>> _classStudents = [];
@@ -217,10 +228,11 @@ class _TestEditorState extends State<TestEditor> {
     return null;
   }
 
-  /// Active students of the class who take the test's subject.
-  int get _groupSize => _classStudents
-      .where((s) => (s['subjects'] as List? ?? const []).any((x) => (x as Map)['id'] == _subjectId))
-      .length;
+  /// Active students of the class who take the test's subject: the only ones a test can go to.
+  List<Map<String, dynamic>> get _group =>
+      _classStudents.where((s) => (s['subjects'] as List? ?? const []).any((x) => (x as Map)['id'] == _subjectId)).toList();
+
+  int get _groupSize => _group.length;
 
   @override
   void dispose() {
@@ -240,7 +252,8 @@ class _TestEditorState extends State<TestEditor> {
       _opens = f.parseTime(t['opens_at']);
       _closes = f.parseTime(t['closes_at']);
       _shuffle = t['shuffle'] == true;
-      _audience = t['assign_group'] == true ? 'group' : (t['assign_all'] == true ? 'class' : 'students');
+      // A whole-class test from before groups now goes to its group.
+      _audience = t['assign_group'] == true || t['assign_all'] == true ? 'group' : 'students';
       _published = t['status'] == 'published';
       _attempts = t['attempts'] as int;
       _questions = (r['questions'] as List).cast<Map<String, dynamic>>();
@@ -275,7 +288,7 @@ class _TestEditorState extends State<TestEditor> {
     if (_subjectId == null) return 'Choose a subject.';
     if (_questions.isEmpty) return 'Choose at least one question.';
     if (_opens != null && _closes != null && !_closes!.isAfter(_opens!)) return 'The closing time must be after the opening time.';
-    if (_audience == 'students' && _studentIds.isEmpty) return 'Choose at least one student.';
+    if (_audience == 'students' && !_group.any((s) => _studentIds.contains(s['id']))) return 'Choose at least one student.';
     return null;
   }
 
@@ -290,9 +303,9 @@ class _TestEditorState extends State<TestEditor> {
       'closes_at': _closes?.toUtc().toIso8601String(),
       'shuffle': _shuffle,
       'subject_id': _subjectId,
-      'assign_all': _audience == 'class',
+      'assign_all': false,
       'assign_group': _audience == 'group',
-      'student_ids': _audience == 'students' ? _studentIds.toList() : <String>[],
+      'student_ids': _audience == 'students' ? [for (final s in _group) if (_studentIds.contains(s['id'])) s['id']] : <String>[],
     };
     try {
       final id = widget.id ?? '${(await api.post('/teacher/tests', body))['id']}';
@@ -420,8 +433,7 @@ class _TestEditorState extends State<TestEditor> {
             selected: _audience == 'group',
             onTap: () => setState(() => _audience = 'group'),
           ),
-          SegChip(_class == null ? 'Whole class' : 'All of Class $_class', selected: _audience == 'class', onTap: () => setState(() => _audience = 'class')),
-          SegChip('Chosen students', selected: _audience == 'students', onTap: () => setState(() => _audience = 'students')),
+          SegChip('Some of them', selected: _audience == 'students', onTap: () => setState(() => _audience = 'students')),
         ]),
         if (_audience == 'group' && _class != null && _subjectName != null && _groupSize == 0) ...[
           const SizedBox(height: 10),
@@ -432,10 +444,13 @@ class _TestEditorState extends State<TestEditor> {
         ],
         if (_audience == 'students') ...[
           const SizedBox(height: 10),
-          if (_classStudents.isEmpty)
-            Text(_class == null ? 'Choose a class first.' : 'No active students in Class $_class.', style: labelStyle)
+          if (_group.isEmpty)
+            Text(
+              _class == null || _subjectName == null ? 'Choose a class and subject first.' : 'No Class $_class student takes $_subjectName yet.',
+              style: labelStyle,
+            )
           else
-            for (final (i, s) in _classStudents.indexed) ...[
+            for (final (i, s) in _group.indexed) ...[
               if (i > 0) const SizedBox(height: 8),
               RowTile(
                 leading: _Tick(on: _studentIds.contains(s['id'])),
@@ -447,8 +462,33 @@ class _TestEditorState extends State<TestEditor> {
               ),
             ],
         ],
+        if (widget.id != null) ...[
+          const SizedBox(height: 30),
+          Center(child: TextAction('Delete this test', color: danger, onTap: _delete)),
+        ],
       ],
     );
+  }
+
+  /// Deletes the test. One that students have written takes their results with it, so it asks again.
+  Future<void> _delete() async {
+    final title = _title.text.trim().isEmpty ? 'this test' : '"${_title.text.trim()}"';
+    final ok = await confirmCard(
+      context,
+      title: 'Delete $title?',
+      body: _attempts > 0
+          ? 'Students have written it. Their results for it will be deleted too, for good.'
+          : "It will be removed from Tests and from students' lists.",
+      confirm: 'Delete',
+      destructive: true,
+    );
+    if (!ok) return;
+    try {
+      await api.delete('/teacher/tests/${widget.id}${_attempts > 0 ? '?with_results=1' : ''}');
+      if (mounted) context.go('/t/tests');
+    } on ApiException catch (e) {
+      if (mounted) showProblem(context, e);
+    }
   }
 }
 
@@ -579,7 +619,16 @@ class TestResultsScreen extends StatefulWidget {
   State<TestResultsScreen> createState() => _TestResultsScreenState();
 }
 
-class _TestResultsScreenState extends State<TestResultsScreen> {
+class _TestResultsScreenState extends State<TestResultsScreen> with WidgetsBindingObserver, AutoRefresh<TestResultsScreen> {
+  @override
+  Set<Area> get refreshAreas => {Area.tests};
+
+  @override
+  Future<void> refreshQuietly() => _load();
+
+  @override
+  Duration? get pollEvery => const Duration(seconds: 30);
+
   Map<String, dynamic>? _d;
   String? _error;
 
@@ -590,6 +639,7 @@ class _TestResultsScreenState extends State<TestResultsScreen> {
   }
 
   Future<void> _load() async {
+    markLoaded();
     try {
       final d = await api.get('/teacher/tests/${widget.id}/results');
       if (mounted) {

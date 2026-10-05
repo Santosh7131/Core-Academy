@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'core/api.dart';
+import 'core/changes.dart';
+import 'core/device.dart';
 import 'core/push.dart';
 import 'core/screen_guard.dart';
 import 'core/session.dart';
@@ -14,6 +16,7 @@ import 'theme.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   Push.start();
+  await Device.load();
   await session.loadPrefs();
   _resolveDark();
   runApp(const CoreAcademyApp());
@@ -103,11 +106,15 @@ class _CoreAcademyAppState extends State<CoreAcademyApp> with WidgetsBindingObse
         systemNavigationBarColor: bg,
         systemNavigationBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
       ),
-      child: MaterialApp.router(
-        title: 'Core Academy',
-        debugShowCheckedModeBanner: false,
-        theme: theme,
-        routerConfig: _router,
+      // Every touch counts as the phone being in use, which keeps screens checking for news.
+      child: Listener(
+        onPointerDown: (_) => changes.lastTouch = DateTime.now(),
+        child: MaterialApp.router(
+          title: 'Core Academy',
+          debugShowCheckedModeBanner: false,
+          theme: theme,
+          routerConfig: _router,
+        ),
       ),
     );
   }

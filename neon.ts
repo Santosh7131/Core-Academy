@@ -9,8 +9,8 @@ export default defineConfig({
     uploads: { access: "private" },
   },
   functions: {
-    // The whole app API (Hono). GROQ_API_KEYS is set on the function once,
-    // outside this file, so deploys never carry the keys.
+    // The whole app API (Hono). GROQ_API_KEYS and GEMINI_API_KEY are set on the
+    // function once, outside this file, so deploys never carry the keys.
     api: { name: "api", source: "./api/src/index.ts" },
   },
   // The notification trigger is created with the CLI on the branches that send notifications

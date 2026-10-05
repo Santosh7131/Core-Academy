@@ -1,16 +1,25 @@
 import { pool } from './db.ts';
+import { geminiChat, geminiConfigured, isGemini } from './gemini.ts';
 import { HttpError } from './http.ts';
 
-// Keys rotate per call; a 429 or 5xx moves on to the next key, then to the next model.
-// Groq rate limits are per organisation, so rotation only adds capacity across different accounts.
+// One chat() for both providers: models named gemini-* go to Google (lib/gemini.ts), the rest to
+// Groq. Groq keys rotate per call, starting at a random one so a fresh server does not always lean
+// on the first. A 429 or 5xx moves on to another key, then to the next model. Groq's limits are per
+// account (organisation), not per key: keys made in one account share one budget, so after a few
+// tries on a rate limit there is no point trying the rest.
 const keys = (process.env.GROQ_API_KEYS ?? '').split(',').map((k) => k.trim()).filter(Boolean);
-let next = 0;
+let next = Math.floor(Math.random() * Math.max(keys.length, 1));
+const TRIES_PER_MODEL = 2;
 
 const list = (v: string | undefined, fallback: string) => (v ?? fallback).split(',').map((s) => s.trim()).filter(Boolean);
-export const VISION_MODELS = list(process.env.GROQ_VISION_MODELS, 'qwen/qwen3.8-27b');
+// Pages are read by Gemini when its key is set, with Groq's vision model behind it.
+export const VISION_MODELS = list(process.env.GROQ_VISION_MODELS, `${geminiConfigured() ? 'gemini-3.5-flash-lite,' : ''}qwen/qwen3.8-27b`);
 export const TEXT_MODELS = list(process.env.GROQ_TEXT_MODELS, 'openai/gpt-oss-120b,openai/gpt-oss-20b');
+// Answers are worked out by one model and checked by another family, so the two can disagree.
+export const SOLVE_MODELS = list(process.env.GROQ_SOLVE_MODELS, 'openai/gpt-oss-120b');
+export const CHECK_MODELS = list(process.env.GROQ_CHECK_MODELS, 'qwen/qwen3.8-27b');
 
-type Content = string | Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }>;
+export type Content = string | Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }>;
 export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: Content };
 
 export type ChatOptions = {
@@ -21,11 +30,15 @@ export type ChatOptions = {
   json?: boolean;
   maxTokens?: number;
   temperature?: number;
+  /** How hard the model thinks before answering; solving questions wants more than reading them. */
+  reasoning?: 'low' | 'medium' | 'high';
 };
 
-function modelParams(model: string): Record<string, unknown> {
-  if (model.startsWith('openai/gpt-oss')) return { include_reasoning: false, reasoning_effort: 'low' };
-  if (model.startsWith('qwen/')) return { reasoning_format: 'hidden', reasoning_effort: 'none' };
+function modelParams(model: string, reasoning: ChatOptions['reasoning']): Record<string, unknown> {
+  if (model.startsWith('openai/gpt-oss')) return { include_reasoning: false, reasoning_effort: reasoning ?? 'low' };
+  if (model.startsWith('qwen/')) {
+    return reasoning ? { reasoning_format: 'hidden', reasoning_effort: 'default' } : { reasoning_format: 'hidden', reasoning_effort: 'none' };
+  }
   return {};
 }
 
@@ -42,14 +55,27 @@ async function logUsage(row: {
     .catch(() => {});
 }
 
-export const aiConfigured = () => keys.length > 0;
+export const aiConfigured = () => keys.length > 0 || geminiConfigured();
+const usable = (model: string) => (isGemini(model) ? geminiConfigured() : keys.length > 0);
 
 export async function chat(opts: ChatOptions): Promise<{ content: string; model: string }> {
-  if (!keys.length) throw new HttpError(503, 'ai_not_configured', 'AI is not set up on the server yet.');
+  const models = opts.models.filter(usable);
+  if (!models.length) throw new HttpError(503, 'ai_not_configured', 'AI is not set up on the server yet.');
   let retryAfter: number | null = null;
 
-  for (const model of opts.models) {
-    for (let tries = 0; tries < keys.length; tries++) {
+  for (const model of models) {
+    if (isGemini(model)) {
+      const started = Date.now();
+      const r = await geminiChat(model, opts);
+      await logUsage({
+        userId: opts.userId, task: opts.task, model, slot: null, ok: r.ok, error: r.ok ? undefined : r.error,
+        prompt: r.prompt, completion: r.completion, ms: Date.now() - started,
+      });
+      if (r.ok) return { content: r.content, model };
+      if (r.retryAfter) retryAfter = Math.min(retryAfter ?? r.retryAfter, r.retryAfter);
+      continue; // one key, so straight on to the next model
+    }
+    for (let tries = 0; tries < Math.min(keys.length, TRIES_PER_MODEL); tries++) {
       const slot = next++ % keys.length;
       const started = Date.now();
       let res: Response;
@@ -63,7 +89,7 @@ export async function chat(opts: ChatOptions): Promise<{ content: string; model:
             temperature: opts.temperature ?? 0,
             max_completion_tokens: opts.maxTokens ?? 4096,
             ...(opts.json ? { response_format: { type: 'json_object' } } : {}),
-            ...modelParams(model),
+            ...modelParams(model, opts.reasoning),
           }),
           signal: AbortSignal.timeout(120_000),
         });
@@ -94,7 +120,9 @@ export async function chat(opts: ChatOptions): Promise<{ content: string; model:
   throw new HttpError(
     503,
     'ai_busy',
-    retryAfter ? `AI is busy right now. Try again in about ${Math.ceil(retryAfter)} seconds.` : 'AI could not read this right now. Try again in a minute.',
+    retryAfter
+      ? `AI is busy right now. Try again in about ${Math.ceil(retryAfter)} second${Math.ceil(retryAfter) === 1 ? '' : 's'}.`
+      : 'AI could not read this right now. Try again in a minute.',
   );
 }
 

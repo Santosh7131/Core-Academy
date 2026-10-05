@@ -1,8 +1,9 @@
 # Renders the launcher icon from design/icon/icon.html with headless Chrome and writes the
 # Android launcher resources (legacy PNGs, adaptive foreground + monochrome, background colour).
 # Usage: .\tools\make-icon.ps1            # writes app/android/app/src/main/res
+#        .\tools\make-icon.ps1 -App admin # the admin app's icon, into admin/android/app/src/main/res
 #        .\tools\make-icon.ps1 -Preview   # only renders design/icon/preview.png
-param([switch]$Preview)
+param([switch]$Preview, [ValidateSet('app', 'admin')][string]$App = 'app')
 
 Add-Type -AssemblyName System.Drawing
 $chrome = 'C:\Program Files\Google\Chrome\Application\chrome.exe'
@@ -15,12 +16,12 @@ function Render([string]$layer, [string]$file, [int]$w, [int]$h) {
   if (Test-Path $file) { Remove-Item $file }
   & $chrome --headless=new --disable-gpu --hide-scrollbars --no-first-run --no-default-browser-check `
     --user-data-dir="$work\profile" --default-background-color=00000000 --window-size="$w,$h" `
-    --virtual-time-budget=3000 --screenshot="$file" "$page`?layer=$layer" 2>$null | Out-Null
+    --virtual-time-budget=3000 --screenshot="$file" "$page`?layer=$layer&app=$App" 2>$null | Out-Null
   if (-not (Test-Path $file)) { throw "Chrome did not render $layer" }
 }
 
 if ($Preview) {
-  $out = Join-Path $root 'design\icon\preview.png'
+  $out = Join-Path $root $(if ($App -eq 'admin') { 'design\icon\preview-admin.png' } else { 'design\icon\preview.png' })
   Render 'preview' $out 1500 980
   $out
   return
@@ -45,7 +46,7 @@ $fore = Join-Path $work 'foreground.png'
 Render 'legacy' $legacy 1024 1024
 Render 'foreground' $fore 1024 1024
 
-$res = Join-Path $root 'app\android\app\src\main\res'
+$res = Join-Path $root "$App\android\app\src\main\res"
 # Legacy icons are 48dp; adaptive layers are 108dp.
 $densities = [ordered]@{ mdpi = 1.0; hdpi = 1.5; xhdpi = 2.0; xxhdpi = 3.0; xxxhdpi = 4.0 }
 foreach ($d in $densities.Keys) {
@@ -68,7 +69,9 @@ Set-Content -Encoding utf8 (Join-Path $anydpi 'ic_launcher.xml') @'
 Set-Content -Encoding utf8 (Join-Path $res 'values\ic_launcher_background.xml') @'
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#0E0E11</color>
+    <color name="ic_launcher_background">BACKGROUND</color>
 </resources>
 '@
+$bgFile = Join-Path $res 'values\ic_launcher_background.xml'
+(Get-Content -Raw $bgFile).Replace('BACKGROUND', $(if ($App -eq 'admin') { '#FAFAFB' } else { '#0E0E11' })) | Set-Content -Encoding utf8 -NoNewline $bgFile
 'icon resources written'

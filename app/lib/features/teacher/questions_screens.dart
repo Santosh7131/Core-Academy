@@ -6,6 +6,8 @@ import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../core/api.dart';
+import '../../core/changes.dart';
+import '../../core/format.dart' as f;
 import '../../theme.dart';
 import '../../ui/kit.dart';
 import '../../ui/math_text.dart';
@@ -15,6 +17,25 @@ import 'subjects.dart';
 
 // ---------------------------------------------------------------- bank
 
+/// A question group's name: the paper category ("NCERT Exemplar"), or what the group is.
+String questionGroupTitle(Map<String, dynamic> g, {bool othersToo = true}) => switch ('${g['key']}') {
+      'library' => 'Ready-made',
+      'manual' => 'Written by you',
+      'papers' => othersToo ? 'Other uploaded papers' : 'Uploaded papers',
+      _ => '${g['category']}',
+    };
+
+/// "Class 10", "Classes 9 and 10", "Classes 7 to 10".
+String _classes(List classes) {
+  final c = classes.cast<int>()..sort();
+  if (c.isEmpty) return '';
+  if (c.length == 1) return 'Class ${c.first}';
+  final run = c.last - c.first == c.length - 1;
+  return run && c.length > 2 ? 'Classes ${c.first} to ${c.last}' : 'Classes ${c.sublist(0, c.length - 1).join(', ')} and ${c.last}';
+}
+
+/// The Questions tab: where the questions came from, one row per source. A search looks across
+/// every question at once.
 class QuestionsScreen extends StatefulWidget {
   const QuestionsScreen({super.key});
 
@@ -22,7 +43,228 @@ class QuestionsScreen extends StatefulWidget {
   State<QuestionsScreen> createState() => _QuestionsScreenState();
 }
 
-class _QuestionsScreenState extends State<QuestionsScreen> {
+class _QuestionsScreenState extends State<QuestionsScreen> with WidgetsBindingObserver, AutoRefresh<QuestionsScreen> {
+  List<Map<String, dynamic>>? _groups;
+  List<Map<String, dynamic>>? _found;
+  String? _error;
+  final _search = TextEditingController();
+  Timer? _debounce;
+
+  @override
+  Set<Area> get refreshAreas => {Area.questions, Area.papers};
+
+  @override
+  Future<void> refreshQuietly() => _load();
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _search.dispose();
+    _debounce?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    markLoaded();
+    final q = _search.text.trim();
+    try {
+      final g = await api.get('/teacher/question-groups');
+      final found = q.isEmpty ? null : await api.get('/teacher/questions?q=${Uri.encodeQueryComponent(q)}');
+      if (mounted) {
+        setState(() {
+          _groups = (g['groups'] as List).cast<Map<String, dynamic>>();
+          _found = found == null ? null : (found['questions'] as List).cast<Map<String, dynamic>>();
+          _error = null;
+        });
+      }
+    } on ApiException catch (e) {
+      if (mounted) setState(() => _error = e.message);
+    }
+  }
+
+  Future<void> _open(String path) async {
+    await context.push(path);
+    _load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final groups = _groups;
+    final total = groups?.fold<int>(0, (a, g) => a + (g['questions'] as int));
+    final searching = _search.text.trim().isNotEmpty;
+    return SafeArea(
+      bottom: false,
+      child: WithFloatingAdd(
+        add: FloatingAdd('New question', onTap: () => _open('/t/questions/new')),
+        child: PullToRefresh(
+          onRefresh: _load,
+          child: ListView(padding: EdgeInsets.zero, physics: const AlwaysScrollableScrollPhysics(), children: [
+            TabHeader(kicker: total == null ? 'Question bank' : f.count(total, 'question'), title: 'Questions'),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(gutter, 18, gutter, 0),
+              child: GroupedInputs(children: [
+                BareField(
+                  controller: _search,
+                  placeholder: 'Search every question',
+                  action: TextInputAction.search,
+                  onChanged: (_) {
+                    setState(() {});
+                    _debounce?.cancel();
+                    _debounce = Timer(const Duration(milliseconds: 350), _load);
+                  },
+                ),
+              ]),
+            ),
+            if (groups == null && _error != null)
+              ErrorState(message: _error!, onRetry: _load)
+            else if (groups == null)
+              const LoadingState()
+            else if (searching)
+              ..._results()
+            else if (groups.isEmpty)
+              const EmptyState(
+                icon: Ph.books,
+                title: 'No questions yet',
+                body: 'Upload a question paper in Upload and let AI type it out, or add a question by hand.',
+              )
+            else
+              ..._groupList(groups),
+            fabClearance,
+          ]),
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _results() {
+    final found = _found;
+    if (found == null) return [const LoadingState()];
+    if (found.isEmpty) {
+      return [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(gutter, 22, gutter, 0),
+          child: Text('No question has those words.', style: bodyStyle.copyWith(color: muted)),
+        ),
+      ];
+    }
+    return [
+      SectionRule('Found', count: found.length),
+      Rows([for (final q in found) QuestionRow(q: q, showGroup: true, onTap: () => _open('/t/questions/${q['id']}'))]),
+    ];
+  }
+
+  /// Papers first, by category, then the teacher's own questions and the ready-made library.
+  List<Widget> _groupList(List<Map<String, dynamic>> groups) {
+    final cats = groups.where((g) => '${g['key']}'.startsWith('cat:')).toList()
+      ..sort((a, b) => '${a['category']}'.toLowerCase().compareTo('${b['category']}'.toLowerCase()));
+    final papers = [...cats, ...groups.where((g) => g['key'] == 'papers')];
+    final others = [...groups.where((g) => g['key'] == 'manual'), ...groups.where((g) => g['key'] == 'library')];
+    Widget row(Map<String, dynamic> g) {
+      final key = '${g['key']}';
+      final title = questionGroupTitle(g, othersToo: cats.isNotEmpty);
+      final subjects = (g['subjects'] as List? ?? const []).cast<String>();
+      return RowTile(
+        leading: _GroupBadge(icon: switch (key) { 'library' => Ph.books, 'manual' => Ph.pencilSimple, _ => Ph.fileText }),
+        title: title,
+        meta: [
+          f.count(g['questions'] as int, 'question'),
+          if (key.startsWith('cat:') || key == 'papers') f.count(g['papers'] as int, 'paper'),
+          _classes(g['classes'] as List),
+          if (subjects.isNotEmpty) subjects.join(', '),
+        ].where((s) => s.isNotEmpty).join(' · '),
+        chevron: true,
+        onTap: () => _open('/t/questions/in/${Uri.encodeComponent(key)}?title=${Uri.encodeQueryComponent(title)}'),
+      );
+    }
+
+    return [
+      if (papers.isNotEmpty) ...[
+        SectionRule('From your papers', count: papers.length),
+        Rows([for (final g in papers) row(g)]),
+      ],
+      if (others.isNotEmpty) ...[
+        const SectionRule('Other questions'),
+        Rows([for (final g in others) row(g)]),
+      ],
+    ];
+  }
+}
+
+class _GroupBadge extends StatelessWidget {
+  const _GroupBadge({required this.icon});
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        width: 40,
+        height: 40,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(color: fill, borderRadius: BorderRadius.circular(11)),
+        child: Icon(icon, size: 19, color: muted),
+      );
+}
+
+/// Rows with the list gap, inside the gutter.
+class Rows extends StatelessWidget {
+  const Rows(this.children, {super.key});
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: gutter),
+        child: Column(children: [
+          for (final (i, c) in children.indexed) ...[if (i > 0) const SizedBox(height: gapRow), c],
+        ]),
+      );
+}
+
+/// One question in a list: its text, where it is, and how often it is used.
+class QuestionRow extends StatelessWidget {
+  const QuestionRow({super.key, required this.q, required this.onTap, this.showGroup = false});
+  final Map<String, dynamic> q;
+  final VoidCallback onTap;
+
+  /// Also say where it came from (a search spans every group).
+  final bool showGroup;
+
+  @override
+  Widget build(BuildContext context) {
+    final used = q['used_in'] as int;
+    final from = switch (q['source']) {
+      'paper' => q['paper'] == null ? 'From a paper' : '${q['paper']}',
+      'library' => 'Ready-made',
+      _ => 'Written by you',
+    };
+    return RowTile(
+      titleWidget: MathText('${q['text']}', style: rowTitleStyle, maxLines: 2),
+      meta: [
+        q['subject'] == null ? 'Class ${q['class_level']}' : groupName(q['class_level'] as int, '${q['subject']}'),
+        if (showGroup) from,
+        if (showGroup && q['chapter'] != null) '${q['chapter']}',
+        used > 0 ? 'in ${f.count(used, 'test')}' : 'not in a test yet',
+      ].join(' · '),
+      onTap: onTap,
+    );
+  }
+}
+
+/// One group's questions, with the class, subject and chapter filters. A paper group lists its
+/// questions paper by paper, in printed order; the others go chapter by chapter.
+class QuestionListScreen extends StatefulWidget {
+  const QuestionListScreen({super.key, required this.group, required this.title});
+  final String group;
+  final String title;
+
+  @override
+  State<QuestionListScreen> createState() => _QuestionListScreenState();
+}
+
+class _QuestionListScreenState extends State<QuestionListScreen> with WidgetsBindingObserver, AutoRefresh<QuestionListScreen> {
   List<Map<String, dynamic>>? _rows;
   List<Subject> _subjects = [];
   List<ChapterRow> _chapters = [];
@@ -32,6 +274,14 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
   String? _chapter;
   final _search = TextEditingController();
   Timer? _debounce;
+
+  bool get _byPaper => widget.group == 'papers' || widget.group.startsWith('cat:');
+
+  @override
+  Set<Area> get refreshAreas => {Area.questions, Area.papers};
+
+  @override
+  Future<void> refreshQuietly() => _load();
 
   @override
   void initState() {
@@ -50,14 +300,16 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
   String? get _subjectOrOnly => _subject ?? (_subjects.length == 1 ? _subjects.first.id : null);
 
   Future<void> _load() async {
+    markLoaded();
     final params = [
+      'group=${Uri.encodeQueryComponent(widget.group)}',
       if (_class != null) 'class=$_class',
       if (_subject != null) 'subject=$_subject',
       if (_chapter != null) 'chapter=$_chapter',
       if (_search.text.trim().isNotEmpty) 'q=${Uri.encodeQueryComponent(_search.text.trim())}',
     ];
     try {
-      final r = await api.get('/teacher/questions${params.isEmpty ? '' : '?${params.join('&')}'}');
+      final r = await api.get('/teacher/questions?${params.join('&')}');
       final subjects = _subjects.isEmpty ? await loadSubjects() : _subjects;
       if (mounted) {
         setState(() {
@@ -86,11 +338,11 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
     }
   }
 
-  void _narrow({int? cls, String? subject, bool clearChapter = true}) {
+  void _narrow({int? cls, String? subject}) {
     setState(() {
       _class = cls;
       _subject = subject;
-      if (clearChapter) _chapter = null;
+      _chapter = null;
     });
     _loadChapters();
     _load();
@@ -99,106 +351,81 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
   Future<void> _open(String path) async {
     await context.push(path);
     _load();
-    _loadChapters();
   }
 
   @override
   Widget build(BuildContext context) {
     final rows = _rows;
     final showChapter = _class != null && _subjectOrOnly != null && _chapters.isNotEmpty;
-    return SafeArea(
-      bottom: false,
-      child: WithFloatingAdd(
-        add: FloatingAdd('New question', onTap: () => _open('/t/questions/new')),
-        child: PullToRefresh(
-          onRefresh: _load,
-          child: ListView(padding: EdgeInsets.zero, physics: const AlwaysScrollableScrollPhysics(), children: [
-            TabHeader(
-              kicker: rows == null ? 'Question bank' : (rows.length == 300 ? 'Showing 300' : '${rows.length} question${rows.length == 1 ? '' : 's'}'),
-              title: 'Questions',
+    return PushedPanel(
+      kicker: rows == null ? 'Questions' : (rows.length == 1000 ? 'Showing 1000' : f.count(rows.length, 'question')),
+      title: widget.title,
+      children: [
+        const SizedBox(height: 14),
+        FilterBar(padding: EdgeInsets.zero, children: [
+          ClassFilter(value: _class, onChanged: (c) => _narrow(cls: c, subject: _subject)),
+          if (_subjects.length > 1) SubjectFilter(subjects: _subjects, value: _subject, onChanged: (v) => _narrow(cls: _class, subject: v)),
+          if (showChapter)
+            ChapterFilter(
+              chapters: _chapters,
+              value: _chapter,
+              subtitle: groupName(_class!, _subjects.firstWhere((s) => s.id == _subjectOrOnly).name),
+              onChanged: (v) {
+                setState(() => _chapter = v);
+                _load();
+              },
             ),
-            const SizedBox(height: 18),
-            FilterBar(children: [
-              ClassFilter(value: _class, onChanged: (c) => _narrow(cls: c, subject: _subject)),
-              if (_subjects.length > 1) SubjectFilter(subjects: _subjects, value: _subject, onChanged: (v) => _narrow(cls: _class, subject: v)),
-              if (showChapter)
-                ChapterFilter(
-                  chapters: _chapters,
-                  value: _chapter,
-                  subtitle: groupName(_class!, _subjects.firstWhere((s) => s.id == _subjectOrOnly).name),
-                  onChanged: (v) {
-                    setState(() => _chapter = v);
-                    _load();
-                  },
-                ),
-            ]),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(gutter, 10, gutter, 0),
-              child: GroupedInputs(children: [
-                BareField(
-                  controller: _search,
-                  placeholder: 'Search questions',
-                  action: TextInputAction.search,
-                  onChanged: (_) {
-                    _debounce?.cancel();
-                    _debounce = Timer(const Duration(milliseconds: 350), _load);
-                  },
-                ),
-              ]),
-            ),
-            if (rows == null && _error != null)
-              ErrorState(message: _error!, onRetry: _load)
-            else if (rows == null)
-              const LoadingState()
-            else if (rows.isEmpty)
-              EmptyState(
-                icon: Ph.books,
-                title: 'No questions here',
-                body: 'Add a question by hand, or upload a question paper in Upload and let AI type it out.',
-              )
-            else
-              ..._grouped(rows),
-            fabClearance,
-          ]),
-        ),
-      ),
+        ]),
+        const SizedBox(height: 10),
+        GroupedInputs(children: [
+          BareField(
+            controller: _search,
+            placeholder: 'Search these questions',
+            action: TextInputAction.search,
+            onChanged: (_) {
+              _debounce?.cancel();
+              _debounce = Timer(const Duration(milliseconds: 350), _load);
+            },
+          ),
+        ]),
+        if (rows == null && _error != null)
+          ErrorState(message: _error!, onRetry: _load)
+        else if (rows == null)
+          const LoadingState()
+        else if (rows.isEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 24),
+            child: Text('No questions here for these filters.', style: bodyStyle.copyWith(color: muted)),
+          )
+        else
+          ..._grouped(rows),
+      ],
     );
   }
 
-  /// Rows under a section rule per chapter. The API sorts by class, then chapter order.
+  /// A section per paper (paper groups) or per chapter (the others). The API sorts to match.
   List<Widget> _grouped(List<Map<String, dynamic>> rows) {
     final out = <Widget>[];
-    String? lastKey;
+    String keyOf(Map<String, dynamic> q) => _byPaper ? '${q['paper_id']}' : '${q['class_level']}|${q['subject_id']}|${q['chapter_id']}';
     final counts = <String, int>{};
-    String keyOf(Map<String, dynamic> q) => '${q['class_level']}|${q['subject_id']}|${q['chapter_id']}';
     for (final q in rows) {
       counts.update(keyOf(q), (n) => n + 1, ifAbsent: () => 1);
     }
+    String? lastKey;
     for (final q in rows) {
       final key = keyOf(q);
       if (key != lastKey) {
+        final group = q['subject'] == null ? 'Class ${q['class_level']}' : groupName(q['class_level'] as int, '${q['subject']}');
         final chapter = q['chapter'] == null ? 'No chapter' : '${q['chapter']}';
-        // Without a class and subject chosen, a chapter name alone could belong to any group.
-        final label = _class != null && _subjectOrOnly != null
-            ? chapter
-            : '${q['subject'] == null ? 'Class ${q['class_level']}' : groupName(q['class_level'] as int, '${q['subject']}')} · $chapter';
-        out.add(SectionRule(label, count: counts[key]));
+        final label = _byPaper
+            ? '${q['paper'] ?? 'Paper'} · $group'
+            : (_class != null && _subjectOrOnly != null ? chapter : '$group · $chapter');
+        out.add(SectionRule(label, count: counts[key], padding: const EdgeInsets.fromLTRB(0, 22, 0, 11)));
         lastKey = key;
       } else {
         out.add(const SizedBox(height: gapRow));
       }
-      out.add(Padding(
-        padding: const EdgeInsets.symmetric(horizontal: gutter),
-        child: RowTile(
-          titleWidget: MathText('${q['text']}', style: rowTitleStyle, maxLines: 2),
-          meta: [
-            q['subject'] == null ? 'Class ${q['class_level']}' : groupName(q['class_level'] as int, '${q['subject']}'),
-            (q['used_in'] as int) > 0 ? 'in ${q['used_in']} test${q['used_in'] == 1 ? '' : 's'}' : 'not in a test yet',
-          ].join(' · '),
-          trailing: switch (q['source']) { 'paper' => const TagChip('From paper'), 'library' => const TagChip('Ready-made'), _ => null },
-          onTap: () => _open('/t/questions/${q['id']}'),
-        ),
-      ));
+      out.add(QuestionRow(q: q, onTap: () => _open('/t/questions/${q['id']}')));
     }
     return out;
   }
@@ -451,7 +678,24 @@ class _QuestionEditorState extends State<QuestionEditor> {
       if (widget.id == null) {
         await api.post('/teacher/questions', body);
       } else {
-        await api.patch('/teacher/questions/${widget.id}', body);
+        final r = await api.patch('/teacher/questions/${widget.id}', body);
+        // A corrected answer re-marks the tests already written with this question.
+        final n = (r['regraded'] as int?) ?? 0;
+        if (n > 0 && mounted) {
+          await showCentredCard<void>(
+            context,
+            title: 'Marks updated',
+            builder: (ctx) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              Fig(
+                '${n == 1 ? '1 test already written has' : '$n tests already written have'} this question. '
+                '${n == 1 ? 'It was' : 'They were'} marked again with the new answer.',
+                style: bodyStyle.copyWith(color: muted),
+              ),
+              const SizedBox(height: 18),
+              PrimaryButton('OK', onTap: () => Navigator.of(ctx).pop()),
+            ]),
+          );
+        }
       }
       if (mounted) context.pop(true);
     } on ApiException catch (e) {
@@ -462,7 +706,15 @@ class _QuestionEditorState extends State<QuestionEditor> {
   }
 
   Future<void> _delete() async {
-    final ok = await confirmCard(context, title: 'Delete this question?', body: 'It will be removed from the question bank.', confirm: 'Delete', destructive: true);
+    final ok = await confirmCard(
+      context,
+      title: 'Delete this question?',
+      body: _usedIn > 0
+          ? 'It is in ${_usedIn == 1 ? 'a test' : '$_usedIn tests'}. It will be taken out of ${_usedIn == 1 ? 'it' : 'them'} and deleted, unless students have written ${_usedIn == 1 ? 'it' : 'one of them'}.'
+          : 'It will be removed from the question bank.',
+      confirm: 'Delete',
+      destructive: true,
+    );
     if (!ok) return;
     try {
       await api.delete('/teacher/questions/${widget.id}');
@@ -610,6 +862,10 @@ class _QuestionEditorState extends State<QuestionEditor> {
         ChipRow(padding: EdgeInsets.zero, children: [
           for (final m in [1, 2, 3, 4, 5]) SegChip('$m', selected: _marks == m, onTap: () => setState(() => _marks = m)),
         ]),
+        if (widget.id != null) ...[
+          const SizedBox(height: 30),
+          Center(child: TextAction('Delete this question', color: danger, onTap: _delete)),
+        ],
       ],
     );
   }

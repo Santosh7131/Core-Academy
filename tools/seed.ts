@@ -41,10 +41,7 @@ try {
   const at = (days: number, hours: number, minutes = 0) => new Date(d0.getTime() + ((days * 24 + hours) * 60 + minutes) * 60_000);
   const ago = (minutes: number) => new Date(now.getTime() - minutes * 60_000);
 
-  // School and teacher are real records, kept when sample data is deleted.
-  const school = (await q(
-    `insert into schools (name) values ('DAV Adambakkam') on conflict (name) do update set name = excluded.name returning id`,
-  ))[0].id;
+  // The teacher is a real record, kept when sample data is deleted.
 
   const logins: string[] = [];
   const machine: { teacher?: { username: string; password: string }; students: { username: string; pin: string; class_level: number }[] } = { students: [] };
@@ -94,9 +91,9 @@ try {
     const pin = newPin();
     const { hash, salt } = await hashSecret(pin);
     studentIds[s.username] = (await q(
-      `insert into users (role, username, display_name, class_level, school_id, secret_hash, secret_salt, is_sample)
-       values ('student', $1, $2, $3, $4, $5, $6, true) returning id`,
-      [s.username, s.name, s.classLevel, school, hash, salt],
+      `insert into users (role, username, display_name, class_level, secret_hash, secret_salt, is_sample)
+       values ('student', $1, $2, $3, $4, $5, true) returning id`,
+      [s.username, s.name, s.classLevel, hash, salt],
     ))[0].id;
     logins.push(`- Class ${s.classLevel}: ${s.name}: ${s.username}, ${pin}`);
     machine.students.push({ username: s.username, pin, class_level: s.classLevel });

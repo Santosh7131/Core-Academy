@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/api.dart';
+import '../../core/changes.dart';
 import '../../core/format.dart' as f;
 import '../../theme.dart';
 import '../../ui/kit.dart';
@@ -13,7 +14,13 @@ class ResultsScreen extends StatefulWidget {
   State<ResultsScreen> createState() => _ResultsScreenState();
 }
 
-class _ResultsScreenState extends State<ResultsScreen> {
+class _ResultsScreenState extends State<ResultsScreen> with WidgetsBindingObserver, AutoRefresh<ResultsScreen> {
+  @override
+  Set<Area> get refreshAreas => {Area.student};
+
+  @override
+  Future<void> refreshQuietly() => _load();
+
   List<Map<String, dynamic>>? _rows;
   String? _error;
 
@@ -24,6 +31,7 @@ class _ResultsScreenState extends State<ResultsScreen> {
   }
 
   Future<void> _load() async {
+    markLoaded();
     setState(() => _error = null);
     try {
       final r = await api.get('/student/results');

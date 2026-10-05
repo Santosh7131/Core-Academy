@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/api.dart';
+import '../../core/changes.dart';
 import '../../core/format.dart' as f;
 import '../../theme.dart';
 import '../../ui/kit.dart';
@@ -19,7 +20,13 @@ class StudentsScreen extends StatefulWidget {
   State<StudentsScreen> createState() => _StudentsScreenState();
 }
 
-class _StudentsScreenState extends State<StudentsScreen> {
+class _StudentsScreenState extends State<StudentsScreen> with WidgetsBindingObserver, AutoRefresh<StudentsScreen> {
+  @override
+  Set<Area> get refreshAreas => {Area.students, Area.tests};
+
+  @override
+  Future<void> refreshQuietly() => _load();
+
   List<Map<String, dynamic>>? _rows;
   List<Subject> _subjects = [];
   String? _error;
@@ -33,6 +40,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
   }
 
   Future<void> _load() async {
+    markLoaded();
     try {
       final r = await api.get('/teacher/students');
       final subjects = await loadSubjects();
@@ -122,7 +130,6 @@ class _StudentsScreenState extends State<StudentsScreen> {
                       meta: [
                         'Class ${s['class_level']}',
                         if (subjectNames(s['subjects']).isNotEmpty) subjectNames(s['subjects']).join(', '),
-                        if (s['school'] != null) '${s['school']}',
                         if (s['active'] != true) 'login off',
                       ].join(' · '),
                       trailing: s['avg_pct'] == null
@@ -143,9 +150,6 @@ class _StudentsScreenState extends State<StudentsScreen> {
 
 // ---------------------------------------------------------------- add
 
-/// The last option in a school choice: opens "Add a school" instead of choosing one.
-const _addSchoolChoice = '+add';
-
 class AddStudentScreen extends StatefulWidget {
   const AddStudentScreen({super.key});
 
@@ -158,8 +162,6 @@ class _AddStudentScreenState extends State<AddStudentScreen> {
   final _username = TextEditingController();
   bool _usernameEdited = false;
   int? _class;
-  String? _schoolId;
-  List<Map<String, dynamic>> _schools = [];
   List<Subject> _subjects = [];
   Set<String> _subjectIds = {};
   String _pin = _randomPin();
@@ -170,7 +172,6 @@ class _AddStudentScreenState extends State<AddStudentScreen> {
   @override
   void initState() {
     super.initState();
-    _loadSchools();
     _loadSubjects();
   }
 
@@ -196,20 +197,6 @@ class _AddStudentScreenState extends State<AddStudentScreen> {
     super.dispose();
   }
 
-  Future<void> _loadSchools() async {
-    try {
-      final r = await api.get('/teacher/schools');
-      if (mounted) {
-        setState(() {
-          _schools = (r['schools'] as List).cast<Map<String, dynamic>>();
-          if (_schools.length == 1) _schoolId = '${_schools.first['id']}';
-        });
-      }
-    } on ApiException {
-      // Schools are optional here.
-    }
-  }
-
   /// "Harini Venkatesh" -> "harini.v"
   void _suggest(String name) {
     if (_usernameEdited) return;
@@ -217,29 +204,6 @@ class _AddStudentScreenState extends State<AddStudentScreen> {
     final s = parts.isEmpty ? '' : (parts.length == 1 ? parts.first : '${parts.first}.${parts.last[0]}');
     _username.text = s;
     setState(() {});
-  }
-
-  Future<void> _addSchool() async {
-    final c = TextEditingController();
-    final name = await showCentredCard<String>(
-      context,
-      title: 'Add a school',
-      builder: (ctx) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        GroupedInputs(children: [
-          BareField(controller: c, placeholder: 'School name', autofocus: true, capitalization: TextCapitalization.words, onSubmitted: (v) => Navigator.of(ctx).pop(v)),
-        ]),
-        const SizedBox(height: 16),
-        PrimaryButton('Add', onTap: () => Navigator.of(ctx).pop(c.text)),
-      ]),
-    );
-    if (name == null || name.trim().isEmpty) return;
-    try {
-      final r = await api.post('/teacher/schools', {'name': name.trim()});
-      await _loadSchools();
-      setState(() => _schoolId = '${r['school']['id']}');
-    } on ApiException catch (e) {
-      if (mounted) showProblem(context, e);
-    }
   }
 
   String? get _missing {
@@ -256,7 +220,6 @@ class _AddStudentScreenState extends State<AddStudentScreen> {
       final r = await api.post('/teacher/students', {
         'display_name': _name.text.trim(),
         'class_level': _class,
-        'school_id': _schoolId,
         'username': _username.text.trim(),
         'pin': _pin,
         'subject_ids': _subjectIds.toList(),
@@ -302,25 +265,6 @@ class _AddStudentScreenState extends State<AddStudentScreen> {
           const SizedBox(height: 10),
           Fig('Joins ${[for (final x in _subjects) if (_subjectIds.contains(x.id)) groupName(_class!, x.name)].join(' and ')}.', style: labelStyle),
         ],
-        const FormLabel('School'),
-        SelectField(
-          value: _schools.where((s) => s['id'] == _schoolId).map((s) => '${s['name']}').firstOrNull,
-          placeholder: 'Choose a school',
-          onTap: () async {
-            final c = await showChoices<String>(
-              context,
-              title: 'School',
-              options: [for (final s in _schools) Choice('${s['id']}', '${s['name']}'), const Choice(_addSchoolChoice, 'Add a new school')],
-              selected: _schoolId,
-            );
-            if (c == null) return;
-            if (c.value == _addSchoolChoice) {
-              _addSchool();
-            } else {
-              setState(() => _schoolId = c.value);
-            }
-          },
-        ),
         const FormLabel('Login'),
         GroupedInputs(children: [
           BareField(
@@ -359,7 +303,13 @@ class StudentDetailScreen extends StatefulWidget {
   State<StudentDetailScreen> createState() => _StudentDetailScreenState();
 }
 
-class _StudentDetailScreenState extends State<StudentDetailScreen> {
+class _StudentDetailScreenState extends State<StudentDetailScreen> with WidgetsBindingObserver, AutoRefresh<StudentDetailScreen> {
+  @override
+  Set<Area> get refreshAreas => {Area.students, Area.tests};
+
+  @override
+  Future<void> refreshQuietly() => _load();
+
   Map<String, dynamic>? _d;
   String? _error;
 
@@ -370,6 +320,7 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
   }
 
   Future<void> _load() async {
+    markLoaded();
     try {
       final d = await api.get('/teacher/students/${widget.id}');
       if (mounted) {
@@ -456,6 +407,26 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
     }
   }
 
+  Future<void> _delete(Map<String, dynamic> s, int written) async {
+    final ok = await confirmCard(
+      context,
+      title: 'Delete ${s['display_name']}?',
+      body: [
+        'Their login${written > 0 ? ' and ${written == 1 ? 'their 1 test result' : 'all $written test results'}' : ''} will be deleted for good.',
+        if (written > 0) 'To keep the results, turn the login off instead.',
+      ].join(' '),
+      confirm: 'Delete',
+      destructive: true,
+    );
+    if (!ok) return;
+    try {
+      await api.delete('/teacher/students/${widget.id}');
+      if (mounted) context.pop(true);
+    } on ApiException catch (e) {
+      if (mounted) showProblem(context, e);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final d = _d;
@@ -475,7 +446,7 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
     final lastSeen = f.parseTime(s['last_seen_at']);
 
     return PushedPanel(
-      kicker: ['Class ${s['class_level']}', if (s['school'] != null) '${s['school']}', if (s['active'] != true) 'login off'].join(' · '),
+      kicker: ['Class ${s['class_level']}', if (s['active'] != true) 'login off'].join(' · '),
       title: '${s['display_name']}',
       children: [
         const SizedBox(height: 22),
@@ -558,6 +529,8 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> {
             ),
           ),
         ]),
+        const SizedBox(height: 26),
+        Center(child: TextAction('Delete this student', color: danger, onTap: () => _delete(s, done.length))),
       ],
     );
   }
