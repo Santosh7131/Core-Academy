@@ -16,8 +16,19 @@ const list = (v: string | undefined, fallback: string) => (v ?? fallback).split(
 export const VISION_MODELS = list(process.env.GROQ_VISION_MODELS, `${geminiConfigured() ? 'gemini-3.5-flash-lite,' : ''}qwen/qwen3.8-27b`);
 export const TEXT_MODELS = list(process.env.GROQ_TEXT_MODELS, 'openai/gpt-oss-120b,openai/gpt-oss-20b');
 // Answers are worked out by one model and checked by another family, so the two can disagree.
+// The checker was chosen by running one 82-question worksheet through each candidate (29 of its
+// questions had split the others). Gemini 3.1 Flash-Lite never contradicted the solver there, and
+// gpt-oss-20b did as well; Qwen and Gemini 3.5 Flash-Lite, each sure of itself, disputed 8 to 10
+// answers that were right. Gemini 3.5 Flash was best too, but its free plan allows only 20 requests
+// a day, so it is a late stand-in. gpt-oss-20b is the same family as the solver, so it comes
+// after Gemini: a second opinion that is less independent is still better than none.
 export const SOLVE_MODELS = list(process.env.GROQ_SOLVE_MODELS, 'openai/gpt-oss-120b');
-export const CHECK_MODELS = list(process.env.GROQ_CHECK_MODELS, 'qwen/qwen3.8-27b');
+export const CHECK_MODELS = list(
+  process.env.GROQ_CHECK_MODELS,
+  geminiConfigured()
+    ? 'gemini-3.1-flash-lite,openai/gpt-oss-20b,gemini-3.5-flash,qwen/qwen3.8-27b'
+    : 'openai/gpt-oss-20b,qwen/qwen3.8-27b',
+);
 
 export type Content = string | Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }>;
 export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: Content };
@@ -65,15 +76,24 @@ export async function chat(opts: ChatOptions): Promise<{ content: string; model:
 
   for (const model of models) {
     if (isGemini(model)) {
-      const started = Date.now();
-      const r = await geminiChat(model, opts);
-      await logUsage({
-        userId: opts.userId, task: opts.task, model, slot: null, ok: r.ok, error: r.ok ? undefined : r.error,
-        prompt: r.prompt, completion: r.completion, ms: Date.now() - started,
-      });
-      if (r.ok) return { content: r.content, model };
-      if (r.retryAfter) retryAfter = Math.min(retryAfter ?? r.retryAfter, r.retryAfter);
-      continue; // one key, so straight on to the next model
+      // "High demand" (503) on Google's side passes in seconds, and so does the free plan's
+      // per-minute limit (it says how long: a few seconds when pages are read side by side).
+      // The models behind this one are weaker, so it gets one more try before they do. A limit
+      // that lasts longer, such as a day's quota, goes straight on to them.
+      for (let tries = 0; tries < 2; tries++) {
+        const started = Date.now();
+        const r = await geminiChat(model, opts);
+        await logUsage({
+          userId: opts.userId, task: opts.task, model, slot: null, ok: r.ok, error: r.ok ? undefined : r.error,
+          prompt: r.prompt, completion: r.completion, ms: Date.now() - started,
+        });
+        if (r.ok) return { content: r.content, model };
+        if (r.retryAfter) retryAfter = Math.min(retryAfter ?? r.retryAfter, r.retryAfter);
+        const brief = r.error.startsWith('503') ? 2 : r.retryAfter !== undefined && r.retryAfter <= 10 ? r.retryAfter + 0.5 : null;
+        if (brief === null || tries > 0) break;
+        await new Promise((ok) => setTimeout(ok, brief * 1000));
+      }
+      continue;
     }
     for (let tries = 0; tries < Math.min(keys.length, TRIES_PER_MODEL); tries++) {
       const slot = next++ % keys.length;

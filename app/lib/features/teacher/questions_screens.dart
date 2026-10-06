@@ -462,9 +462,10 @@ class MathToolbar extends StatelessWidget {
               height: 34,
               constraints: const BoxConstraints(minWidth: 42),
               padding: const EdgeInsets.symmetric(horizontal: 12),
-              alignment: Alignment.center,
               decoration: BoxDecoration(color: fill, borderRadius: BorderRadius.circular(rSmall)),
-              child: Text(label, style: optionStyle.copyWith(fontSize: 15, fontWeight: FontWeight.w600)),
+              // As wide as its symbol. A Container with an alignment would take the whole row,
+              // and the chips would stack one to a line.
+              child: Center(widthFactor: 1, child: Text(label, style: optionStyle.copyWith(fontSize: 15, fontWeight: FontWeight.w600))),
             ),
           ),
       ]);

@@ -327,7 +327,8 @@ class TagChip extends StatelessWidget {
       height: 22,
       padding: const EdgeInsets.symmetric(horizontal: 9),
       decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(rPill)),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [Fig(text, style: tagStyle.copyWith(color: fg), maxLines: 1)]),
+      // As wide as its text, and cut short with an ellipsis when its row has less room than that.
+      child: Center(widthFactor: 1, child: Fig(text, style: tagStyle.copyWith(color: fg), maxLines: 1)),
     );
   }
 }

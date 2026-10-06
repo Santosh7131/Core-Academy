@@ -274,6 +274,73 @@ try {
   check('the papers list shows the new name and the saved count', prow?.exam_name === `${tag} renamed` && prow?.saved === 2, prow);
   check('a paper cannot be renamed to nothing', (await api('PATCH', `/teacher/papers/${paperId}`, T, { exam_name: '  ' })).status === 400);
 
+  // A question the bank already has is not saved again, however it is spaced or punctuated; and
+  // one AI found no fitting option for loses that note, and gets another AI look, once reworded.
+  const ddb = new pg.Client({ connectionString: process.env.DATABASE_URL_UNPOOLED });
+  await ddb.connect();
+  const twin = await ddb.query(
+    `insert into paper_drafts (paper_id, page_no, seq, number_label, kind, text, options, correct_option, answer_checked, ai_note)
+     values ($1, 1, 3, '3', 'mcq', $2, $3, 0, true, null), ($1, 1, 4, '4', 'mcq', $4, $3, null, true, 'no_option') returning id`,
+    [paperId, `${tag}  first.`, ['a', 'b', 'c', 'd'], `${tag} misprinted`],
+  );
+  await ddb.end();
+  const resave = await api('POST', `/teacher/papers/${paperId}/save`, T);
+  check('a question the bank already has is not saved again', resave.body?.saved === 0 && resave.body?.already_in_bank === 1, resave.body);
+  const fixd = await api('PATCH', `/teacher/drafts/${twin.rows[1].id}`, T, { text: `${tag} reworded` });
+  check('a reworded question loses its AI note and gets another AI look',
+    fixd.status === 200 && fixd.body?.draft?.ai_note === null && fixd.body?.draft?.answer_checked === false, fixd.body);
+
+  // A printed answer key replaces an answer AI worked out (the app answers early pages while a late
+  // page, perhaps holding the key, is still being read), but never one the teacher marked. A
+  // question AI could not read whole stays unanswered until the teacher says it looks right.
+  const keyp = await api('POST', '/teacher/papers', T, { class_level: 9, subject_id: maths.id, exam_name: `${tag} key wins`, pages: 1 });
+  const keypId = keyp.body?.paper?.id;
+  if (keypId) created.papers.push(keypId);
+  const kcx = new pg.Client({ connectionString: process.env.DATABASE_URL_UNPOOLED });
+  await kcx.connect();
+  const unq = await kcx.query(
+    `insert into paper_drafts (paper_id, page_no, seq, number_label, kind, text, options, correct_option, answer_source, answer_checked, ai_note)
+     values ($1, 1, 0, '5', 'mcq', $2, $5, 0, 'ai', true, null), ($1, 1, 1, '6', 'mcq', $3, $5, 1, 'teacher', true, null),
+            ($1, 1, 2, '7', 'mcq', $4, $5, null, null, true, 'unclear') returning id`,
+    [keypId, `${tag} ai one`, `${tag} teacher one`, `${tag} unclear one`, ['a', 'b', 'c', 'd']],
+  );
+  await kcx.query(`update paper_pages set ai_status = 'done', answer_key = $2 where paper_id = $1 and page_no = 1`,
+    [keypId, JSON.stringify([{ number: '5', answer: 'c' }, { number: '6', answer: 'd' }])]);
+  await kcx.end();
+  const winK = await api('POST', `/teacher/papers/${keypId}/answers`, T);
+  check('a printed key replaces an answer AI worked out', winK.status === 200 && winK.body?.from_key === 1 && winK.body?.tried === 0, winK.body);
+  const wrows = (await api('GET', `/teacher/papers/${keypId}`, T)).body?.drafts ?? [];
+  check('but never the teacher\'s own mark, and AI does not answer an unclear question',
+    JSON.stringify(wrows.map((d: any) => [d.correct_option, d.answer_source])) === '[[2,"key"],[1,"teacher"],[null,null]]', wrows);
+  const okd = await api('PATCH', `/teacher/drafts/${unq.rows[2].id}`, T, { confirmed: true });
+  check('"looks right" clears the unclear note and lets AI answer it',
+    okd.status === 200 && okd.body?.draft?.ai_note === null && okd.body?.draft?.answer_checked === false, okd.body);
+
+  // Two answer calls at once take different batches, so no question is worked out twice. Needs AI
+  // on the server being tested (the answers are real, simple sums).
+  if ((await (await fetch(`${BASE}/`)).json().catch(() => ({}))).ai === true) {
+    const par = await api('POST', '/teacher/papers', T, { class_level: 9, subject_id: maths.id, exam_name: `${tag} side by side`, pages: 1 });
+    const parId = par.body?.paper?.id;
+    if (parId) created.papers.push(parId);
+    const pcx = new pg.Client({ connectionString: process.env.DATABASE_URL_UNPOOLED });
+    await pcx.connect();
+    for (let i = 0; i < 12; i++) {
+      await pcx.query(
+        `insert into paper_drafts (paper_id, page_no, seq, number_label, kind, text, options) values ($1, 1, $2, $3, 'mcq', $4, $5)`,
+        [parId, i, String(i + 1), `${tag} What is ${i + 2} + ${i + 3}?`, [`${2 * i + 4}`, `${2 * i + 5}`, `${2 * i + 6}`, `${2 * i + 7}`]],
+      );
+    }
+    await pcx.end();
+    const [pa, pb] = await Promise.all([api('POST', `/teacher/papers/${parId}/answers`, T), api('POST', `/teacher/papers/${parId}/answers`, T)]);
+    if (pa.status === 200 && pb.status === 200) {
+      check('two answer calls at once take different batches', pa.body.tried === 6 && pb.body.tried === 6, [pa.body, pb.body]);
+      const after = await api('POST', `/teacher/papers/${parId}/answers`, T);
+      check('and nothing is left for a third', after.status === 200 && after.body?.tried === 0 && after.body?.left === 0, after.body);
+    } else {
+      console.log(`      (AI was busy, so the side-by-side answer check was skipped: ${pa.status} ${pb.status})`);
+    }
+  }
+
   // From 1.3 a paper is uploaded before its details are known. Answers come from its own key first.
   const np = await api('POST', '/teacher/papers', T, { pages: 2 });
   const npId = np.body?.paper?.id;

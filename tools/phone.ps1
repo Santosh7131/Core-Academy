@@ -26,6 +26,12 @@ $activity = 'com.coreacademy.core_academy.MainActivity'
 $scale = 3.0
 
 function Adb { & $adb -s $serial @args }
+# A call stops everything. Phone calls show in the call state; WhatsApp and other app calls only put the
+# audio in communication mode, so look for both.
+$callState = (& $adb -s $serial shell dumpsys telephony.registry | Select-String 'mCallState=' | Select-Object -First 1)
+$audioMode = (& $adb -s $serial shell dumpsys audio | Select-String 'Actual mode = ' | Select-Object -First 1)
+if (("$callState" -and "$callState" -notmatch 'mCallState=0') -or ("$audioMode" -match 'MODE_IN_(COMMUNICATION|CALL)')) { "STOP: the phone is on a call, so nothing was sent"; exit 1 }
+
 
 # Input and screenshots only ever touch Core Academy (live or test build): the phone is Santosh's
 # own, so refuse when another app is in front.

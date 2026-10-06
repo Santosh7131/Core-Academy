@@ -70,25 +70,49 @@ and, for a one-chapter paper, the chapter. It asks the teacher only for what it 
 find. Every page is read into drafts, together with any answer key the paper prints, on
 whichever page it is.
 
-Answers come from that key first. For the rest, two models from different families
-(`GROQ_SOLVE_MODELS` and `GROQ_CHECK_MODELS`) each work the question out, and an answer is
-marked only when both pick the same option and each is at least 90% sure. Questions that need
-a figure are left to the teacher. Each marked answer says where it came from, so the teacher
+Answers come from that key first. For the rest, two models each work the question out:
+gpt-oss-120b on Groq (`GROQ_SOLVE_MODELS`) and Gemini 3.1 Flash-Lite (`GROQ_CHECK_MODELS`;
+gpt-oss-20b, Gemini 3.5 Flash and Qwen stand in, in that order, when it is busy or over its
+free limit). An answer is marked only when both pick the same option and each is at least 90%
+sure. Questions that need a figure are left to the teacher. Each marked answer says where it came from, so the teacher
 can check it before saving. Once every question is saved or skipped, the app asks whether to
 publish the paper as a test for its class and subject straight away; the test remembers the
 paper it came from.
+
+A card also says what AI noticed: part of the question could not be read on the page (some
+PDFs print every subscript as a box, ■), or neither model found an option that fits, which
+usually means a misprint. AI keeps a ■ where nothing in the question forces what it stood for
+(one box is one character, so "t■■■" was three, such as "n+1"), and fills in the ones that are
+forced. It does not answer a question it had to fill in or leave a box in: an answer built on a
+guess would be a guess. The teacher checks the question and taps "Looks right, find the answer"
+(or rewords it), and then AI looks for the answer. A question that repeats an earlier one of the same paper (a
+PDF holding its pages twice) is skipped, and saving leaves out any question the bank already
+has. Skipped questions can be brought back.
 
 The Questions tab groups the bank by source: one row per paper category, other uploaded
 papers, questions typed by hand, and the ready-made library. Each opens with its own class,
 subject and chapter filters.
 
-Pages are read by Google's Gemini 3.5 Flash-Lite on its free tier (`GEMINI_API_KEY`), which
-takes about 2 seconds a page. Groq's vision model reads instead whenever Gemini is busy or
-refuses a page, and Groq always works out the answers. Without a Gemini key, Groq reads too.
-Groq limits each account, not each key, so keys made in one account share one budget: about
-1,000 requests a day per model, and 7,000 input tokens a minute for the vision model, which is
-only two or three pages a minute. The app waits out a limit on its own and shows how long it
-is waiting. Using several Groq accounts to get past the limits is against Groq's rules.
+Pages are read by Google's Gemini 3.5 Flash-Lite on its free tier (`GEMINI_API_KEY`), about 4
+seconds a page. Groq's vision model reads instead whenever Gemini is busy or refuses a page,
+and Groq always works out the answers. Without a Gemini key, Groq reads too. Groq limits each
+account, not each key, so keys made in one account share one budget: about 1,000 requests a
+day per model, and 7,000 input tokens a minute for the vision model, which is only two or
+three pages a minute. The app waits out a limit on its own and shows how long it is waiting.
+Using several Groq accounts to get past the limits is against Groq's rules.
+
+Gemini's free plan limits each model separately (measured 2026-10-06 from its error replies):
+3.5 Flash-Lite 15 requests a minute, 3.5 Flash 20 requests a day, 3.6 Flash 5 requests a
+minute; the newest models often answer "high demand" instead. That is why the app reads four
+pages at a time (a dozen pages is 13 calls, inside the 15 a minute) and checks answers with
+3.1 Flash-Lite.
+
+The app runs the work side by side. Pages are read four at a time, and as soon as the first
+page is read, three workers start looking for answers, each taking its own batch of questions
+(the server hands every call a different batch: `answer_claimed_at`), while the later pages are
+still being read. A printed answer key on a late page replaces any answer AI worked out in the
+meantime. A 12-page worksheet took 2 minutes 45 seconds one step at a time and takes about 30
+seconds this way (`tools/out/try-parallel.mjs` replays the app's run against the local API).
 
 ## Screens stay current
 
@@ -284,7 +308,7 @@ and the scripts that read it would then point at the live database.
 | Command | What it proves |
 |---|---|
 | `npm run typecheck` | The API type-checks. |
-| `npm run test:api` | 109 end-to-end checks of the marking rules, groups, logins, question papers (including ones uploaded before their details are known, printed answer keys and question groups) and the admin app's API against the deployed dev API (add `-- --env .env.main` for the live one; the admin checks run only where the logins file has a developer login). It creates its own students, subject, tests and paper, gives its tests only to those students, then removes them all. |
+| `npm run test:api` | 115 end-to-end checks of the marking rules, groups, logins, question papers (including ones uploaded before their details are known, printed answer keys that replace AI answers, questions the bank already has, two answer calls at once and question groups) and the admin app's API against the deployed dev API (add `-- --env .env.main` for the live one; the admin checks run only where the logins file has a developer login). It creates its own students, subject, tests and paper, gives its tests only to those students, then removes them all. |
 | `node tools/notify-test.ts --log server.log` | 25 checks of the notifications against the API on your PC, run with `PUSH_DRY_RUN=1` so each notification is written to the log instead of sent. Dev only. |
 | `node tools/check-answers.ts` | Every sample question's marked answer is right, and no other option equals it. |
 | `node tools/ai-test.ts` | How accurately the AI reads the 2-page sample paper (render it first with `tools/make-sample-paper.ps1`). |

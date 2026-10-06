@@ -18,6 +18,12 @@ if (-not $serial) {
   $serial = $phones[0]
 }
 $local = Join-Path $env:TEMP 'ca-ui.xml'
+# A call stops everything. Phone calls show in the call state; WhatsApp and other app calls only put the
+# audio in communication mode, so look for both.
+$callState = (& $adb -s $serial shell dumpsys telephony.registry | Select-String 'mCallState=' | Select-Object -First 1)
+$audioMode = (& $adb -s $serial shell dumpsys audio | Select-String 'Actual mode = ' | Select-Object -First 1)
+if (("$callState" -and "$callState" -notmatch 'mCallState=0') -or ("$audioMode" -match 'MODE_IN_(COMMUNICATION|CALL)')) { "STOP: the phone is on a call, so nothing was sent"; exit 1 }
+
 
 function Dump {
   & $adb -s $serial shell uiautomator dump /sdcard/ca-ui.xml 2>$null | Out-Null
