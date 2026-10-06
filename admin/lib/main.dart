@@ -3,7 +3,6 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'core/api.dart';
 import 'core/device.dart';
 import 'core/session.dart';
 import 'core/updater.dart';
@@ -106,8 +105,7 @@ class _AdminAppState extends State<AdminApp> with WidgetsBindingObserver {
           listenable: session,
           builder: (context, _) {
             if (!session.restored) return const StartScreen();
-            // A new key per database, so switching between live and dev starts every tab afresh.
-            return session.signedIn ? Shell(key: ValueKey(api.env)) : const LoginScreen();
+            return session.signedIn ? const Shell() : const LoginScreen();
           },
         ),
       ),

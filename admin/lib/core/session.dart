@@ -8,7 +8,7 @@ import 'api.dart';
 
 enum ThemeChoice { system, light, dark }
 
-/// The developer's login, kept separately for the live and the dev database, and the theme.
+/// The developer's login and the theme.
 class Session extends ChangeNotifier {
   final _storage = const FlutterSecureStorage();
   late SharedPreferences _prefs;
@@ -17,25 +17,41 @@ class Session extends ChangeNotifier {
   bool restored = false;
 
   bool get signedIn => api.token != null && user != null;
-  bool get live => api.env == Env.live;
 
-  String get _tokenKey => 'token_${api.env.name}';
-  String get _userKey => 'user_${api.env.name}';
+  static const _tokenKey = 'token';
+  static const _userKey = 'user';
 
-  /// Read before the first frame: the theme and which database to show.
+  /// Read before the first frame: the theme.
   Future<void> loadPrefs() async {
     _prefs = await SharedPreferences.getInstance();
     theme = ThemeChoice.values.firstWhere((t) => t.name == _prefs.getString('theme'), orElse: () => ThemeChoice.system);
-    final saved = _prefs.getString('env');
-    // Release builds start on live, test builds on dev, until the developer picks one.
-    api.env = saved == null ? (kReleaseMode ? Env.live : Env.dev) : Env.values.byName(saved);
   }
 
   Future<void> restore() async {
     api.onSignedOut = () => _clear().then((_) => notifyListeners());
+    await _carryOver();
     await _load();
     restored = true;
     notifyListeners();
+  }
+
+  /// Up to 1.0.1 the app kept one login per database, live and dev. The one this build reads
+  /// carries over; the other is forgotten.
+  Future<void> _carryOver() async {
+    if (!_prefs.containsKey('env') && !_prefs.containsKey('user_live') && !_prefs.containsKey('user_dev')) return;
+    final from = kReleaseMode ? 'live' : 'dev';
+    final token = await _storage.read(key: 'token_$from');
+    final cached = _prefs.getString('user_$from');
+    if (token != null && cached != null) {
+      await _storage.write(key: _tokenKey, value: token);
+      await _prefs.setString(_userKey, cached);
+    }
+    for (final k in ['token_live', 'token_dev']) {
+      await _storage.delete(key: k);
+    }
+    for (final k in ['user_live', 'user_dev', 'env']) {
+      await _prefs.remove(k);
+    }
   }
 
   Future<void> _load() async {
@@ -55,14 +71,6 @@ class Session extends ChangeNotifier {
       if (e.status == 401 || e.status == 403) await _clear();
       // Offline: keep the cached login; each screen shows its own error.
     }
-  }
-
-  Future<void> switchTo(Env env) async {
-    if (env == api.env) return;
-    api.env = env;
-    await _prefs.setString('env', env.name);
-    await _load();
-    notifyListeners();
   }
 
   Future<void> setTheme(ThemeChoice t) async {

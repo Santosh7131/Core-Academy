@@ -5,7 +5,7 @@ import '../core/session.dart';
 import '../theme.dart';
 import '../ui/kit.dart';
 
-/// The main app's teacher login, for the developer account, with the database to read.
+/// The main app's teacher login, for the developer account.
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -98,21 +98,6 @@ class _LoginScreenState extends State<LoginScreen> {
                     const SizedBox(height: 14),
                     PrimaryButton(_busy ? 'Logging in' : 'Log in', onTap: _busy ? null : _submit),
                     const Spacer(),
-                    const SizedBox(height: 24),
-                    Text('Database', style: labelStyle, textAlign: TextAlign.center),
-                    const SizedBox(height: 10),
-                    Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                      for (final (i, (env, label)) in [(Env.live, 'Live'), (Env.dev, 'Dev')].indexed) ...[
-                        if (i > 0) const SizedBox(width: 8),
-                        SegChip(label, selected: api.env == env, onTap: () async {
-                          await session.switchTo(env);
-                          if (mounted) setState(() => _error = null);
-                        }),
-                      ],
-                    ]),
-                    const SizedBox(height: 10),
-                    Text('Live is what students use; dev is the test copy. Each has its own developer login.',
-                        style: labelStyle, textAlign: TextAlign.center),
                     const SizedBox(height: 16),
                   ]),
                 ),

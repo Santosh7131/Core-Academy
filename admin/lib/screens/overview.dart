@@ -95,7 +95,6 @@ class _OverviewScreenState extends State<OverviewScreen> {
       Padding(
         padding: const EdgeInsets.fromLTRB(gutter, 16, gutter, 0),
         child: Wrap(spacing: 8, runSpacing: 8, children: [
-          envTag(session.live),
           if (api.lastMs != null) TagChip('API ${api.lastMs} ms'),
           TagChip(services['ai'] == true ? 'AI reader on' : 'AI reader off', tone: services['ai'] == true ? Tone.success : Tone.neutral),
           TagChip(services['push'] == true ? 'Push on' : 'Push not set up'),

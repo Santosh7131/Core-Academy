@@ -151,8 +151,9 @@ copied to `tools/out`).
 .\tools\release-admin.ps1 -Notes notes.txt
 ```
 
-To run it against an API on the PC: `adb reverse tcp:8787 tcp:8787`, then in `admin/`,
-`flutter run --dart-define=DEV_API=http://127.0.0.1:8787`.
+A release build reads only the live API, the one the students use; there is nothing to switch.
+A test build (`flutter run` in `admin/`) reads dev. To run it against an API on the PC:
+`adb reverse tcp:8787 tcp:8787`, then `flutter run --dart-define=API_BASE=http://127.0.0.1:8787`.
 
 ## Notifications
 

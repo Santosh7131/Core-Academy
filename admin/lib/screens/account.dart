@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import '../core/api.dart';
 import '../core/format.dart' as f;
 import '../core/github.dart';
-import '../core/session.dart';
 import '../theme.dart';
 import '../ui/common.dart';
 import '../ui/kit.dart';
@@ -81,7 +80,7 @@ class _AccountScreenState extends State<AccountScreen> {
   Widget build(BuildContext context) {
     final d = _d;
     if (d == null) {
-      return PushedPanel(title: 'Account', headerTrailing: envTag(session.live), children: [
+      return PushedPanel(title: 'Account', children: [
         if (_error != null) ErrorState(message: _error!, onRetry: _load) else const LoadingState(),
       ]);
     }
@@ -99,7 +98,6 @@ class _AccountScreenState extends State<AccountScreen> {
     return PushedPanel(
       kicker: a['role'] == 'teacher' ? 'Teacher' : 'Student · Class ${a['class_level']}',
       title: name,
-      headerTrailing: envTag(session.live),
       children: [
         const SizedBox(height: 12),
         Wrap(spacing: 8, runSpacing: 8, children: [

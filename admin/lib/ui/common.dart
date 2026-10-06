@@ -143,6 +143,3 @@ Widget versionTag(String? version, String? newest) {
   if (version == null || version == 'older' || version == 'unknown') return TagChip(version == null ? 'no phone' : '1.2.0 or older');
   return TagChip(version, tone: newest == null ? Tone.neutral : (version == newest ? Tone.success : Tone.warning));
 }
-
-/// Live or dev: which database the app is reading.
-Widget envTag(bool live) => TagChip(live ? 'Live' : 'Dev', tone: live ? Tone.success : Tone.warning);

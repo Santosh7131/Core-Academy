@@ -2,7 +2,7 @@ name: admin
 description: "Core Academy Admin: the developer's view of the app."
 publish_to: 'none'
 # The number after + must go up every release; installed copies compare it to offer an update.
-version: 1.0.1+2
+version: 1.0.2+3
 
 environment:
   sdk: ^3.13.2
