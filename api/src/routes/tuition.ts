@@ -2,7 +2,8 @@ import { waitUntil } from '@neon/functions';
 import { Hono } from 'hono';
 import { tuitionOf, type AppEnv } from '../lib/auth.ts';
 import { pool, tq, tq1, tx } from '../lib/db.ts';
-import { bool, HttpError, int, notFound, str, uuid } from '../lib/http.ts';
+import { bad, bool, HttpError, notFound, str, uuid } from '../lib/http.ts';
+import { addLevel, cleanLabel, CUSTOM_MAX, CUSTOM_MIN, levelInUse, levelIn, levelsOf } from '../lib/levels.ts';
 import { afterTestChange } from '../lib/notify.ts';
 import { pushConfigured, pushToUsers } from '../lib/push.ts';
 import { subjectIds } from '../lib/subjects.ts';
@@ -72,7 +73,7 @@ tuitionRoutes.post('/join-requests/:id/accept', async (c) => {
   const t = tuitionOf(c);
   const id = uuid(c.req.param('id'), 'student id');
   const b = await readBody(c);
-  const cls = int(b, 'class_level', { min: 6, max: 12, optional: true }) ?? null;
+  const cls = (await levelIn(b, 'class_level', t.id, { optional: true })) ?? null;
   const subjects = 'subject_ids' in b ? subjectIds(b.subject_ids) : [];
   await taughtSubjectIds(t.id, subjects);
   const m = await tx(async (cx) => {
@@ -106,4 +107,50 @@ tuitionRoutes.post('/join-requests/:id/decline', async (c) => {
   );
   if (!gone) throw notFound('This request');
   return c.json({ ok: true });
+});
+
+// ---------------------------------------------------------------- the tuition's classes
+
+/** Class 1 to 12, and the levels this tuition has named itself (LKG, "NEET 2027"). */
+tuitionRoutes.get('/levels', async (c) => c.json({ levels: await levelsOf(tuitionOf(c).id) }));
+
+/** Names a new level. Asking for a name the tuition already has gives that level back. */
+tuitionRoutes.post('/levels', async (c) => {
+  const T = tuitionOf(c).id;
+  const level = await addLevel(T, (await readBody(c)).label);
+  return c.json({ level, levels: await levelsOf(T) }, 201);
+});
+
+const customCode = (raw: string) => {
+  const code = Number(raw);
+  if (!Number.isInteger(code) || code < CUSTOM_MIN || code > CUSTOM_MAX) throw bad('Only a class you named yourself can be changed.', 'not_custom');
+  return code;
+};
+
+/** Renames a level the tuition named itself. */
+tuitionRoutes.patch('/levels/:code', async (c) => {
+  const T = tuitionOf(c).id;
+  const code = customCode(c.req.param('code'));
+  const label = cleanLabel((await readBody(c)).label);
+  let row;
+  try {
+    row = await tq1(T, 'update tuition_levels set label = $2 where tuition_id = @T and code = $1 returning code, label', [code, label]);
+  } catch (e: any) {
+    if (e.code === '23505') throw new HttpError(409, 'level_exists', `You already have a class called ${label}.`);
+    throw e;
+  }
+  if (!row) throw notFound('This class');
+  return c.json({ levels: await levelsOf(T) });
+});
+
+/** Removes a level nothing uses any more. */
+tuitionRoutes.delete('/levels/:code', async (c) => {
+  const T = tuitionOf(c).id;
+  const code = customCode(c.req.param('code'));
+  if (await levelInUse(T, code)) {
+    throw new HttpError(409, 'level_in_use', 'Students, groups, tests or papers still use this class. Move or delete those first.');
+  }
+  const gone = await tq1(T, 'delete from tuition_levels where tuition_id = @T and code = $1 returning code', [code]);
+  if (!gone) throw notFound('This class');
+  return c.json({ levels: await levelsOf(T) });
 });

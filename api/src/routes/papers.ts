@@ -1,9 +1,12 @@
 import { Hono } from 'hono';
 import { tuitionOf, type AppEnv } from '../lib/auth.ts';
 import { pool, q, q1, tq, tq1, tx, type Db } from '../lib/db.ts';
-import { CHECK_MODELS, chat, parseJson, SOLVE_MODELS, VISION_MODELS, WRITE_MODELS } from '../lib/groq.ts';
+import { isGemini } from '../lib/gemini.ts';
+import { CHECK_MODELS, chat, parseJson, SOLVE_MODELS, TIEBREAK_MODELS, VISION_MODELS, WRITE_MODELS } from '../lib/groq.ts';
 import { bad, HttpError, int, notFound, str, uuid, uuidOpt } from '../lib/http.ts';
+import { customLevels, isClassNumber, levelIn, levelLabel, studyOf } from '../lib/levels.ts';
 import { wrapBareMath } from '../lib/latex-json.ts';
+import { verdict, type Pick } from '../lib/votes.ts';
 import { mustKeepOrder } from '../lib/questions.ts';
 import { asciiDigits, hasIndicText, indicLabelIndex, namesIndicLanguage } from '../lib/text.ts';
 import { deleteObjects, maybeViewUrl, readObject, uploadUrl, viewUrl } from '../lib/storage.ts';
@@ -21,11 +24,11 @@ export const paperRoutes = new Hono<AppEnv>();
 const MAX_PAGES = 20;
 const pageKey = (paperId: string, pageNo: number) => `papers/${paperId}/p${pageNo}.jpg`;
 
-/** The name of a paper AI has not named yet. */
+/** The name old papers carry until AI or the tutor names them. */
 const UNNAMED = 'New paper';
 
-/** AI marks an answer only when both models pick it and each is at least this sure. */
-const SURE = 0.9;
+/** "Paper 10 Oct": the name a paper starts with, so nothing waits for a tutor to type one. AI replaces it with the paper's own title when it finds one. */
+const autoName = () => `Paper ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' })}`;
 
 /** How many questions AI answers per request, so each request stays short. */
 const ANSWER_BATCH = 6;
@@ -33,10 +36,9 @@ const ANSWER_BATCH = 6;
 const clip = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 const conf = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? Math.min(Math.max(v, 0), 1) : 0);
 
-/** What a paper still needs before its questions can be saved. */
+/** What a paper still needs before its questions can be saved. A name is never one of them: it starts with the date. */
 function missingOf(p: { exam_name: string | null; class_level: number | null; subject_id: string | null }) {
   return [
-    ...(!p.exam_name || p.exam_name === UNNAMED ? ['exam_name'] : []),
     ...(p.class_level == null ? ['class_level'] : []),
     ...(p.subject_id == null ? ['subject_id'] : []),
   ];
@@ -68,16 +70,17 @@ paperRoutes.post('/papers', async (c) => {
   const T = tuitionOf(c).id;
   const b = await readBody(c);
   const pages = int(b, 'pages', { min: 1, max: MAX_PAGES })!;
-  const classLevel = int(b, 'class_level', { min: 6, max: 12, optional: true }) ?? null;
+  const classLevel = (await levelIn(b, 'class_level', T, { optional: true })) ?? null;
+  const named = str(b, 'exam_name', { max: 80, optional: true });
   // An app that sends a class but no subject is older than subjects: its papers are Maths (or the tuition's first subject).
   const sent = uuidOpt(b.subject_id, 'subject');
   const subjectId = sent ? (await taughtSubject(T, sent)).id : classLevel != null ? await defaultSubject(T) : null;
   const paper = await tx(async (cx) => {
     const p = await q1(
-      `insert into papers (tuition_id, class_level, exam_name, category, page_count, uploaded_by, subject_id)
-       values ($1, $2, $3, $4, $5, $6, $7) returning id, class_level, exam_name, category, page_count, subject_id`,
-      [T, classLevel, str(b, 'exam_name', { max: 80, optional: true }) ?? UNNAMED, str(b, 'category', { max: 60, optional: true }) ?? null,
-        pages, c.get('user').id, subjectId],
+      `insert into papers (tuition_id, class_level, exam_name, category, page_count, uploaded_by, subject_id, name_auto)
+       values ($1, $2, $3, $4, $5, $6, $7, $8) returning id, class_level, exam_name, category, page_count, subject_id`,
+      [T, classLevel, named ?? autoName(), str(b, 'category', { max: 60, optional: true }) ?? null,
+        pages, c.get('user').id, subjectId, named === undefined],
       cx,
     );
     for (let n = 1; n <= pages; n++) {
@@ -113,12 +116,13 @@ const INDIC_WRITE_BATCH = 10;
 paperRoutes.post('/papers/chat', async (c) => {
   const T = tuitionOf(c).id;
   const b = await readBody(c);
-  const classLevel = int(b, 'class_level', { min: 6, max: 12 })!;
+  const classLevel = (await levelIn(b, 'class_level', T))!;
   const subjectId = uuid(b.subject_id, 'subject');
   const request = str(b, 'request', { max: 1500 })!;
   const count = int(b, 'count', { min: 1, max: WRITE_BATCH, optional: true }) ?? 15;
   const paperId = b.paper_id == null ? null : uuid(b.paper_id, 'paper id');
   const subject = await taughtSubject(T, subjectId);
+  const study = await studyOf(T, classLevel);
   // A request in Hindi or Tamil (or asking for one) is written in that language, a few questions at a time.
   const indic = hasIndicText(request) || namesIndicLanguage(request);
   const asked = indic ? Math.min(count, INDIC_WRITE_BATCH) : count;
@@ -152,10 +156,10 @@ paperRoutes.post('/papers/chat', async (c) => {
     temperature: 0.7,
     reasoning: 'low',
     messages: [
-      { role: 'system', content: 'You write multiple-choice questions for a CBSE tuition teacher in India. You are exact about maths and science.' },
+      { role: 'system', content: `You write multiple-choice questions for ${isClassNumber(classLevel) ? 'a CBSE tuition teacher' : 'a tuition teacher'} in India. You are exact about maths and science.` },
       {
         role: 'user',
-        content: `Write exactly ${asked} multiple-choice questions for Class ${classLevel} CBSE ${subject.name}, as the teacher asks below. The request may name a number of questions for the whole test: ignore that, this reply is ${asked}.
+        content: `Write exactly ${asked} multiple-choice questions for ${study} ${subject.name}, as the teacher asks below. The request may name a number of questions for the whole test: ignore that, this reply is ${asked}.
 Teacher's request:
 """
 ${request}
@@ -170,7 +174,7 @@ Reply only as JSON:
 Rules:
 - Exactly four options per question, and exactly one is correct. "answer" is its letter: A, B, C or D. Spread the right answers over all four letters.
 - Write all maths, formulas and chemical equations in LaTeX inside $...$, in the options as well as in the question, e.g. $\\frac{3}{4}$, $x^2$, $90^\\circ$, $H_2O$. This is JSON, so write every LaTeX backslash twice, as in "$\\\\frac{3}{4}$". Give each option's text without a letter label.
-- Follow the teacher's topic and difficulty. Match the Class ${classLevel} CBSE syllabus.
+- Follow the teacher's topic and difficulty. Match the ${study} syllabus.
 - Write the questions and the options in the language of the teacher's request: English, Hindi or Tamil, or the one the request asks for. Hindi and Tamil questions use the standard school-textbook terms, and every number is written with the digits 0 to 9. The JSON keys and the answer letters A to D stay as shown.
 - Every question must be answerable from its text alone: no figures, graphs or diagrams, and no "all of the above" or "none of the above".
 - Wrong options are plausible mistakes. Do not repeat a question.
@@ -295,7 +299,7 @@ paperRoutes.patch('/papers/:id', async (c) => {
     [id],
   );
   if (!cur) throw notFound('This paper');
-  const classLevel = 'class_level' in b ? (int(b, 'class_level', { min: 6, max: 12, optional: true }) ?? null) : cur.class_level;
+  const classLevel = 'class_level' in b ? ((await levelIn(b, 'class_level', T, { optional: true })) ?? null) : cur.class_level;
   const subjectId = 'subject_id' in b ? uuidOpt(b.subject_id, 'subject') : cur.subject_id;
   if (subjectId && subjectId !== cur.subject_id) await taughtSubject(T, subjectId);
   const moved = classLevel !== cur.class_level || subjectId !== cur.subject_id;
@@ -305,7 +309,8 @@ paperRoutes.patch('/papers/:id', async (c) => {
   const p = await tx(async (cx) => {
     const row = await q1(
       `update papers set exam_name = $2, category = $3, class_level = $4, subject_id = $5,
-                         chapter_id = case when $7 then null else $6::uuid end
+                         chapter_id = case when $7 then null else $6::uuid end,
+                         name_auto = case when $8 then false else name_auto end
         where id = $1 returning id`,
       [
         id,
@@ -315,6 +320,7 @@ paperRoutes.patch('/papers/:id', async (c) => {
         subjectId,
         'chapter_id' in b ? uuidOpt(b.chapter_id, 'chapter') : cur.chapter_id,
         moved,
+        'exam_name' in b,
       ],
       cx,
     );
@@ -343,10 +349,11 @@ async function catalogue(T: string) {
     'select id, class_level, subject_id, name from chapters where tuition_id = @T order by class_level, subject_id, sort_order, name',
   );
   const lines: string[] = [];
-  for (let cls = 6; cls <= 12; cls++) {
+  const named = new Map((await customLevels(T)).map((l) => [l.code, l.label]));
+  for (const cls of [...new Set(chapters.map((ch) => ch.class_level))].sort((x, y) => x - y)) {
     for (const s of subjects) {
       const names = chapters.filter((ch) => ch.class_level === cls && ch.subject_id === s.id).map((ch) => ch.name);
-      if (names.length) lines.push(`Class ${cls} ${s.name}: ${names.join('; ')}`);
+      if (names.length) lines.push(`${named.get(cls) ?? `Class ${cls}`} ${s.name}: ${names.join('; ')}`);
     }
   }
   return { subjects, chapters, lines };
@@ -382,7 +389,7 @@ paperRoutes.post('/papers/:id/detect', async (c) => {
             type: 'text',
             text: `This is the first page of a question paper, worksheet or set of questions that a CBSE tuition teacher photographed.
 Report its details as JSON:
-{"exam_name":"<short name>","class_level":<6 to 12, or null>,"subject":"<subject>","printed_subject":"<subject as printed>","category":"<source>","chapter":"<chapter>",
+{"exam_name":"<short name>","class_level":<1 to 12, or null>,"subject":"<subject>","printed_subject":"<subject as printed>","category":"<source>","chapter":"<chapter>",
  "confidence":{"exam_name":0.0,"class_level":0.0,"subject":0.0,"category":0.0,"chapter":0.0}}
 Rules:
 - exam_name: a short name from the title printed on this page, leaving out the board, class, subject and year, which have their own fields: a printed "Half Yearly Examination 2025 Mathematics" becomes "Half-yearly exam". If no title is printed, name it in a few words from its questions, e.g. "Life processes worksheet". These examples only show the form; never copy one. At most 40 characters.
@@ -414,7 +421,7 @@ ${lines.join('\n')}
   if (name && cf('exam_name') >= 0.3) found.exam_name = { value: name, confidence: cf('exam_name') };
 
   const cls = Number(r.class_level);
-  if (Number.isInteger(cls) && cls >= 6 && cls <= 12 && cf('class_level') >= 0.8) found.class_level = { value: cls, confidence: cf('class_level') };
+  if (isClassNumber(cls) && cf('class_level') >= 0.8) found.class_level = { value: cls, confidence: cf('class_level') };
 
   const subject = subjects.find((s) => same(s.name, clip(r.subject, 40)));
   if (subject && cf('subject') >= 0.8) found.subject_id = { value: subject.id, confidence: cf('subject') };
@@ -436,7 +443,8 @@ ${lines.join('\n')}
 
   // Only empty details are filled: anything the teacher already chose stays.
   await pool.query(
-    `update papers set exam_name = case when exam_name = $2 then coalesce($3, exam_name) else exam_name end,
+    `update papers set exam_name = case when (name_auto or exam_name = $2) and $3::text is not null then $3 else exam_name end,
+                       name_auto = case when (name_auto or exam_name = $2) and $3::text is not null then false else name_auto end,
                        class_level = coalesce(class_level, $4), subject_id = coalesce(subject_id, $5),
                        category = coalesce(category, $6), chapter_id = coalesce(chapter_id, $7), ai_details = $8
       where id = $1`,
@@ -457,8 +465,8 @@ type Extracted = {
 /** A box AI leaves where the page itself cannot be read (some PDFs print ■ for every subscript). */
 const BOX = '■';
 
-function readPrompt(p: { class_level: number | null; subject: string | null }, pageNo: number, chapters: string[]) {
-  const what = p.class_level != null ? `a Class ${p.class_level} CBSE${p.subject ? ` ${p.subject}` : ''} question paper` : 'a CBSE question paper';
+function readPrompt(p: { study: string | null; subject: string | null }, pageNo: number, chapters: string[]) {
+  const what = p.study != null ? `a ${p.study}${p.subject ? ` ${p.subject}` : ''} question paper` : 'a CBSE question paper';
   return `This image is page ${pageNo} of ${what}.
 Transcribe every question printed on this page, in order, and any answer key printed on it, as JSON:
 {"questions":[{"number":"<question number as printed>","kind":"mcq" or "other","text":"<question text>","options":["<a>","<b>","<c>","<d>"],"needs_diagram":true or false,"unclear":true or false,"chapter_guess":"<chapter>","printed_answer":"<answer printed for it, or empty>"}],
@@ -533,6 +541,60 @@ async function skipRepeats(paperId: string, db: Db) {
   }
 }
 
+/**
+ * Reads one page with each vision model in turn until one gives a usable reply: JSON with a list of
+ * questions or an answer key. A reply with nothing on it is confirmed by the next model before the page
+ * is believed to be blank. Throws the last failure when no model could read it.
+ */
+async function readPageWithAI(T: string, userId: string, prompt: string, dataUrl: string) {
+  type Read = { items: Extracted[]; key: { number: string; answer: string }[] };
+  let lastError: unknown = null;
+  let empty: Read | null = null;
+  for (const model of VISION_MODELS) {
+    let content: string;
+    try {
+      ({ content } = await chat({
+        task: 'read_paper_page',
+        userId,
+        tuitionId: T,
+        models: [model],
+        json: true,
+        // A page takes about 400 tokens and a dense one a few thousand (Hindi and Tamil several times more); Groq counts what is asked for.
+        maxTokens: isGemini(model) ? 6000 : 3000,
+        messages: [
+          { role: 'system', content: 'You transcribe printed exam papers into JSON. You never solve questions; you only copy answers the paper prints.' },
+          { role: 'user', content: [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url: dataUrl } }] },
+        ],
+      }));
+    } catch (e) {
+      lastError = e;
+      continue;
+    }
+    let whole: unknown;
+    try {
+      whole = parseJson<unknown>(content);
+    } catch {
+      lastError = new Error('The reply was not JSON.');
+      continue;
+    }
+    const list = listIn(content, 'questions') as Extracted[];
+    if (!list.length && !(whole && typeof whole === 'object' && 'questions' in (whole as object))) {
+      lastError = new Error('The reply had no questions list.');
+      continue;
+    }
+    const rawKey = Array.isArray((whole as { answer_key?: unknown })?.answer_key) ? (whole as { answer_key: unknown[] }).answer_key : [];
+    const key = rawKey
+      .map((k: any) => ({ number: clip(k?.number, 20), answer: clip(String(k?.answer ?? ''), 200) }))
+      .filter((k) => k.number && k.answer)
+      .slice(0, 200);
+    const read: Read = { items: list.slice(0, 60), key };
+    if (read.items.length || read.key.length) return read;
+    empty = read;
+  }
+  if (empty) return empty;
+  throw lastError ?? new Error('No model could read this page.');
+}
+
 /** Reads one page with AI and replaces that page's unchecked drafts. */
 paperRoutes.post('/papers/:id/pages/:n/read', async (c) => {
   const T = tuitionOf(c).id;
@@ -557,33 +619,8 @@ paperRoutes.post('/papers/:id/pages/:n/read', async (c) => {
   try {
     const img = await readObject(page.object_key);
     const dataUrl = `data:${img.type};base64,${img.bytes.toString('base64')}`;
-    const { content } = await chat({
-      task: 'read_paper_page',
-      userId: c.get('user').id,
-      tuitionId: T,
-      models: VISION_MODELS,
-      json: true,
-      // A page takes about 400 tokens and a dense one a few thousand; Groq counts what is asked for.
-      maxTokens: 3000,
-      messages: [
-        { role: 'system', content: 'You transcribe printed exam papers into JSON. You never solve questions; you only copy answers the paper prints.' },
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: readPrompt(page, pageNo, chapters.map((ch) => ch.name)) },
-            { type: 'image_url', image_url: { url: dataUrl } },
-          ],
-        },
-      ],
-    });
-    const list = listIn(content, 'questions') as Extracted[];
-    const whole = parseJson<{ answer_key?: unknown }>(content);
-    if (!list.length && !(whole && typeof whole === 'object' && 'questions' in whole)) throw new Error('The reply had no questions list.');
-    items = list.slice(0, 60);
-    key = (Array.isArray((whole as { answer_key?: unknown })?.answer_key) ? ((whole as { answer_key: unknown[] }).answer_key) : [])
-      .map((k: any) => ({ number: clip(k?.number, 20), answer: clip(String(k?.answer ?? ''), 200) }))
-      .filter((k) => k.number && k.answer)
-      .slice(0, 200);
+    const prompt = readPrompt({ study: page.class_level != null ? await studyOf(T, page.class_level) : null, subject: page.subject }, pageNo, chapters.map((ch) => ch.name));
+    ({ items, key } = await readPageWithAI(T, c.get('user').id, prompt, dataUrl));
   } catch (e) {
     const message = e instanceof HttpError ? e.message : 'AI could not read this page. Try a clearer photo.';
     await pool.query(`update paper_pages set ai_status = 'failed', ai_error = $2 where id = $1`, [page.id, message]);
@@ -662,7 +699,11 @@ async function applyAnswerKeys(paperId: string, db: Db = pool) {
     const i = answerIndex(answers.get(n), d.options ?? []);
     if (i == null) continue;
     await db.query(
-      `update paper_drafts set correct_option = $2, answer_source = 'key', ai_confidence = null, answer_checked = true where id = $1`,
+      // The paper's own answer ends whatever AI was unsure about: no split note, no second opinion to wait for.
+      `update paper_drafts set correct_option = $2, answer_source = 'key', ai_confidence = null, answer_checked = true,
+              ai_note = case when ai_note in ('disagree', 'unsure', 'writer_differs') then null else ai_note end,
+              ai_picks = null, ai_votes = null
+        where id = $1`,
       [d.id, i],
     );
     marked++;
@@ -682,8 +723,6 @@ async function fillChapters(paperId: string, db: Db = pool) {
     [paperId],
   );
 }
-
-type Pick = { answer: number | null; confidence: number };
 
 /**
  * The list a model's JSON reply holds, whatever shape it chose: the object that was asked for
@@ -708,66 +747,99 @@ export function listIn(content: string, key: string): any[] {
 }
 
 /**
- * One model's answers to a batch: question number -> option and how sure it is. The models are
- * tried in order: the next one is asked when one is busy, and also when one replies with nothing
- * usable. Throws only when every model failed outright (the caller gives the batch back).
+ * One model's answers to a batch: position in the batch -> option and how sure it is. The models are
+ * tried in order, and a model that left questions out is followed by the next one, asked only for
+ * those. Throws only when every model failed outright (the caller gives the batch back).
  */
-async function solve(models: string[], userId: string, tuitionId: string, p: { class_level: number; subject: string | null }, batch: any[]) {
-  const qs = batch.map((d, i) => ({
-    id: `q${i + 1}`,
-    question: d.text,
-    options: { A: d.options[0], B: d.options[1], C: d.options[2], D: d.options[3] },
-  }));
-  const messages = [
-    {
-      role: 'system' as const,
-      content: `You are a careful CBSE${p.subject ? ` ${p.subject}` : ''} teacher checking the answers to Class ${p.class_level} multiple-choice questions. The questions may be in English, Hindi or Tamil, or mix them; you read all three equally well.`,
-    },
-    {
-      role: 'user' as const,
-      content: `Work out the correct option of each question. Reply only as JSON:
+async function solve(
+  models: string[],
+  userId: string,
+  tuitionId: string,
+  p: { class_level: number; subject: string | null },
+  batch: any[],
+  how: { task?: string; deadline?: number; attemptMs?: number } = {},
+) {
+  const who = isClassNumber(p.class_level)
+    ? `a careful CBSE${p.subject ? ` ${p.subject}` : ''} teacher checking the answers to Class ${p.class_level} multiple-choice questions`
+    : `a careful${p.subject ? ` ${p.subject}` : ''} teacher checking the answers to ${await levelLabel(tuitionId, p.class_level)} multiple-choice questions`;
+  const out = new Map<number, Pick>();
+  let failure: unknown = null;
+  for (const model of models) {
+    const todo = batch.map((_, i) => i).filter((i) => !out.has(i));
+    if (!todo.length) break;
+    const qs = todo.map((i) => ({
+      id: `q${i + 1}`,
+      question: batch[i].text,
+      options: { A: batch[i].options[0], B: batch[i].options[1], C: batch[i].options[2], D: batch[i].options[3] },
+    }));
+    const messages = [
+      {
+        role: 'system' as const,
+        content: `You are ${who}. The questions may be in English, Hindi or Tamil, or mix them; you read all three equally well.`,
+      },
+      {
+        role: 'user' as const,
+        content: `Work out the correct option of each question. Reply only as JSON:
 {"answers":[{"id":"q1","answer":"A","confidence":0.97}]}
 - answer is A, B, C or D, or "" when the question is unclear, needs a figure you cannot see, has no correct option, or has more than one.
 - confidence is the probability that your answer is right. Be honest: anything you are not certain of is below 0.9.
 Questions:
 ${JSON.stringify(qs)}`,
-    },
-  ];
-  let failure: unknown = null;
-  for (const model of models) {
+      },
+    ];
     let content: string;
     try {
-      ({ content } = await chat({ task: 'answer_questions', userId, tuitionId, models: [model], json: true, maxTokens: 3000, reasoning: 'medium', messages }));
+      // A model that is slow today (the same one answers in 2 s on another call) is cut off, and the next one is asked.
+      const cutOff = how.attemptMs === undefined ? how.deadline : Math.min(how.deadline ?? Infinity, Date.now() + how.attemptMs);
+      ({ content } = await chat({
+        task: how.task ?? 'answer_questions', userId, tuitionId, models: [model], json: true, maxTokens: 3000, reasoning: 'medium', messages, deadline: cutOff,
+      }));
     } catch (e) {
       failure = e;
       continue;
     }
-    const out = new Map<number, Pick>();
+    let got = 0;
     for (const a of listIn(content, 'answers')) {
       const i = Number(String(a?.id ?? '').replace(/^q/, '')) - 1;
-      if (!(i >= 0 && i < batch.length)) continue;
+      if (!todo.includes(i) || out.has(i)) continue;
       const letter = String(a?.answer ?? '').trim().toUpperCase();
       out.set(i, { answer: /^[A-D]$/.test(letter) ? letter.charCodeAt(0) - 65 : null, confidence: conf(a?.confidence) });
+      got++;
     }
-    if (out.size > 0) return out;
-    failure = null; // it answered, but not in a way anyone can use: the next model is asked
+    if (got > 0) failure = null; // it answered: the next model only fills in what it left out
   }
-  if (failure) throw failure;
-  return new Map<number, Pick>(); // nobody could say: the teacher marks these
+  if (!out.size && failure) throw failure;
+  return out;
 }
 
 /** How long a batch of questions stays claimed by a call that has not finished with it. */
 const CLAIM_MINUTES = 3;
 
+/** A question AI has looked for this many times, with no model answering it, is left to the tutor. */
+const MAX_ANSWER_TRIES = 2;
+
+/**
+ * The most time one model gets to answer a batch before the next is asked. They answer in 1 to 5 seconds; one
+ * call in a while takes 40 and would hold up the whole paper (a Gemini checker did, in a test).
+ */
+const ANSWER_ATTEMPT_MS = 20_000;
+
+/** What the first two checks said about a question they could not settle, kept for its second opinion (migration 016). */
+type Votes = { solver?: Pick; checker?: Pick; tries: number };
+
 /**
  * Finds answers for the next few unanswered questions: first from the paper's own answer keys,
- * then with AI. AI's answer is kept only when two different models pick the same option and each
- * is at least 90% sure.
+ * then with AI. Two different models work each question out on their own and it is marked when they
+ * pick the same option and each is at least 90% sure. A question they split on or hesitated over keeps
+ * what each said and waits for a second opinion, which is a step of its own (`/second-opinion`) so the
+ * tutor does not wait for the slow, strong model. A question AI wrote in the chat keeps its writer's
+ * answer as one more opinion, which can ask the tutor to check the mark but no longer blocks it. A
+ * question no model answered at all is asked again.
  *
  * The app calls this several times at once, and while pages are still being read. Each call claims
  * its own batch (so no question is answered twice), and a call that finds nothing open while pages
  * are still coming simply asks again a moment later. `left` counts the questions nobody has
- * claimed yet.
+ * claimed yet; `second` counts the questions of this batch now waiting for a second opinion.
  */
 paperRoutes.post('/papers/:id/answers', async (c) => {
   const T = tuitionOf(c).id;
@@ -784,41 +856,45 @@ paperRoutes.post('/papers/:id/answers', async (c) => {
   // AI cannot see a figure, so those wait for the teacher.
   await pool.query(`update paper_drafts set answer_checked = true where ${open} and needs_diagram`, [id]);
   const batch = (
-    await q<{ id: string; text: string; options: string[]; page_no: number; seq: number; proposed_option: number | null }>(
+    await q<{ id: string; text: string; options: string[]; page_no: number; seq: number; proposed_option: number | null; answer_tries: number }>(
       `update paper_drafts set answer_claimed_at = now()
         where id in (select id from paper_drafts where ${open} and array_length(options, 1) = 4
                       order by page_no, seq limit ${ANSWER_BATCH} for update skip locked)
-        returning id, text, options, page_no, seq, proposed_option`,
+        returning id, text, options, page_no, seq, proposed_option, answer_tries`,
       [id],
     )
   ).sort((x, y) => x.page_no - y.page_no || x.seq - y.seq);
   let byAi = 0;
+  let second = 0;
   if (batch.length) {
     try {
       const userId = c.get('user').id;
-      const [a, b] = await Promise.all([solve(SOLVE_MODELS, userId, T, p, batch), solve(CHECK_MODELS, userId, T, p, batch)]);
+      const how = { attemptMs: ANSWER_ATTEMPT_MS };
+      const [a, b] = await Promise.all([solve(SOLVE_MODELS, userId, T, p, batch, how), solve(CHECK_MODELS, userId, T, p, batch, how)]);
       await tx(async (cx) => {
         for (const [i, d] of batch.entries()) {
           const x = a.get(i);
           const y = b.get(i);
-          // A question AI wrote in the chat also needs its writer's answer to match.
-          const proposed = d.proposed_option;
-          const sure = x && y && x.answer != null && x.answer === y.answer && x.confidence >= SURE && y.confidence >= SURE
-            && (proposed == null || proposed === x.answer);
-          if (sure) byAi++;
-          // Neither model found an option that fits: most often a misprint, so the card says so.
-          const none = x != null && y != null && x.answer == null && y.answer == null;
-          // Both gave an answer and they (or the writer) differ: the tutor decides.
-          const differ = x != null && y != null && x.answer != null && y.answer != null
-            && (x.answer !== y.answer || (proposed != null && proposed !== x.answer));
+          const { mark, note, picks } = verdict(x, y, undefined, d.proposed_option);
+          if (mark) byAi++;
+          const heard = x != null || y != null;
+          // Split or hesitant models (not "no option fits", which is usually a misprint) leave the question
+          // waiting for a stronger model's opinion; the card says so until it comes.
+          const waits = !mark && note !== 'no_option' && heard && TIEBREAK_MODELS.length > 0;
+          if (waits) second++;
+          // A question no model said anything about is asked again; after two tries it is left to the tutor.
+          const askAgain = !mark && !heard && d.answer_tries + 1 < MAX_ANSWER_TRIES;
+          const votes: Votes = { solver: x, checker: y, tries: 0 };
           await cx.query(
-            `update paper_drafts set answer_checked = true, answer_claimed_at = null,
+            `update paper_drafts set answer_checked = $6, answer_claimed_at = null, answer_tries = answer_tries + 1,
                     correct_option = case when $2::smallint is null then correct_option else $2 end,
                     answer_source = case when $2::smallint is null then answer_source else 'ai' end,
                     ai_confidence = $3,
-                    ai_note = case when $4::text is not null and ai_note is null then $4 else ai_note end
+                    ai_note = case when $4::text is not null and ai_note is null then $4 else ai_note end,
+                    ai_picks = case when $5::jsonb is not null then $5::jsonb else ai_picks end,
+                    ai_votes = $7::jsonb
               where id = $1 and correct_option is null`,
-            [d.id, sure ? x.answer : null, sure ? Math.min(x.confidence, y.confidence) : null, none ? 'no_option' : differ && !sure ? 'disagree' : null],
+            [d.id, mark?.answer ?? null, mark?.confidence ?? null, askAgain ? null : note, picks ? JSON.stringify(picks) : null, !askAgain, waits ? JSON.stringify(votes) : null],
           );
         }
       });
@@ -829,7 +905,82 @@ paperRoutes.post('/papers/:id/answers', async (c) => {
     }
   }
   const left = await q1(`select count(*) as n from paper_drafts where ${open}`, [id]);
-  return c.json({ from_key: fromKey, by_ai: byAi, tried: batch.length, left: left.n });
+  return c.json({ from_key: fromKey, by_ai: byAi, tried: batch.length, left: left.n, second });
+});
+
+/** How many questions one second-opinion call takes, and the most time it may spend on them (the strong models are slow). */
+const SECOND_BATCH = 6;
+const SECOND_MS = 55_000;
+
+/** The stronger models take 3 to 40 seconds. Each gets this long, so the one behind it still has time when the first hangs. */
+const SECOND_ATTEMPT_MS = 35_000;
+
+/** A second opinion that could not be had this many times is given up on, and the question is left to the tutor. */
+const MAX_SECOND_TRIES = 2;
+
+/**
+ * The second opinion: questions the first two checks could not settle go to a stronger model, and are marked
+ * when two of the three agree (see `verdict`). It is a call of its own, made after the answers, because the
+ * strong models are slow and often busy: the tutor reviews the paper while it works, and what it cannot help
+ * with stays with the tutor, with what each check chose on the card. A busy model never fails the call: it
+ * counts as a try, and after two the question is left alone. `left` counts the questions still waiting that
+ * nobody has claimed.
+ */
+paperRoutes.post('/papers/:id/second-opinion', async (c) => {
+  const T = tuitionOf(c).id;
+  const id = uuid(c.req.param('id'), 'paper id');
+  const p = await tq1(T, `select ${PAPER_COLS} from papers p where p.id = $1 and p.tuition_id = @T`, [id]);
+  if (!p) throw notFound('This paper');
+  if (p.class_level == null) throw new HttpError(409, 'needs_details', 'Choose the class of this paper first.');
+
+  const waiting = `paper_id = $1 and status = 'draft' and kind = 'mcq' and correct_option is null and ai_votes is not null
+                   and (answer_claimed_at is null or answer_claimed_at < now() - interval '${CLAIM_MINUTES} minutes')`;
+  const batch = (
+    await q<{ id: string; text: string; options: string[]; page_no: number; seq: number; proposed_option: number | null; ai_votes: Votes }>(
+      `update paper_drafts set answer_claimed_at = now()
+        where id in (select id from paper_drafts where ${waiting} and array_length(options, 1) = 4
+                      order by page_no, seq limit ${SECOND_BATCH} for update skip locked)
+        returning id, text, options, page_no, seq, proposed_option, ai_votes`,
+      [id],
+    )
+  ).sort((x, y) => x.page_no - y.page_no || x.seq - y.seq);
+  let byAi = 0;
+  const third = new Map<number, Pick>();
+  if (batch.length) {
+    try {
+      const got = await solve(TIEBREAK_MODELS, c.get('user').id, T, p, batch, { task: 'second_opinion', deadline: Date.now() + SECOND_MS, attemptMs: SECOND_ATTEMPT_MS });
+      for (const [i, v] of got) third.set(i, v);
+    } catch {
+      // Nobody could be asked in time. That counts as a try below.
+    }
+    try {
+      await tx(async (cx) => {
+        for (const [i, d] of batch.entries()) {
+          const t = third.get(i);
+          const { mark, note, picks } = verdict(d.ai_votes.solver, d.ai_votes.checker, t, d.proposed_option);
+          if (mark) byAi++;
+          const tries = (d.ai_votes.tries ?? 0) + 1;
+          // Finished when the stronger model has said something, or when it could not be asked twice.
+          const done = t != null || tries >= MAX_SECOND_TRIES;
+          await cx.query(
+            `update paper_drafts set answer_claimed_at = null,
+                    correct_option = case when $2::smallint is null then correct_option else $2 end,
+                    answer_source = case when $2::smallint is null then answer_source else 'ai' end,
+                    ai_confidence = $3, ai_note = $4, ai_picks = $5::jsonb, ai_votes = $6::jsonb
+              where id = $1 and correct_option is null and ai_votes is not null`,
+            [d.id, mark?.answer ?? null, mark?.confidence ?? null, note, picks ? JSON.stringify(picks) : null, done ? null : JSON.stringify({ ...d.ai_votes, tries })],
+          );
+        }
+      });
+    } catch (e) {
+      // The claim runs out by itself after a few minutes; the next call takes these again.
+      await pool.query(`update paper_drafts set answer_claimed_at = null where id = any($1::uuid[])`, [batch.map((d) => d.id)]).catch(() => {});
+      throw e;
+    }
+  }
+  const left = await q1(`select count(*) as n from paper_drafts where ${waiting}`, [id]);
+  // `asked` is how many the stronger model gave an opinion on: none means it was busy, and a pause helps before the next call.
+  return c.json({ by_ai: byAi, tried: batch.length, asked: third.size, left: left.n });
 });
 
 // ---------------------------------------------------------------- checking and saving
@@ -864,7 +1015,10 @@ paperRoutes.patch('/drafts/:id', async (c) => {
                              needs_diagram = $7, image_key = $8, status = $9,
                              answer_source = case when $10 then (case when $5::smallint is null then null else 'teacher' end) else answer_source end,
                              ai_confidence = case when $10 then null else ai_confidence end,
-                             ai_note = case when $11 then null else ai_note end,
+                             ai_note = case when $11 or ($10 and $5::smallint is not null and ai_note in ('disagree', 'unsure', 'writer_differs'))
+                                            then null else ai_note end,
+                             ai_picks = case when $11 or ($10 and $5::smallint is not null) then null else ai_picks end,
+                             ai_votes = case when $11 or ($10 and $5::smallint is not null) then null else ai_votes end,
                              answer_checked = case when $11 and $5::smallint is null then false else answer_checked end
       where id = $1 returning *`,
     [

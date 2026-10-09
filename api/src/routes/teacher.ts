@@ -7,6 +7,7 @@ import {
 import { assignedCte, releaseFinishedTests, resultPayload } from '../lib/attempts.ts';
 import { pool, q, q1, tq, tq1, tx } from '../lib/db.ts';
 import { bad, bool, date, HttpError, int, notFound, str, uuid, uuidOpt } from '../lib/http.ts';
+import { assertLevel, CLASS_MIN, CUSTOM_MAX, levelIn, levelLabel, levelParam } from '../lib/levels.ts';
 import { afterTestChange } from '../lib/notify.ts';
 import { pushConfigured, pushToUsers } from '../lib/push.ts';
 import { mustKeepOrder } from '../lib/questions.ts';
@@ -168,7 +169,7 @@ teacherRoutes.post('/students', async (c) => {
   const T = tuitionOf(c).id;
   const b = await readBody(c);
   const displayName = str(b, 'display_name', { max: 60 })!;
-  const classLevel = int(b, 'class_level', { min: 6, max: 12 })!;
+  const classLevel = (await levelIn(b, 'class_level', T))!;
   const requested = checkUsername(b.username);
   // The username the app suggests from the name ("harini.v", or "harini.v.2"), when it is taken, becomes the
   // next free one, so nobody has to think of a login for a second student with the same name. Any other
@@ -267,7 +268,7 @@ teacherRoutes.patch('/students/:id', async (c) => {
   const id = uuid(c.req.param('id'), 'student id');
   const b = await readBody(c);
   const name = str(b, 'display_name', { max: 60, optional: true }) ?? null;
-  const cls = int(b, 'class_level', { min: 6, max: 12, optional: true }) ?? null;
+  const cls = (await levelIn(b, 'class_level', T, { optional: true })) ?? null;
   const subjects = 'subject_ids' in b ? subjectIds(b.subject_ids) : null;
   if (subjects) await taughtSubjectIds(T, subjects);
   const u = await tx(async (cx) => {
@@ -503,7 +504,7 @@ teacherRoutes.get('/groups', async (c) => c.json({ groups: await tq(tuitionOf(c)
 teacherRoutes.post('/groups', async (c) => {
   const T = tuitionOf(c).id;
   const b = await readBody(c);
-  const cls = int(b, 'class_level', { min: 6, max: 12 })!;
+  const cls = (await levelIn(b, 'class_level', T))!;
   const subject = await taughtSubject(T, uuid(b.subject_id, 'subject'));
   await ensureGroup(T, cls, subject.id);
   return c.json({ group: { class_level: cls, subject_id: subject.id, subject: subject.name } }, 201);
@@ -512,8 +513,7 @@ teacherRoutes.post('/groups', async (c) => {
 /** Removes an empty group: one with no students and no tests. */
 teacherRoutes.delete('/groups/:cls/:subject', async (c) => {
   const T = tuitionOf(c).id;
-  const cls = Number(c.req.param('cls'));
-  if (!Number.isInteger(cls) || cls < 6 || cls > 12) throw bad('Choose a class from 6 to 12.');
+  const cls = await levelParam(c.req.param('cls'), T);
   const subjectId = uuid(c.req.param('subject'), 'subject');
   const used = await tq1(
     T,
@@ -528,8 +528,18 @@ teacherRoutes.delete('/groups/:cls/:subject', async (c) => {
   return c.json({ ok: true });
 });
 
+/**
+ * SQL condition: the test was given to someone and every student it was given to has handed it in.
+ * Such a test is finished, whatever its closing time says (releaseFinishedTests opens its marks on the
+ * same condition). Needs the `assigned` CTE.
+ */
+const EVERYONE_DONE = `(exists (select 1 from assigned a where a.test_id = t.id)
+   and not exists (select 1 from assigned a where a.test_id = t.id
+                    and not exists (select 1 from attempts x where x.test_id = t.id and x.student_id = a.student_id and x.submitted_at is not null)))`;
+
 /** The counts a test row shows: students given it, submitted, and writing right now. */
-const TEST_COUNTS = `(select count(*) from assigned a where a.test_id = t.id) as assigned,
+const TEST_COUNTS = `${EVERYONE_DONE} as everyone_done,
+            (select count(*) from assigned a where a.test_id = t.id) as assigned,
             (select count(distinct x.student_id) from attempts x where x.test_id = t.id and x.submitted_at is not null) as submitted,
             (select count(*) from attempts x where x.test_id = t.id and x.submitted_at is null
                 and (x.deadline_at is null or x.deadline_at > now())) as writing`;
@@ -551,9 +561,9 @@ teacherRoutes.get('/home', async (c) => {
             t.opens_at, t.closes_at, t.time_limit_min, now() as now, ${TEST_COUNTS}
        from tests t
       where t.tuition_id = @T and t.status = 'published'
-        and (t.closes_at is null or t.closes_at > now()
-             or exists (select 1 from attempts x where x.test_id = t.id and x.submitted_at is null
-                         and (x.deadline_at is null or x.deadline_at > now())))
+        and (exists (select 1 from attempts x where x.test_id = t.id and x.submitted_at is null
+                      and (x.deadline_at is null or x.deadline_at > now()))
+             or ((t.closes_at is null or t.closes_at > now()) and not ${EVERYONE_DONE}))
       order by t.closes_at nulls last, coalesce(t.opens_at, t.created_at) desc`,
   );
   const out: { class_level: number; subject_id: string; subject: string; students: number; live: any[]; posted: any[] }[] = groups.map((g) => ({
@@ -593,8 +603,7 @@ teacherRoutes.get('/home', async (c) => {
  */
 teacherRoutes.get('/groups/:cls/:subject', async (c) => {
   const T = tuitionOf(c).id;
-  const cls = Number(c.req.param('cls'));
-  if (!Number.isInteger(cls) || cls < 6 || cls > 12) throw bad('Choose a class from 6 to 12.');
+  const cls = await levelParam(c.req.param('cls'), T);
   const subjectId = uuid(c.req.param('subject'), 'subject');
   const subject = await tq1(
     T,
@@ -703,7 +712,7 @@ teacherRoutes.get('/chapters', async (c) => {
 teacherRoutes.post('/chapters', async (c) => {
   const T = tuitionOf(c).id;
   const b = await readBody(c);
-  const cls = int(b, 'class_level', { min: 6, max: 12 })!;
+  const cls = (await levelIn(b, 'class_level', T))!;
   const name = str(b, 'name', { max: 80 })!;
   const subject = uuidOpt(b.subject_id, 'subject') ?? (await defaultSubject(T));
   await taughtSubject(T, subject);
@@ -717,7 +726,7 @@ teacherRoutes.post('/chapters', async (c) => {
     );
     return c.json({ chapter: ch }, 201);
   } catch (e: any) {
-    if (e.code === '23505') throw new HttpError(409, 'duplicate', `This subject already has a Class ${cls} chapter called ${name}.`);
+    if (e.code === '23505') throw new HttpError(409, 'duplicate', `This subject already has a ${await levelLabel(T, cls)} chapter called ${name}.`);
     if (e.code === '23503') throw bad('That subject no longer exists.');
     throw e;
   }
@@ -749,7 +758,7 @@ function readQuestion(b: Record<string, any>) {
   }
   const opts = options.map((o: string) => o.trim());
   return {
-    class_level: int(b, 'class_level', { min: 6, max: 12 })!,
+    class_level: int(b, 'class_level', { min: CLASS_MIN, max: CUSTOM_MAX })!,
     chapter_id: uuidOpt(b.chapter_id, 'chapter'),
     subject_id: uuidOpt(b.subject_id, 'subject'),
     text: str(b, 'text', { max: 4000 })!,
@@ -857,6 +866,7 @@ teacherRoutes.get('/questions/:id', async (c) => {
 teacherRoutes.post('/questions', async (c) => {
   const T = tuitionOf(c).id;
   const x = readQuestion(await readBody(c));
+  await assertLevel(T, x.class_level);
   if (!(x.marks > 0 && x.marks <= 100)) throw bad('Marks must be between 0 and 100.');
   const subject = (await questionSubject(T, x)) ?? (await defaultSubject(T));
   const row = await tq1(
@@ -875,6 +885,7 @@ teacherRoutes.patch('/questions/:id', async (c) => {
   const T = tuitionOf(c).id;
   const id = uuid(c.req.param('id'));
   const x = readQuestion(await readBody(c));
+  await assertLevel(T, x.class_level);
   const subject = await questionSubject(T, x);
   const regraded = await tx(async (cx) => {
     const before = await tq1(T, 'select correct_option, marks from questions where id = $1 and tuition_id = @T for update', [id], cx);
@@ -942,7 +953,7 @@ function readTest(b: Record<string, any>) {
   if (assignAll && assignGroup) throw bad('A test goes to the whole class or to the group, not both.');
   return {
     title: str(b, 'title', { max: 100 })!,
-    class_level: int(b, 'class_level', { min: 6, max: 12 })!,
+    class_level: int(b, 'class_level', { min: CLASS_MIN, max: CUSTOM_MAX })!,
     subject_id: uuidOpt(b.subject_id, 'subject'),
     time_limit_min: int(b, 'time_limit_min', { min: 1, max: 300, optional: true }) ?? null,
     opens_at: opensAt,
@@ -958,6 +969,7 @@ function readTest(b: Record<string, any>) {
 
 /** The questions, chosen students and paper of a test must all belong to the tuition it is in. */
 async function checkTestParts(T: string, t: ReturnType<typeof readTest>, cx?: any) {
+  await assertLevel(T, t.class_level, cx);
   await ownQuestions(T, t.question_ids, cx);
   await memberStudents(T, t.student_ids, cx);
   if (t.paper_id && !(await tq1(T, 'select 1 as x from papers where id = $1 and tuition_id = @T', [t.paper_id], cx))) {

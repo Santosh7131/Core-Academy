@@ -16,8 +16,8 @@ import '../../ui/math_text.dart';
 import '../../ui/option_mark.dart';
 import '../../ui/tokens.dart';
 import 'common.dart';
-import 'subjects.dart';
 import 'questions_screens.dart' show MathToolbar, insertInto, pickAndUploadImage;
+import '../../core/levels.dart';
 
 /// A paper's name, as AI found it or the teacher typed it.
 String paperName(Map<String, dynamic> p) => '${p['exam_name']}';
@@ -26,7 +26,7 @@ String paperName(Map<String, dynamic> p) => '${p['exam_name']}';
 String paperGroup(Map<String, dynamic> p) {
   final cls = p['class_level'] as int?;
   if (cls == null) return 'Class not set';
-  return p['subject'] == null ? 'Class $cls' : groupName(cls, '${p['subject']}');
+  return p['subject'] == null ? className(cls) : groupName(cls, '${p['subject']}');
 }
 
 /// The name a paper has before AI or the teacher names it (the API's placeholder).
@@ -218,7 +218,7 @@ class PaperReviewScreen extends StatefulWidget {
   State<PaperReviewScreen> createState() => _PaperReviewScreenState();
 }
 
-class _PaperReviewScreenState extends State<PaperReviewScreen> {
+class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindingObserver {
   Map<String, dynamic>? _paper;
   List<Map<String, dynamic>> _pages = [];
   List<Map<String, dynamic>> _drafts = [];
@@ -250,10 +250,40 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    // A paper opened with work left (a page not read, a question nobody has looked at: the screen was closed or
+    // the phone was busy last time) carries on by itself.
     _load().then((_) {
-      if (widget.autoRead) _run();
+      if (widget.autoRead || _workLeft) _run();
     });
   }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  /// Back from another app or a locked screen: look at the paper again, and finish what was interrupted.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed || _running) return;
+    _load().then((_) {
+      if (mounted && _workLeft && !_running) _run();
+    });
+  }
+
+  /// Pages AI has not read, questions it has not looked for an answer to, or questions waiting for a second opinion.
+  bool get _workLeft =>
+      _pages.any((p) => p['ai_status'] != 'done' && p['uploaded'] != false) ||
+      _drafts.any((d) => d['status'] == 'draft' && d['kind'] == 'mcq' && d['correct_option'] == null && d['answer_checked'] != true && d['needs_diagram'] != true) ||
+      _secondPending > 0;
+
+  /// Questions the first two AI checks could not settle, which a stronger model is asked about next.
+  int get _secondPending => _drafts.where((d) => d['status'] == 'draft' && d['kind'] == 'mcq' && d['correct_option'] == null && d['ai_votes'] != null).length;
+
+  /// The stronger model is being asked right now; the review can be used meanwhile.
+  bool _asking = false;
 
   /// What the teacher still has to give: only the name. The class and subject are the group's.
   List<String> get _missing => ((_paper?['missing'] as List?) ?? const []).cast<String>().where((m) => m == 'exam_name').toList();
@@ -281,6 +311,9 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> {
   /// for a paper of up to a dozen pages (a longer one meets the limit, which AI waits out).
   static const _readWidth = 4;
   static const _answerWidth = 3;
+
+  /// How many second-opinion calls run at once: the stronger models are slow and have small limits.
+  static const _secondWidth = 2;
 
   /// Progress of the run, for the line shown while AI works.
   int _pagesTotal = 0;
@@ -353,23 +386,56 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> {
     _running = true;
     setState(() => _aiError = null);
     try {
-      if (_paper!['ai_details'] == null && _missing.isNotEmpty) {
-        try {
-          if (mounted) setState(() => _working = 'Working out what this paper is');
-          await _ai(() => api.post('/teacher/papers/${widget.id}/detect', null, const Duration(minutes: 2)));
-        } on ApiException catch (e) {
-          if (mounted) setState(() => _aiError = e.message);
-        }
-        await _load();
-      }
-      // The teacher fills in what AI could not find; "Carry on" runs this again.
+      // The paper's title is asked for alongside the reading and never waited for: a paper that AI could not name
+      // keeps the date it was made, and the pages are read all the same.
+      final named = _paper!['ai_details'] == null
+          ? _ai(() => api.post('/teacher/papers/${widget.id}/detect', null, const Duration(minutes: 2))).then<void>((_) {}, onError: (_) {})
+          : Future<void>.value();
       if (!mounted || _missing.isNotEmpty) return;
       await _readAndAnswer();
+      await named;
+      await _load();
+      // The paper is ready to review now. Questions the first two checks could not settle get a second
+      // opinion from a stronger model while the tutor reads on.
+      if (mounted) setState(() => _working = null);
+      await _secondOpinions();
     } finally {
       _running = false;
       _busyUntil = null;
       if (mounted) setState(() => _working = null);
     }
+  }
+
+  /// Asks a stronger AI model about the questions the first two checks could not settle. It is slow and often
+  /// busy, so it runs after the review is on screen and never shows an error: whatever it cannot settle stays
+  /// with the tutor, with what each check chose on the card (the server gives up on a question after two tries).
+  Future<void> _secondOpinions() async {
+    if (!mounted || _secondPending == 0) return;
+    setState(() => _asking = true);
+    try {
+      var stuck = false;
+      Future<void> worker() async {
+        while (mounted && !stuck) {
+          final dynamic r;
+          try {
+            r = await api.post('/teacher/papers/${widget.id}/second-opinion', null, const Duration(minutes: 2));
+          } on ApiException {
+            stuck = true;
+            return;
+          }
+          if ((r['tried'] as int) == 0) return;
+          _reloadSoon();
+          // Nobody could be asked, so the strong models are busy: a pause before the next try helps.
+          if ((r['asked'] ?? 1) == 0) await Future<void>.delayed(const Duration(seconds: 8));
+        }
+      }
+
+      await Future.wait([for (var i = 0; i < _secondWidth; i++) worker()]);
+      await _load();
+    } finally {
+      if (mounted) setState(() => _asking = false);
+    }
+    if (mounted) _summarise(filter: false);
   }
 
   /// Reads the pages that are not done yet, [_readWidth] at a time, and looks for answers to the
@@ -384,18 +450,25 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> {
     _progress();
 
     var reading = todo.isNotEmpty;
-    String? readError;
     final firstRead = Completer<void>();
-    final readAll = forEachLimited(todo, _readWidth, (n) async {
-      await _ai(() => api.post('/teacher/papers/${widget.id}/pages/$n/read', null, const Duration(minutes: 3)));
+    // One page that cannot be read does not stop the others. A page that fails is tried once more after a
+    // short pause, since a busy model or a bad moment on the line is usually over by then.
+    late final Map<int, Object> unread;
+    final readAll = forEachSettled(todo, _readWidth, (n) async {
+      for (var attempt = 0;; attempt++) {
+        try {
+          await _ai(() => api.post('/teacher/papers/${widget.id}/pages/$n/read', null, const Duration(minutes: 3)));
+          break;
+        } on ApiException {
+          if (attempt >= 1 || !mounted) rethrow;
+          await Future<void>.delayed(const Duration(seconds: 3));
+        }
+      }
       _pagesRead++;
       _progress();
       _reloadSoon();
       if (!firstRead.isCompleted) firstRead.complete();
-    }).then<void>((_) {}, onError: (Object e, StackTrace s) {
-      if (e is! ApiException) Error.throwWithStackTrace(e, s);
-      readError = e.message;
-    }).whenComplete(() {
+    }).then<void>((failed) => unread = failed).whenComplete(() {
       reading = false;
       if (!firstRead.isCompleted) firstRead.complete();
     });
@@ -406,12 +479,18 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> {
     String? answerError;
     Future<void> worker() async {
       await firstRead.future;
+      var hiccups = 0;
       while (mounted && !failed) {
         final pagesPending = reading; // was a page still being read when this call went out?
         final dynamic r;
         try {
           r = await _ai(() => api.post('/teacher/papers/${widget.id}/answers', null, const Duration(minutes: 2)));
         } on ApiException catch (e) {
+          // A slow reply, a server blip or a dropped connection: wait a moment and ask again before giving up.
+          if ((e.status == 0 || e.status >= 500) && ++hiccups <= 3) {
+            await Future<void>.delayed(Duration(seconds: 3 * hiccups));
+            continue;
+          }
           failed = true;
           answerError = e.message;
           return;
@@ -432,14 +511,20 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> {
     await readAll;
     await _load();
     if (!mounted) return;
-    final error = readError ?? answerError;
+    final why = unread.values.whereType<ApiException>().map((e) => e.message).firstOrNull ?? 'Try again in a moment.';
+    final error = answerError ??
+        (unread.isEmpty
+            ? null
+            : unread.length == 1
+                ? 'Page ${unread.keys.first} could not be read. $why'
+                : '${unread.length} pages could not be read. $why');
     if (error != null) setState(() => _aiError = error);
     _summarise();
   }
 
   /// Says what AI found, counted from the questions as they now are (answers marked in a call
-  /// that then had to wait still count).
-  void _summarise() {
+  /// that then had to wait still count). [filter] also points the list at what needs the tutor first.
+  void _summarise({bool filter = true}) {
     final waiting = _drafts.where((d) => d['status'] == 'draft' && d['kind'] == 'mcq').toList();
     final open = waiting.where((d) => d['correct_option'] == null).length;
     final keyed = waiting.where((d) => d['answer_source'] == 'key').length;
@@ -451,8 +536,14 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> {
     // Questions AI could not read whole, or that no option fits: the teacher fixes those first.
     final suspect = waiting.where((d) => d['correct_option'] == null && (d['ai_note'] == 'unclear' || d['ai_note'] == 'no_option')).length;
     final repeats = _drafts.where((d) => d['status'] == 'discarded' && d['ai_note'] == 'duplicate').length;
+    // Questions the AI models were split on, or not sure of: a stronger model is asked about those, and what it
+    // cannot settle is left to the tutor, with what each chose on the card.
+    final pending = waiting.where((d) => d['correct_option'] == null && d['ai_votes'] != null).length;
+    final split = waiting.where((d) => d['correct_option'] == null && d['ai_votes'] == null && (d['ai_note'] == 'disagree' || d['ai_note'] == 'unsure')).length;
     final more = [
       if (suspect > 0) '${f.count(suspect, 'question')} could not be read whole or may be misprinted: check ${suspect == 1 ? 'it' : 'each'}, then ask for the answer.',
+      if (pending > 0) '${f.count(pending, 'question')} ${pending == 1 ? 'is' : 'are'} getting a second opinion from a stronger AI model.',
+      if (split > 0) '${f.count(split, 'question')} ${split == 1 ? 'is' : 'are'} left to you because the AI models were split or not sure. Each card says what they chose.',
       if (repeats > 0) '${f.count(repeats, 'question')} repeated earlier ones, so AI skipped ${repeats == 1 ? 'it' : 'them'}.',
     ];
     setState(() {
@@ -464,7 +555,7 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> {
                 : '${notes.join(', ')}.${open > 0 ? ' Mark the other $open yourself.' : ''} Check them before saving.',
         ...more,
       ].join(' ');
-      _filter = open > 0 ? _Filter.toCheck : _Filter.ready;
+      if (filter) _filter = open > 0 ? _Filter.toCheck : _Filter.ready;
     });
   }
 
@@ -567,6 +658,8 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> {
       if (mounted) setState(() => _working = 'Looking for its answer');
       await _ai(() => api.post('/teacher/papers/${widget.id}/answers', null, const Duration(minutes: 2)));
       await _load();
+      if (mounted) setState(() => _working = null);
+      await _secondOpinions();
     } on ApiException catch (e) {
       if (mounted) showProblem(context, e);
     } finally {
@@ -864,6 +957,16 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> {
           ])
         else
           InlineNotice(_answerNote ?? 'Read by AI. Check each question and its answer before saving.', tone: Tone.ai, icon: Ph.scan),
+        if (_asking && _working == null) ...[
+          const SizedBox(height: 10),
+          InlineNotice(
+            _secondPending == 1
+                ? 'A stronger AI model is taking a second look at 1 question. You can carry on meanwhile.'
+                : 'A stronger AI model is taking a second look at $_secondPending questions. You can carry on meanwhile.',
+            tone: Tone.ai,
+            icon: Ph.scan,
+          ),
+        ],
         if (_saved != null) ...[
           const SizedBox(height: 10),
           InlineNotice(_saved!, tone: Tone.success, icon: Ph.checkCircle),
@@ -1213,14 +1316,60 @@ class _DraftCard extends StatelessWidget {
   /// For a skipped repeat, the question it repeats ("Q 4 on page 1").
   final String? repeatOf;
 
+  /// The first two AI checks could not settle this one and a stronger model has yet to give its opinion.
+  bool get _waiting => d['ai_votes'] != null && d['correct_option'] == null;
+
   /// What AI noticed about this question, and whether the teacher needs to act on it.
-  (String, bool)? get _note => switch (d['ai_note']) {
-        'unclear' => ('Part of this could not be read on the page, so AI did not answer it. Check the question, then ask for the answer.', true),
-        'no_option' => ('Neither AI model found an option that fits, so it may be misprinted. Check it against the paper.', true),
-        'duplicate' => ('Same as ${repeatOf ?? 'an earlier question'}, so it was skipped.', false),
-        'in_bank' => ('You already have this question, so it was not saved again.', false),
-        _ => null,
+  (String, bool)? get _note => _waiting
+      ? ('The first two AI checks could not settle this one. A stronger model is taking a second look. You can mark it yourself meanwhile.', false)
+      : switch (d['ai_note']) {
+          'unclear' => ('Part of this could not be read on the page, so AI did not answer it. Check the question, then ask for the answer.', true),
+          'no_option' => ('Neither AI model found an option that fits, so it may be misprinted. Check it against the paper.', true),
+          'disagree' || 'unsure' || 'writer_differs' => (_splitNote, true),
+          'duplicate' => ('Same as ${repeatOf ?? 'an earlier question'}, so it was skipped.', false),
+          'in_bank' => ('You already have this question, so it was not saved again.', false),
+          _ => null,
+        };
+
+  /// The option each AI check chose for a question it could not settle: writer, solver, checker (0 to 3).
+  Map<String, int> get _picks => {
+        for (final e in ((d['ai_picks'] as Map?) ?? const {}).entries)
+          if (e.value is int && (e.value as int) >= 0 && (e.value as int) <= 3) '${e.key}': e.value as int,
       };
+
+  static String _letter(int i) => 'ABCD'[i];
+
+  /// The option at least two of the checking models chose, when there is one: offered as a suggestion, never marked for the tutor.
+  int? get _suggestion {
+    final p = _picks;
+    final votes = [p['solver'], p['checker'], p['tiebreak']].whereType<int>().toList();
+    for (final v in votes) {
+      if (votes.where((x) => x == v).length >= 2) return v;
+    }
+    return null;
+  }
+
+  /// Why AI left this answer to the tutor, in plain words, with what the checks chose.
+  String get _splitNote {
+    const tail = ' Check it, then tap the right option.';
+    final p = _picks;
+    final w = p['writer'], s = p['solver'], c = p['checker'];
+    final marked = d['correct_option'];
+    if (d['ai_note'] == 'writer_differs' && marked is int && marked >= 0 && marked <= 3) {
+      return 'AI models agree on ${_letter(marked)}, but the question was written with ${w == null ? 'another option' : _letter(w)}. Check that ${_letter(marked)} is right.';
+    }
+    if (d['ai_note'] == 'unsure') {
+      final lean = s ?? c;
+      return lean == null ? 'AI could not settle this one.$tail' : 'AI was not sure enough to mark this one. It leans to ${_letter(lean)}.$tail';
+    }
+    if (s != null && s == c) {
+      return w == null ? 'The AI models are split on this one.$tail' : 'Two AI models chose ${_letter(s)}, but the question was written with ${_letter(w)}.$tail';
+    }
+    if (s != null && c != null) {
+      return 'The AI models do not agree: one chose ${_letter(s)}, the other ${_letter(c)}.${w == null ? '' : ' The question was written with ${_letter(w)}.'}$tail';
+    }
+    return 'The AI models are split on this one.$tail';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1320,6 +1469,14 @@ class _DraftCard extends StatelessWidget {
             child: Padding(
               padding: EdgeInsets.only(left: mcq ? 6 : 0),
               child: TextAction('Looks right, find the answer', color: aiAccentInk, onTap: onConfirm),
+            ),
+          ),
+        if (note != null && mcq && correct == null && onMark != null && _suggestion != null && !_waiting)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Padding(
+              padding: const EdgeInsets.only(left: 6),
+              child: TextAction('Use ${_letter(_suggestion!)}', color: aiAccentInk, onTap: () => onMark!(_suggestion!)),
             ),
           ),
         const SizedBox(height: 8),

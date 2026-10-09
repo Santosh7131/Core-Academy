@@ -4,11 +4,10 @@ import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../core/api.dart';
+import '../../core/levels.dart';
 import '../../core/session.dart';
 import '../../theme.dart';
 import '../../ui/kit.dart';
-
-const classLevels = [6, 7, 8, 9, 10, 11, 12];
 
 /// Every test has a closing time (students see their marks after it), so a new one starts with
 /// the next 9:00 pm that is at least three hours away.
@@ -56,12 +55,65 @@ class ChipRow extends StatelessWidget {
       );
 }
 
-Future<Choice<int>?> _pickClass(BuildContext context, int? value, {required bool allowAll}) => showChoices<int>(
-      context,
-      title: 'Class',
-      options: [if (allowAll) const Choice(null, 'All classes'), for (final c in classLevels) Choice(c, 'Class $c')],
-      selected: value,
-    );
+/// Asks a tutor for the name of a class their tuition teaches that is not Class 1 to 12 ("LKG", "NEET 2027").
+Future<String?> askLevelName(BuildContext context) {
+  final c = TextEditingController();
+  return showCentredCard<String>(
+    context,
+    title: 'Name a class',
+    subtitle: 'For anything that is not Class 1 to 12, such as LKG or NEET 2027.',
+    builder: (ctx) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      GroupedInputs(children: [
+        BareField(
+          controller: c,
+          placeholder: 'Class name, e.g. NEET 2027',
+          autofocus: true,
+          capitalization: TextCapitalization.words,
+          onSubmitted: (v) => Navigator.of(ctx).pop(v),
+        ),
+      ]),
+      const SizedBox(height: 16),
+      PrimaryButton('Add this class', onTap: () => Navigator.of(ctx).pop(c.text)),
+    ]),
+  );
+}
+
+/// Names a class for the tuition on screen, on the server, and loads the tuition's list again.
+Future<Level?> addLevelOnline(BuildContext context, String name) async {
+  try {
+    final r = await api.post('/teacher/levels', {'label': name});
+    await session.refreshTuitions();
+    final l = Map<String, dynamic>.from(r['level'] as Map);
+    return Level((l['code'] as num).toInt(), '${l['label']}', custom: true);
+  } on ApiException catch (e) {
+    if (context.mounted) showProblem(context, e);
+    return null;
+  }
+}
+
+const _nameAnother = -1;
+
+/// The class chooser. In a form a tutor can also name a class of their own ("LKG", "NEET 2027"):
+/// [onAdd] makes it (on the server by default) and returns it.
+Future<Choice<int>?> _pickClass(BuildContext context, int? value,
+    {required bool allowAll, bool allowNew = false, Map<int, String> extra = const {}, Future<Level?> Function(String name)? onAdd}) async {
+  final c = await showChoices<int>(
+    context,
+    title: 'Class',
+    options: [
+      if (allowAll) const Choice(null, 'All classes'),
+      for (final l in levelsFor(extra: extra)) Choice(l.code, l.label),
+      if (allowNew && session.isTeacher) const Choice(_nameAnother, 'Name another class'),
+    ],
+    selected: value,
+  );
+  if (c?.value != _nameAnother) return c;
+  if (!context.mounted) return null;
+  final name = (await askLevelName(context))?.trim();
+  if (name == null || name.isEmpty || !context.mounted) return null;
+  final made = await (onAdd ?? (n) => addLevelOnline(context, n))(name);
+  return made == null ? null : Choice(made.code, made.label);
+}
 
 /// The class as a filter pill: "All classes" or "Class 9".
 class ClassFilter extends StatelessWidget {
@@ -72,7 +124,7 @@ class ClassFilter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => SelectPill(
-        label: value == null ? 'All classes' : 'Class $value',
+        label: value == null ? 'All classes' : className(value),
         active: value != null,
         onTap: () async {
           final c = await _pickClass(context, value, allowAll: allowAll);
@@ -81,21 +133,27 @@ class ClassFilter extends StatelessWidget {
       );
 }
 
-/// The class in a form.
+/// The class in a form. A tutor can name a class of their own from here.
 class ClassField extends StatelessWidget {
-  const ClassField({super.key, required this.value, required this.onChanged, this.enabled = true});
+  const ClassField({super.key, required this.value, required this.onChanged, this.enabled = true, this.extra = const {}, this.onAdd});
   final int? value;
   final ValueChanged<int> onChanged;
   final bool enabled;
 
+  /// Class names a new tuition has typed that the server does not know yet (first-run setup).
+  final Map<int, String> extra;
+
+  /// How a class of the tutor's own is made: on the server by default; the setup screen keeps them until the tuition exists.
+  final Future<Level?> Function(String name)? onAdd;
+
   @override
   Widget build(BuildContext context) => SelectField(
-        value: value == null ? null : 'Class $value',
+        value: value == null ? null : className(value, extra: extra),
         placeholder: 'Choose a class',
         onTap: !enabled
             ? null
             : () async {
-                final c = await _pickClass(context, value, allowAll: false);
+                final c = await _pickClass(context, value, allowAll: false, allowNew: true, extra: extra, onAdd: onAdd);
                 if (c?.value != null) onChanged(c!.value!);
               },
       );

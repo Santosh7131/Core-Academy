@@ -37,6 +37,11 @@ export const CHECK_MODELS = list(
     : 'openai/gpt-oss-20b,qwen/qwen3.8-27b',
 );
 
+// A question the solver and the checker could not settle is put to a stronger model, and marked when two of
+// the three agree. Gemini 3.5 Flash was the best checker we tried (it never disputed a right answer), but its
+// free plan allows only 20 requests a day, so 3.6 Flash is behind it; with neither left the tutor decides.
+export const TIEBREAK_MODELS = list(process.env.GROQ_TIEBREAK_MODELS, geminiConfigured() ? 'gemini-3.5-flash,gemini-3.6-flash' : 'qwen/qwen3.8-27b');
+
 export type Content = string | Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }>;
 export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: Content };
 
@@ -52,7 +57,15 @@ export type ChatOptions = {
   temperature?: number;
   /** How hard the model thinks before answering; solving questions wants more than reading them. */
   reasoning?: 'low' | 'medium' | 'high';
+  /**
+   * When the call must be over (a Date.now() value). No attempt starts too close to it and one that is running
+   * is cut off at it, so help that is only a bonus cannot keep anyone waiting for a slow or busy model.
+   */
+  deadline?: number;
 };
+
+/** An attempt that would have less time than this is not started. */
+const MIN_ATTEMPT_MS = 1500;
 
 function modelParams(model: string, reasoning: ChatOptions['reasoning']): Record<string, unknown> {
   if (model.startsWith('openai/gpt-oss')) return { include_reasoning: false, reasoning_effort: reasoning ?? 'low' };
@@ -82,14 +95,17 @@ export async function chat(opts: ChatOptions): Promise<{ content: string; model:
   const models = opts.models.filter(usable);
   if (!models.length) throw new HttpError(503, 'ai_not_configured', 'AI is not set up on the server yet.');
   let retryAfter: number | null = null;
+  const timeLeft = () => (opts.deadline === undefined ? Infinity : opts.deadline - Date.now());
 
   for (const model of models) {
+    if (timeLeft() < MIN_ATTEMPT_MS) break;
     if (isGemini(model)) {
       // "High demand" (503) on Google's side passes in seconds, and so does the free plan's
       // per-minute limit (it says how long: a few seconds when pages are read side by side).
       // The models behind this one are weaker, so it gets one more try before they do. A limit
       // that lasts longer, such as a day's quota, goes straight on to them.
       for (let tries = 0; tries < 2; tries++) {
+        if (timeLeft() < MIN_ATTEMPT_MS) break;
         const started = Date.now();
         const r = await geminiChat(model, opts);
         await logUsage({
@@ -105,6 +121,7 @@ export async function chat(opts: ChatOptions): Promise<{ content: string; model:
       continue;
     }
     for (let tries = 0; tries < Math.min(keys.length, TRIES_PER_MODEL); tries++) {
+      if (timeLeft() < MIN_ATTEMPT_MS) break;
       const slot = next++ % keys.length;
       const started = Date.now();
       let res: Response;
@@ -120,7 +137,7 @@ export async function chat(opts: ChatOptions): Promise<{ content: string; model:
             ...(opts.json ? { response_format: { type: 'json_object' } } : {}),
             ...modelParams(model, opts.reasoning),
           }),
-          signal: AbortSignal.timeout(120_000),
+          signal: AbortSignal.timeout(Math.min(120_000, timeLeft())),
         });
       } catch (e) {
         await logUsage({ userId: opts.userId, tuitionId: opts.tuitionId, task: opts.task, model, slot, ok: false, error: String(e), ms: Date.now() - started });
@@ -128,14 +145,21 @@ export async function chat(opts: ChatOptions): Promise<{ content: string; model:
       }
       const ms = Date.now() - started;
       if (res.ok) {
-        const j: any = await res.json();
+        let j: any;
+        try {
+          j = await res.json();
+        } catch (e) {
+          // Cut off while the reply was coming in, or not JSON: the next key or model gets the question.
+          await logUsage({ userId: opts.userId, tuitionId: opts.tuitionId, task: opts.task, model, slot, ok: false, error: String(e), ms: Date.now() - started });
+          continue;
+        }
         await logUsage({
           userId: opts.userId, tuitionId: opts.tuitionId, task: opts.task, model, slot, ok: true, ms,
           prompt: j.usage?.prompt_tokens, completion: j.usage?.completion_tokens,
         });
         return { content: j.choices?.[0]?.message?.content ?? '', model };
       }
-      const body = (await res.text()).slice(0, 500);
+      const body = (await res.text().catch(() => '')).slice(0, 500);
       await logUsage({ userId: opts.userId, tuitionId: opts.tuitionId, task: opts.task, model, slot, ok: false, error: `${res.status} ${body}`, ms });
       if (res.status === 429 || res.status >= 500) {
         const ra = Number(res.headers.get('retry-after'));

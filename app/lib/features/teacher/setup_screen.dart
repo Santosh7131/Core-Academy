@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/api.dart';
+import '../../core/levels.dart';
 import '../../core/session.dart';
 import '../../theme.dart';
 import '../../ui/kit.dart';
@@ -11,14 +12,20 @@ import 'subjects.dart';
 /// A group a new tuition starts with: a class, and a subject that is either a standard one ([id]) or
 /// one the tutor typed ([id] null).
 class _Group {
-  const _Group(this.classLevel, this.name, [this.id]);
+  const _Group(this.classLevel, this.name, [this.id, this.levelName]);
   final int classLevel;
   final String name;
   final String? id;
 
-  String get label => groupName(classLevel, name);
+  /// The name of a class the tutor typed ("LKG"), for a class that is not Class 1 to 12.
+  final String? levelName;
 
-  Map<String, dynamic> toJson() => {'class_level': classLevel, if (id != null) 'subject_id': id else 'subject_name': name};
+  String get label => groupName(classLevel, name, extra: {classLevel: ?levelName});
+
+  Map<String, dynamic> toJson() => {
+        if (levelName != null) 'level_name': levelName else 'class_level': classLevel,
+        if (id != null) 'subject_id': id else 'subject_name': name,
+      };
 }
 
 /// First run for a tutor with no tuition: name it and say what they teach. Everything else (students,
@@ -33,6 +40,8 @@ class SetupScreen extends StatefulWidget {
 class _SetupScreenState extends State<SetupScreen> {
   final _name = TextEditingController();
   final List<_Group> _groups = [];
+  // Classes the tutor named here: the tuition does not exist yet, so the server hears of them when it is created.
+  final Map<int, String> _named = {};
   List<Subject> _standard = [];
   bool _busy = false;
   String? _error;
@@ -82,6 +91,14 @@ class _SetupScreenState extends State<SetupScreen> {
 
   static const _other = '+other';
 
+  Future<Level?> _nameClass(String name) async {
+    final clean = name.trim();
+    final have = _named.entries.where((e) => e.value.toLowerCase() == clean.toLowerCase()).firstOrNull;
+    final code = have?.key ?? (firstNamedLevel + _named.length);
+    setState(() => _named[code] = have?.value ?? clean);
+    return Level(code, have?.value ?? clean, custom: true);
+  }
+
   Future<void> _addGroup() async {
     int? cls;
     Subject? subject;
@@ -94,7 +111,7 @@ class _SetupScreenState extends State<SetupScreen> {
           final ready = cls != null && subject != null;
           return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             const FormLabel('Class', top: 4),
-            ClassField(value: cls, onChanged: (c) => set(() => cls = c)),
+            ClassField(value: cls, extra: _named, onAdd: _nameClass, onChanged: (c) => set(() => cls = c)),
             const FormLabel('Subject'),
             SelectField(
               value: subject?.name,
@@ -130,7 +147,7 @@ class _SetupScreenState extends State<SetupScreen> {
       ),
     );
     if (ok != true || cls == null || subject == null) return;
-    final g = _Group(cls!, subject!.name, subject!.id.isEmpty ? null : subject!.id);
+    final g = _Group(cls!, subject!.name, subject!.id.isEmpty ? null : subject!.id, cls! >= firstNamedLevel ? _named[cls!] : null);
     if (_groups.any((x) => x.classLevel == g.classLevel && x.name.toLowerCase() == g.name.toLowerCase())) return;
     setState(() => _groups.add(g));
   }

@@ -12,6 +12,7 @@ import '../../ui/kit.dart';
 import '../../ui/math_text.dart';
 import 'common.dart';
 import 'subjects.dart';
+import '../../core/levels.dart';
 
 String testState(Map<String, dynamic> t) {
   if (t['status'] != 'published') return 'draft';
@@ -20,12 +21,14 @@ String testState(Map<String, dynamic> t) {
   final closes = f.parseTime(t['closes_at']);
   if (opens != null && now.isBefore(opens)) return 'upcoming';
   if (closes != null && !now.isBefore(closes)) return 'closed';
+  // Everyone it was given to has handed it in and nobody is writing: it is finished, whatever the closing time says.
+  if (t['everyone_done'] == true && ((t['writing'] as num?) ?? 0) == 0) return 'done';
   return 'open';
 }
 
 String testMeta(Map<String, dynamic> t) {
   final parts = [
-    t['subject'] == null ? 'Class ${t['class_level']}' : groupName(t['class_level'] as int, '${t['subject']}'),
+    t['subject'] == null ? className(t['class_level']) : groupName(t['class_level'] as int, '${t['subject']}'),
     f.count(t['question_count'] as int, 'question'),
   ];
   final opens = f.parseTime(t['opens_at']);
@@ -37,6 +40,8 @@ String testMeta(Map<String, dynamic> t) {
       if (closes != null) parts.add('closes ${f.when(closes)}');
     case 'closed':
       parts.add('closed ${f.when(closes!)}');
+    case 'done':
+      parts.add('all submitted');
     default:
       parts.add('not published');
   }
@@ -653,7 +658,7 @@ class _TestResultsScreenState extends State<TestResultsScreen> with WidgetsBindi
     final published = t['status'] == 'published';
     final closes = f.parseTime(t['closes_at']);
     final opens = f.parseTime(t['opens_at']);
-    final kicker =[t['subject'] == null ? 'Class ${t['class_level']}' : groupName(t['class_level'] as int, '${t['subject']}'), if (!published) 'unpublished' else if (closes != null) (closes.isAfter(DateTime.now()) ? 'closes ${f.when(closes)}' : 'closed ${f.when(closes)}')].join(' · ');
+    final kicker =[t['subject'] == null ? className(t['class_level']) : groupName(t['class_level'] as int, '${t['subject']}'), if (!published) 'unpublished' else if (closes != null) (closes.isAfter(DateTime.now()) ? 'closes ${f.when(closes)}' : 'closed ${f.when(closes)}')].join(' · ');
 
     return PushedPanel(
       kicker: kicker,

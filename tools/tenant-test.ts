@@ -151,6 +151,7 @@ try {
   nf('B cannot read A\'s paper with AI', await api('POST', `/teacher/papers/${aPaper.body.paper.id}/detect`, TB));
   nf('B cannot mark A\'s paper page uploaded', await api('POST', `/teacher/papers/${aPaper.body.paper.id}/pages/1/uploaded`, TB));
   nf('B cannot ask AI for answers on A\'s paper', await api('POST', `/teacher/papers/${aPaper.body.paper.id}/answers`, TB));
+  nf('B cannot ask AI for a second opinion on A\'s paper', await api('POST', `/teacher/papers/${aPaper.body.paper.id}/second-opinion`, TB));
   nf('B cannot save A\'s paper', await api('POST', `/teacher/papers/${aPaper.body.paper.id}/save`, TB));
   const chatInto = await api('POST', '/teacher/papers/chat', TB, { class_level: 9, subject_id: MATHS, request: 'two questions', count: 2, paper_id: aPaper.body.paper.id });
   check('B cannot add AI questions to A\'s paper by its id', chatInto.status === 404 || chatInto.status === 400, chatInto);

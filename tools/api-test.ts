@@ -232,10 +232,16 @@ try {
   check('a tutor cannot turn off their own login', (await api('POST', `/teacher/tutors/${t.body.user.id}/active`, T, { active: false })).status === 409);
   check('the tutor turns the other one off', (await api('POST', `/teacher/tutors/${nt.body.tutor.id}/active`, T, { active: false })).status === 200
     && (await login(tutorName, 'tutor-pass-123')).status !== 200);
-  const home9 = (await api('GET', '/teacher/home', T)).body?.groups?.find((g: any) => g.class_level === 9 && g.live.some((x: any) => x.id === H));
-  check('home lists the live test under its group', !!home9 && home9.students >= 2 && home9.live.find((x: any) => x.id === H)?.assigned === 2, home9);
+  // M still has a student to write it, so it is live. H has been handed in by everyone it was given to, so it is finished
+  // (its marks are open) and leaves the home screen, whatever its closing time says.
+  const homeGroups = (await api('GET', '/teacher/home', T)).body?.groups;
+  const home9 = homeGroups?.find((g: any) => g.class_level === 9 && g.live.some((x: any) => x.id === M));
+  check('home lists the live test under its group', !!home9 && home9.students >= 2 && home9.live.find((x: any) => x.id === M)?.assigned === 2, home9);
+  check('a test everyone has handed in is no longer live', !homeGroups?.some((g: any) => g.live.some((x: any) => x.id === H) || g.posted.some((x: any) => x.id === H)), homeGroups);
   const grp9 = await api('GET', `/teacher/groups/9/${home9?.subject_id}`, T);
   check('the group page lists its students and tests', grp9.status === 200 && grp9.body?.students?.length >= 2 && grp9.body?.tests?.some((x: any) => x.id === H), grp9.body?.group);
+  check('and says which tests everyone has finished',
+    grp9.body?.tests?.find((x: any) => x.id === H)?.everyone_done === true && grp9.body?.tests?.find((x: any) => x.id === M)?.everyone_done === false, grp9.body?.tests?.map((x: any) => [x.title, x.everyone_done]));
 
   // Window rules.
   const B = await mkTest('future', { opens_at: iso(86_400_000), closes_at: iso(90_000_000) });
@@ -397,6 +403,59 @@ try {
   check('"looks right" clears the unclear note and lets AI answer it',
     okd.status === 200 && okd.body?.draft?.ai_note === null && okd.body?.draft?.answer_checked === false, okd.body);
 
+  // A question the first two checks could not settle waits for a second opinion from a stronger model, a call of its
+  // own. A printed key, the tutor's mark or rewording ends the wait, and a second opinion that cannot be had twice
+  // is given up on (what each check chose stays on the card).
+  const sop = await api('POST', '/teacher/papers', T, { class_level: 9, subject_id: maths.id, exam_name: `${tag} second opinion`, pages: 1 });
+  const sopId = sop.body?.paper?.id;
+  if (sopId) created.papers.push(sopId);
+  const sdb = new pg.Client({ connectionString: process.env.DATABASE_URL_UNPOOLED });
+  await sdb.connect();
+  const votes = (tries: number) => JSON.stringify({ solver: { answer: 0, confidence: 0.95 }, checker: { answer: 1, confidence: 0.95 }, tries });
+  const sopRows = await sdb.query(
+    `insert into paper_drafts (paper_id, page_no, seq, number_label, kind, text, options, answer_checked, ai_note, ai_picks, ai_votes)
+     values ($1, 1, 0, '1', 'mcq', $2, $6, true, 'disagree', '{"solver":0,"checker":1}', $7),
+            ($1, 1, 1, '2', 'mcq', $3, $6, true, 'disagree', '{"solver":0,"checker":1}', $7),
+            ($1, 1, 2, '3', 'mcq', $4, $6, true, 'disagree', '{"solver":0,"checker":1}', $8),
+            ($1, 1, 3, '4', 'mcq', $5, $6, true, 'disagree', '{"solver":0,"checker":1}', $7) returning id`,
+    [sopId, `${tag} so reworded`, `${tag} so marked`, `${tag} so last try`, `${tag} so key`, ['a', 'b', 'c', 'd'], votes(0), votes(1)],
+  );
+  await sdb.query(`update paper_pages set ai_status = 'done', answer_key = $2 where paper_id = $1 and page_no = 1`, [sopId, JSON.stringify([{ number: '4', answer: 'b' }])]);
+  const draftOf = async (i: number) => ((await api('GET', `/teacher/papers/${sopId}`, T)).body?.drafts ?? []).find((d: any) => d.id === sopRows.rows[i].id);
+  const keyed = await api('POST', `/teacher/papers/${sopId}/answers`, T);
+  const k4 = await draftOf(3);
+  check('a printed key answers a question that was waiting for a second opinion, and ends the wait',
+    keyed.body?.from_key === 1 && keyed.body?.tried === 0 && k4?.correct_option === 1 && k4?.answer_source === 'key' && k4?.ai_note === null && k4?.ai_picks === null && k4?.ai_votes === null, [keyed.body, k4]);
+  const rw = await api('PATCH', `/teacher/drafts/${sopRows.rows[0].id}`, T, { text: `${tag} so reworded again` });
+  check('rewording a question ends its wait and clears what the checks chose',
+    rw.status === 200 && rw.body?.draft?.ai_votes === null && rw.body?.draft?.ai_picks === null && rw.body?.draft?.ai_note === null, rw.body);
+  const mk2 = await api('PATCH', `/teacher/drafts/${sopRows.rows[1].id}`, T, { correct_option: 2 });
+  check('the tutor marking it ends the wait and the split note',
+    mk2.status === 200 && mk2.body?.draft?.answer_source === 'teacher' && mk2.body?.draft?.ai_votes === null && mk2.body?.draft?.ai_picks === null && mk2.body?.draft?.ai_note === null, mk2.body);
+  const so1 = await api('POST', `/teacher/papers/${sopId}/second-opinion`, T);
+  const k3 = await draftOf(2);
+  check('the second opinion takes only the questions still waiting', so1.status === 200 && so1.body?.tried === 1, so1.body);
+  check('a question asked a second time is finished with, however AI answered', k3?.ai_votes === null, k3);
+  const so2 = await api('POST', `/teacher/papers/${sopId}/second-opinion`, T);
+  check('and nothing is left to ask', so2.status === 200 && so2.body?.tried === 0 && so2.body?.left === 0, so2.body);
+  // With AI on the server: two checks split on a simple sum, and the stronger model settles it.
+  if ((await (await fetch(`${BASE}/`)).json().catch(() => ({}))).ai === true) {
+    const sum = await sdb.query(
+      `insert into paper_drafts (paper_id, page_no, seq, number_label, kind, text, options, answer_checked, ai_note, ai_picks, ai_votes)
+       values ($1, 1, 9, '9', 'mcq', $2, $3, true, 'disagree', '{"solver":1,"checker":2}', $4) returning id`,
+      [sopId, `${tag} What is 2 + 3?`, ['4', '5', '6', '7'], JSON.stringify({ solver: { answer: 1, confidence: 0.95 }, checker: { answer: 2, confidence: 0.95 }, tries: 0 })],
+    );
+    const so3 = await api('POST', `/teacher/papers/${sopId}/second-opinion`, T);
+    const s9 = ((await api('GET', `/teacher/papers/${sopId}`, T)).body?.drafts ?? []).find((d: any) => d.id === sum.rows[0].id);
+    if (so3.status === 200 && so3.body?.by_ai === 1) {
+      check('the second opinion settles a split: two of the three agree, so it is marked and the split note goes',
+        s9?.correct_option === 1 && s9?.answer_source === 'ai' && s9?.ai_note === null && s9?.ai_votes === null && s9?.ai_picks === null, s9);
+    } else {
+      console.log(`      (AI was busy, so the second-opinion check was skipped: ${so3.status} ${JSON.stringify(so3.body)})`);
+    }
+  }
+  await sdb.end();
+
   // Two answer calls at once take different batches, so no question is worked out twice. Needs AI
   // on the server being tested (the answers are real, simple sums).
   if ((await (await fetch(`${BASE}/`)).json().catch(() => ({}))).ai === true) {
@@ -428,9 +487,11 @@ try {
   if (npId) created.papers.push(npId);
   check('a paper can be uploaded before its details are known', np.status === 201 && np.body?.paper?.class_level === null && np.body?.paper?.subject_id === null, np.body);
   const nd = await api('GET', `/teacher/papers/${npId}`, T);
-  check('the paper says which details are missing', JSON.stringify(nd.body?.paper?.missing) === '["exam_name","class_level","subject_id"]', nd.body?.paper);
+  check('the paper says which details are missing, and a name is never one of them: it starts with the date',
+    JSON.stringify(nd.body?.paper?.missing) === '["class_level","subject_id"]' && /^Paper \d{1,2} \w{3}$/.test(nd.body?.paper?.exam_name ?? '') && nd.body?.paper?.name_auto === true, nd.body?.paper);
   check('its questions cannot be saved without a class', (await api('POST', `/teacher/papers/${npId}/save`, T)).status === 409);
   check('nor answered without a class', (await api('POST', `/teacher/papers/${npId}/answers`, T)).status === 409);
+  check('nor given a second opinion without a class', (await api('POST', `/teacher/papers/${npId}/second-opinion`, T)).status === 409);
   // As AI leaves a paper with its answer key on the last page.
   const kdb = new pg.Client({ connectionString: process.env.DATABASE_URL_UNPOOLED });
   await kdb.connect();

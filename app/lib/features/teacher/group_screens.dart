@@ -548,6 +548,7 @@ class _GroupScreenState extends State<GroupScreen> with WidgetsBindingObserver, 
       'open' => '$q · ${closes == null ? 'open' : 'closes ${f.when(closes)}'}',
       'upcoming' => '$q · opens ${opens == null ? 'later' : f.when(opens)}',
       'closed' => '$q · closed ${closes == null ? '' : f.when(closes)}',
+      'done' => '$q · all submitted',
       _ => '$q · not posted yet',
     };
   }
@@ -593,7 +594,7 @@ class _GroupScreenState extends State<GroupScreen> with WidgetsBindingObserver, 
     List<Map<String, dynamic>> of(String s) => tests.where((t) => testState(t) == s).toList();
     final live = of('open');
     final posted = of('upcoming');
-    final finished = of('closed');
+    final finished = [...of('done'), ...of('closed')];
     final drafts = of('draft');
 
     Widget rows(List<Map<String, dynamic>> list) => Column(children: [

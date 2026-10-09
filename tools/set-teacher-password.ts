@@ -1,6 +1,6 @@
 // Sets the teacher's password on a branch, without changing the app. The password is typed into
 // a hidden prompt, so it never shows on screen and never lands in shell history, chat or a file.
-// Usage, in a terminal: node tools/set-teacher-password.ts --env .env.main [--username karthiga]
+// Usage, in a terminal: node tools/set-teacher-password.ts --env .env.main [--username <teacher username>]
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import pg from 'pg';

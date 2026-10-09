@@ -26,3 +26,24 @@ Future<void> forEachLimited<T>(Iterable<T> items, int width, Future<void> Functi
   await Future.wait([for (var i = 0; i < width; i++) worker()]);
   if (failed) Error.throwWithStackTrace(error!, trace!);
 }
+
+/// Like [forEachLimited], but a job that throws does not stop the others: every item gets its turn, and the
+/// ones whose job threw come back with their error.
+Future<Map<T, Object>> forEachSettled<T>(Iterable<T> items, int width, Future<void> Function(T item) job) async {
+  final it = items.iterator;
+  final failed = <T, Object>{};
+
+  Future<void> worker() async {
+    while (it.moveNext()) {
+      final item = it.current;
+      try {
+        await job(item);
+      } catch (e) {
+        failed[item] = e;
+      }
+    }
+  }
+
+  await Future.wait([for (var i = 0; i < width; i++) worker()]);
+  return failed;
+}

@@ -13,10 +13,15 @@ import 'package:core_academy/features/auth/signup_screen.dart';
 import 'package:core_academy/features/student/home_screen.dart';
 import 'package:core_academy/features/student/join_screen.dart';
 import 'package:core_academy/features/student/profile_screen.dart';
+import 'package:core_academy/features/student/result_screen.dart';
+import 'package:core_academy/features/student/test_intro_screen.dart';
+import 'package:core_academy/features/student/test_screen.dart';
 import 'package:core_academy/features/teacher/group_screens.dart';
 import 'package:core_academy/features/teacher/join_requests_screen.dart';
+import 'package:core_academy/features/teacher/papers_screens.dart';
 import 'package:core_academy/features/teacher/settings_screen.dart';
 import 'package:core_academy/features/teacher/setup_screen.dart';
+import 'package:core_academy/features/teacher/students_screens.dart';
 import 'package:core_academy/features/teacher/share_code_screen.dart';
 import 'package:core_academy/theme.dart';
 import 'package:flutter/material.dart';
@@ -289,6 +294,119 @@ void main() {
       await _shot(t, 'student-switch-${dark ? 'dark' : 'light'}');
       await t.pumpWidget(const SizedBox.shrink());
     }
+  });
+
+  // ---- the screens as they are today, for comparing with the redesign comps (design/comps/s2-*.html)
+  testWidgets('student: taking a test', (t) async {
+    _sessionAs(role: 'student', tuitions: [{'id': 't-1', 'name': 'Priya Maths Classes', 'role': 'student', 'status': 'active', 'class_level': 9}]);
+    routes['POST /student/tests/a/start'] = (_) => {
+          'attempt': {'id': 'att-1', 'server_now': _iso(Duration.zero), 'title': 'Linear equations', 'deadline_at': _iso(const Duration(minutes: 14, seconds: 42))},
+          'questions': [
+            for (var i = 1; i <= 12; i++)
+              {
+                'id': 'q$i', 'n': i, 'image_url': null, 'flagged': false,
+                'chosen': i < 7 ? 1 : null,
+                'text': i == 7 ? r'If $x = 2,\ y = -1$ is a solution of $3x + ky = 4$, what is the value of $k$?' : 'Question $i',
+                'options': i == 7 ? [r'$-2$', r'$2$', r'$\tfrac{1}{2}$', r'$10$'] : ['1', '2', '3', '4'],
+              },
+          ],
+        };
+    await _both(t, 'test-taking', () => const TestScreen(testId: 'a'));
+  });
+
+  testWidgets('student: the page before a test', (t) async {
+    _sessionAs(role: 'student', tuitions: [{'id': 't-1', 'name': 'Priya Maths Classes', 'role': 'student', 'status': 'active', 'class_level': 9}]);
+    routes['/student/home'] = (_) => {
+          'server_now': _iso(Duration.zero),
+          'tests': [
+            {
+              'id': 'a', 'title': 'Linear equations', 'class_level': 9, 'time_limit_min': 20, 'opens_at': null, 'closes_at': _iso(const Duration(hours: 3)),
+              'question_count': 12, 'max_marks': 12, 'state': 'open', 'retake': false, 'results_open': false, 'attempt': null,
+            },
+          ],
+        };
+    await _both(t, 'test-intro', () => const TestIntroScreen(testId: 'a'));
+  });
+
+  testWidgets('student: a result', (t) async {
+    _sessionAs(role: 'student', tuitions: [{'id': 't-1', 'name': 'Priya Maths Classes', 'role': 'student', 'status': 'active', 'class_level': 9}]);
+    final marks = [true, true, true, false, true, true, true, true, false, true];
+    final names = [
+      r'What is $\sqrt{16}$ equal to?', 'Which of these is an irrational number?', r'$0.\overline{3}$ is equal to', r'Which of these is a rational number?', 'Every integer is a',
+      r'The decimal form of $\frac{7}{16}$ is', r'Between $1$ and $2$ there are', r'$\sqrt{2} \times \sqrt{8}$ equals', r'Which is the smallest?', 'The number 0 is',
+    ];
+    routes['/student/attempts/att-9/result'] = (_) => {
+          'waiting': false,
+          'attempt': {
+            'id': 'att-9', 'title': 'Number systems', 'score': 8, 'max_score': 10, 'correct': 8, 'wrong': 2, 'skipped': 0, 'time_taken_sec': 372,
+            'submitted_at': _iso(const Duration(days: -1, hours: -2)), 'auto_submitted': false,
+          },
+          'review': [
+            for (var i = 0; i < 10; i++)
+              {
+                'n': i + 1, 'text': names[i], 'options': ['1', '2', '3', '4'], 'correct': 2, 'chosen': marks[i] ? 2 : 0, 'is_correct': marks[i], 'solution': null, 'image_url': null,
+              },
+          ],
+        };
+    await _both(t, 'result', () => const ResultScreen(attemptId: 'att-9'), height: 3000);
+  });
+
+  testWidgets('tutor: a student', (t) async {
+    _sessionAs(role: 'teacher', tuitions: [{'id': 't-1', 'name': 'Priya Maths Classes', 'role': 'owner', 'status': 'active'}]);
+    routes['/teacher/students/s-1'] = (_) => {
+          'student': {
+            'id': 's-1', 'display_name': 'Harini Venkatesh', 'username': 'harini.v', 'class_level': 9, 'active': true,
+            'last_seen_at': _iso(const Duration(hours: -2)),
+            'subjects': [{'id': 'm', 'name': 'Maths'}, {'id': 's', 'name': 'Science'}],
+          },
+          'attempts': [
+            for (final (i, (title, score)) in [('Number systems', 8), ('Polynomials', 6), ('Linear equations', 9), ('Quadratic equations', 7), ('Triangles', 5)].indexed)
+              {
+                'id': 'at-$i', 'title': title, 'attempt_no': 1, 'score': score, 'max_score': 10,
+                'started_at': _iso(Duration(days: -i - 1, hours: -3)), 'submitted_at': _iso(Duration(days: -i - 1, hours: -3, minutes: 12 + i)),
+              },
+          ],
+          'chapters': [
+            for (final (n, c, tt) in [('Polynomials', 9, 20), ('Linear equations', 12, 20), ('Number systems', 18, 25), ('Triangles', 7, 10), ('Quadratic equations', 14, 15), ('Statistics', 8, 8), ('Probability', 6, 6), ('Coordinate geometry', 5, 6)])
+              {'chapter': n, 'correct': c, 'total': tt},
+          ],
+          'missed': [{'id': 'x', 'title': 'Unit test 2', 'closes_at': _iso(const Duration(days: -6))}],
+        };
+    await _both(t, 'tutor-student', () => const StudentDetailScreen(id: 's-1'), height: 4400);
+  });
+
+  testWidgets('tutor: checking a paper', (t) async {
+    _sessionAs(role: 'teacher', tuitions: [{'id': 't-1', 'name': 'Priya Maths Classes', 'role': 'owner', 'status': 'active'}]);
+    var seq = 0;
+    Map<String, Object?> d(String n, int page, String text, List<String> opts,
+            {int? correct, String? source, double? conf, String? note, Map<String, int>? picks, int? writer, String? chapter, bool diagram = false}) =>
+        {
+          'id': 'd-${++seq}', 'paper_id': 'p-1', 'page_no': page, 'seq': seq, 'number_label': n, 'kind': 'mcq', 'status': 'draft', 'text': text, 'options': opts,
+          'correct_option': correct, 'answer_source': source, 'ai_confidence': conf, 'ai_note': note, 'ai_picks': picks, 'ai_votes': null,
+          'proposed_option': writer, 'answer_checked': true, 'needs_diagram': diagram, 'image_key': null, 'image_url': null, 'chapter': chapter, 'chapter_id': null,
+          'ai_chapter_guess': chapter,
+        };
+    final abcd = ['3', '-3', '5 over 3', '9'];
+    routes['/teacher/papers/p-1'] = (_) => {
+          'paper': {
+            'id': 'p-1', 'class_level': 10, 'exam_name': 'Practice Paper 2', 'category': null, 'subject': 'Maths', 'subject_id': 'sub-0', 'chapter': null,
+            'chapter_id': null, 'ai_details': {'ok': true}, 'page_count': 4, 'missing': <String>[],
+          },
+          'pages': [for (var i = 1; i <= 4; i++) {'page_no': i, 'ai_status': 'done', 'uploaded': true, 'image_url': null}],
+          'drafts': [
+            d('7', 2, 'The sum of the roots of the equation 3x squared minus 9x plus 5 equals 0 is', abcd,
+                note: 'disagree', picks: {'solver': 0, 'checker': 2}, chapter: 'Quadratic Equations'),
+            d('11', 3, 'In the figure, DE is parallel to BC. Find the length of EC.', ['2 cm', '3 cm', '4 cm', '6.75 cm'], diagram: true, chapter: 'Triangles'),
+            d('14', 3, 'If tan theta equals 3 over 4, then sin theta is', ['3 over 5', '4 over 5', '5 over 3', '3 over 4'],
+                note: 'unclear', chapter: 'Trigonometry'),
+            d('9', 2, 'Which of these is a quadratic equation?', ['x + 1 = 0', 'x squared + 2x + 1 = 0', 'x cubed = 8', '2x = 5'],
+                correct: 1, source: 'ai', conf: 0.97, chapter: 'Quadratic Equations'),
+            d('1', 1, 'The decimal expansion of 17 over 8 terminates after how many places?', ['1', '2', '3', '4'], correct: 2, source: 'key', chapter: 'Real Numbers'),
+            d('2', 1, 'If one zero of x squared plus kx minus 6 is 2, then k is', ['1', '-1', '2', '-2'], correct: 1, source: 'ai', conf: 0.99, chapter: 'Polynomials'),
+          ],
+          'chapters': <Object?>[], 'questions': <Object?>[], 'tests': <Object?>[],
+        };
+    await _both(t, 'paper-check', () => const PaperReviewScreen(id: 'p-1'), height: 4000);
   });
 
   testWidgets('student profile', (t) async {

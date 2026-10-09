@@ -10,6 +10,7 @@ import '../../theme.dart';
 import '../../ui/kit.dart';
 import 'common.dart';
 import 'subjects.dart';
+import '../../core/levels.dart';
 
 // ---------------------------------------------------------------- add
 
@@ -328,7 +329,7 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> with WidgetsB
     final lastSeen = f.parseTime(s['last_seen_at']);
 
     return PushedPanel(
-      kicker: ['Class ${s['class_level']}', if (s['active'] != true) 'login off'].join(' · '),
+      kicker: [className(s['class_level']), if (s['active'] != true) 'login off'].join(' · '),
       title: '${s['display_name']}',
       children: [
         const SizedBox(height: 22),

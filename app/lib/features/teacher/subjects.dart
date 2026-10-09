@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import '../../core/api.dart';
 import '../../ui/kit.dart';
 
+// Groups are named "10th Science": the helper lives with the class helpers, but screens that list subjects use it.
+export '../../core/levels.dart' show groupName;
+
 /// A subject the tuition teaches. A group is a class and a subject, such as "10th Science".
 class Subject {
   const Subject(this.id, this.name, {this.isDefault = false});
@@ -21,8 +24,6 @@ Future<List<Subject>> loadSubjects() async {
   return [for (final s in r['subjects'] as List) Subject.fromJson(Map<String, dynamic>.from(s))];
 }
 
-/// "10th Science". Every class the tuition teaches, 6 to 12, takes "th".
-String groupName(int classLevel, String subject) => '${classLevel}th $subject';
 
 /// The subject names in a student row from the API: [{id, name}, ...].
 List<String> subjectNames(Object? list) => [for (final s in (list as List? ?? const [])) '${(s as Map)['name']}'];

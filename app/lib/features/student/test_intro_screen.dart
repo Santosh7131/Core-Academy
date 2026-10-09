@@ -5,6 +5,7 @@ import '../../core/api.dart';
 import '../../core/format.dart' as f;
 import '../../theme.dart';
 import '../../ui/kit.dart';
+import '../../core/levels.dart';
 
 class TestIntroScreen extends StatefulWidget {
   const TestIntroScreen({super.key, required this.testId});
@@ -68,7 +69,7 @@ class _TestIntroScreenState extends State<TestIntroScreen> {
         );
 
     return PushedPanel(
-      kicker: 'Class ${t['class_level']} · ${f.count(t['question_count'] as int, 'question')}',
+      kicker: '${className(t['class_level'])} · ${f.count(t['question_count'] as int, 'question')}',
       title: '${t['title']}',
       footer: PrimaryButton(
         state == 'in_progress' ? 'Continue test' : 'Start test',

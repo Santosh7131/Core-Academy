@@ -4,6 +4,7 @@ import { ASSIGNED, releaseFinishedTests, resultsOpenFor, saveAnswers, startOrRes
 import { holdsResults } from '../lib/client.ts';
 import { pool, q, q1, tq } from '../lib/db.ts';
 import { HttpError, uuid } from '../lib/http.ts';
+import { LEVELS_JSON } from '../lib/levels.ts';
 import { readCode } from '../lib/tuition.ts';
 import { readBody } from './body.ts';
 
@@ -15,7 +16,7 @@ export const studentOpenRoutes = new Hono<AppEnv>();
 /** The tuitions the student is in or waiting to join. The app switches between them with the x-tuition header. */
 studentOpenRoutes.get('/tuitions', requireUser('student', { tuition: 'none' }), async (c) => {
   const rows = await q(
-    `select t.id, t.name, m.status, m.class_level, m.joined_at
+    `select t.id, t.name, m.status, m.class_level, m.joined_at, ${LEVELS_JSON}
        from memberships m join tuitions t on t.id = m.tuition_id
       where m.user_id = $1 and m.role = 'student' and m.status in ('active', 'pending')
       order by m.joined_at`,

@@ -7,6 +7,7 @@ import '../../theme.dart';
 import '../../ui/kit.dart';
 import 'common.dart';
 import 'subjects.dart';
+import '../../core/levels.dart';
 
 /// Students who typed this tuition's join code and wait to be let in. Letting one in also chooses
 /// their class and subjects here, so they land in the right groups.
@@ -121,7 +122,7 @@ class _JoinRequestsScreenState extends State<JoinRequestsScreen> with WidgetsBin
             RowTile(
               leading: AppAvatar(name: '${r['display_name']}', seed: '${r['id']}'),
               title: '${r['display_name']}',
-              meta: 'Class ${r['class_level']} · asked ${f.when(f.parseTime(r['asked_at']) ?? DateTime.now())}',
+              meta: '${className(r['class_level'])} · asked ${f.when(f.parseTime(r['asked_at']) ?? DateTime.now())}',
               chevron: true,
               onTap: () => _review(r),
             ),

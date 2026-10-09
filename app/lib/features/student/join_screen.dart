@@ -6,6 +6,7 @@ import '../../core/changes.dart';
 import '../../core/session.dart';
 import '../../theme.dart';
 import '../../ui/kit.dart';
+import '../../core/levels.dart';
 
 /// A student's tuitions, and asking to join another with its code. A student who is in none yet
 /// (the router sends them here) can only do this; a tutor lets them in, and then they land on Home.
@@ -116,7 +117,7 @@ class _JoinScreenState extends State<JoinScreen> with WidgetsBindingObserver, Au
                           ? RowTile(title: '${t['name']}', meta: 'Waiting for the tutor to let you in', trailing: const TagChip('Waiting', tone: Tone.warning))
                           : RowTile(
                               title: '${t['name']}',
-                              meta: 'Class ${t['class_level']}${t['id'] == session.tuitionId ? ' · showing now' : ''}',
+                              meta: '${className(t['class_level'], tuition: t)}${t['id'] == session.tuitionId ? ' · showing now' : ''}',
                               chevron: true,
                               onTap: () => _open(t),
                             ),

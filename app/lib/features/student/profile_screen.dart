@@ -5,6 +5,7 @@ import '../../core/session.dart';
 import '../../theme.dart';
 import '../../ui/kit.dart';
 import '../../ui/update_card.dart';
+import '../../core/levels.dart';
 
 /// Profile for students and the teacher: who is signed in, theme, log out.
 class ProfileScreen extends StatelessWidget {
@@ -25,7 +26,7 @@ class ProfileScreen extends StatelessWidget {
               );
           Widget line() => Container(height: 1, margin: const EdgeInsets.only(left: 17), color: hairline);
           return PushedPanel(
-            kicker: teacher ? 'Tutor' : 'Class ${session.classLevel ?? ''}',
+            kicker: teacher ? 'Tutor' : className(session.classLevel),
             title: '${u['display_name'] ?? ''}',
             children: [
               const SizedBox(height: 22),
@@ -45,7 +46,7 @@ class ProfileScreen extends StatelessWidget {
                       ? RowTile(title: '${t['name']}', meta: 'Waiting for the tutor to let you in', trailing: const TagChip('Waiting', tone: Tone.warning))
                       : RowTile(
                           title: '${t['name']}',
-                          meta: 'Class ${t['class_level']}${t['id'] == session.tuitionId ? ' · showing now' : ''}',
+                          meta: '${className(t['class_level'], tuition: t)}${t['id'] == session.tuitionId ? ' · showing now' : ''}',
                           chevron: t['id'] != session.tuitionId,
                           onTap: t['id'] == session.tuitionId
                               ? null

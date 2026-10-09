@@ -5,6 +5,7 @@ import {
 import { clientInfo, recordInstall } from '../lib/client.ts';
 import { pool, q, q1, tx } from '../lib/db.ts';
 import { bad, HttpError, int, str, uuidOpt } from '../lib/http.ts';
+import { addLevel, CLASS_MAX, CLASS_MIN, LEVELS_JSON } from '../lib/levels.ts';
 import { ensureGroup, freeJoinCode, showCode } from '../lib/tuition.ts';
 import { readBody } from './body.ts';
 
@@ -13,7 +14,7 @@ export const authRoutes = new Hono<AppEnv>();
 /** The tuitions a person is in or waiting to join. Only a tutor is shown the join code. */
 const myTuitions = (userId: string) =>
   q(
-    `select t.id, t.name, m.role, m.status, m.class_level, m.joined_at,
+    `select t.id, t.name, m.role, m.status, m.class_level, m.joined_at, ${LEVELS_JSON},
             case when m.role in ('owner', 'tutor') and m.status = 'active' then t.join_code end as join_code
        from memberships m join tuitions t on t.id = m.tuition_id
       where m.user_id = $1 and m.status in ('active', 'pending')
@@ -147,7 +148,10 @@ authRoutes.post('/tuitions', requireUser('teacher', { tuition: 'none' }), async 
     const subjectId = uuidOpt(g?.subject_id, 'subject');
     const subjectName = str(g ?? {}, 'subject_name', { max: 40, optional: true }) ?? null;
     if (!subjectId && !subjectName) throw bad('Each group needs a subject.');
-    return { cls: int(g, 'class_level', { min: 6, max: 12 })!, subjectId, subjectName };
+    // A new tuition has named no levels yet, so a group is Class 1 to 12 or gives the name of a level of its own.
+    const levelName = str(g ?? {}, 'level_name', { max: 30, optional: true }) ?? null;
+    const cls = levelName ? null : int(g, 'class_level', { min: CLASS_MIN, max: CLASS_MAX })!;
+    return { cls, levelName, subjectId, subjectName };
   });
   const owned = await q1(`select count(*) as n from memberships where user_id = $1 and role = 'owner'`, [me.id]);
   if (owned.n >= MAX_OWNED) throw new HttpError(409, 'too_many_tuitions', `You already run ${MAX_OWNED} tuitions.`);
@@ -175,7 +179,8 @@ authRoutes.post('/tuitions', requireUser('teacher', { tuition: 'none' }), async 
         );
       }
       await cx.query('insert into tuition_subjects (tuition_id, subject_id) values ($1, $2) on conflict do nothing', [row!.id, subject!.id]);
-      await ensureGroup(row!.id, g.cls, subject!.id, cx);
+      const cls = g.levelName ? (await addLevel(row!.id, g.levelName, cx)).code : g.cls!;
+      await ensureGroup(row!.id, cls, subject!.id, cx);
     }
     return row!;
   });

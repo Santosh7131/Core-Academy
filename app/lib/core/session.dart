@@ -43,6 +43,9 @@ class Session extends ChangeNotifier {
     return activeTuitions.firstOrNull;
   }
 
+  /// The levels the tuition on screen named itself ("LKG", "NEET 2027"): [{code, label}]. Class 1 to 12 need no list.
+  List<Map<String, dynamic>> get customLevels => [for (final l in (activeTuition?['levels'] as List? ?? const [])) Map<String, dynamic>.from(l as Map)];
+
   /// A tutor with no tuition yet creates one; a student with no place yet joins one.
   bool get needsTuition => signedIn && activeTuitions.isEmpty;
 

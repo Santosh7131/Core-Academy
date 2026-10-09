@@ -8,6 +8,7 @@ import '../../core/session.dart';
 import '../../theme.dart';
 import '../../ui/kit.dart';
 import '../../ui/update_card.dart';
+import '../../core/levels.dart';
 
 class StudentHome extends StatefulWidget {
   const StudentHome({super.key});
@@ -88,12 +89,12 @@ class _StudentHomeState extends State<StudentHome> with WidgetsBindingObserver, 
                             label: 'Change tuition',
                             onTap: _switchTuition,
                             child: Row(mainAxisSize: MainAxisSize.min, children: [
-                              Flexible(child: Kicker('${session.tuitionName} · Class ${session.classLevel ?? ''}')),
+                              Flexible(child: Kicker('${session.tuitionName} · ${className(session.classLevel)}')),
                               const SizedBox(width: 6),
                               Icon(Ph.caretDown, size: 13, color: faint),
                             ]),
                           )
-                        : Kicker('${session.tuitionName} · Class ${session.classLevel ?? ''}'),
+                        : Kicker('${session.tuitionName} · ${className(session.classLevel)}'),
                     const SizedBox(height: 6),
                     Text(session.firstName, style: displayStyle, maxLines: 1, overflow: TextOverflow.ellipsis),
                   ]),

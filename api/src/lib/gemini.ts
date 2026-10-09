@@ -47,12 +47,19 @@ export async function geminiChat(model: string, opts: ChatOptions): Promise<Gemi
       method: 'POST',
       headers: { 'x-goog-api-key': key, 'content-type': 'application/json' },
       body: JSON.stringify(request(opts)),
-      signal: AbortSignal.timeout(120_000),
+      // A call that has a deadline (an answer that is only a bonus) is cut off at it.
+      signal: AbortSignal.timeout(Math.min(120_000, opts.deadline === undefined ? 120_000 : Math.max(opts.deadline - Date.now(), 1000))),
     });
   } catch (e) {
     return { ok: false, error: String(e) };
   }
-  const body = await res.text();
+  let body: string;
+  try {
+    body = await res.text();
+  } catch (e) {
+    // Cut off while the reply was coming in (a call with a deadline), or the connection dropped.
+    return { ok: false, error: String(e) };
+  }
   if (!res.ok) {
     // A 429 says when to try again in its RetryInfo detail, e.g. "retryDelay": "17s".
     const delay = Number(/"retryDelay":\s*"([\d.]+)s"/.exec(body)?.[1]);
