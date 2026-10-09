@@ -64,13 +64,27 @@ class _AddStudentScreenState extends State<AddStudentScreen> {
     super.dispose();
   }
 
-  /// "Harini Venkatesh" -> "harini.v"
+  int _suggestSeq = 0;
+
+  /// "Harini Venkatesh" -> "harini.v", and "harini.v2" for a second one: the server knows which are taken, so it
+  /// has the last word a moment after the typing stops. The tutor never has to think of a login.
   void _suggest(String name) {
     if (_usernameEdited) return;
     final parts = name.toLowerCase().replaceAll(RegExp(r'[^a-z\s]'), '').trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
     final s = parts.isEmpty ? '' : (parts.length == 1 ? parts.first : '${parts.first}.${parts.last[0]}');
     _username.text = s;
     setState(() {});
+    final seq = ++_suggestSeq;
+    if (s.isEmpty) return;
+    Future<void>.delayed(const Duration(milliseconds: 350), () async {
+      if (!mounted || seq != _suggestSeq || _usernameEdited) return;
+      try {
+        final r = await api.get('/teacher/username-suggestion?name=${Uri.encodeQueryComponent(name.trim())}');
+        if (mounted && seq == _suggestSeq && !_usernameEdited) setState(() => _username.text = '${r['username']}');
+      } on ApiException {
+        // Keep the suggestion made on the phone; the server also fixes a taken one when the login is created.
+      }
+    });
   }
 
   String? get _missing {

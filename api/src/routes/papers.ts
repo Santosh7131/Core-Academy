@@ -85,20 +85,45 @@ paperRoutes.post('/papers', async (c) => {
   return c.json({ paper, uploads }, 201);
 });
 
+/** One reply holds about this many questions, so a longer test is written in several calls. */
+const WRITE_BATCH = 25;
+
 /**
  * The chat: the tutor says what test they want and AI writes it. The questions become the drafts
  * of a new paper with no pages, so they get the same checking as an uploaded one: two other models
  * solve each question without seeing the writer's answer, and it is marked only when both agree
  * with each other and with the writer. Anything else is left for the tutor, with a warning.
+ *
+ * A call writes at most WRITE_BATCH questions. A longer test is several calls: the first makes the
+ * paper, and each later one sends its `paper_id` and adds to it, told what is already there so it
+ * writes something new. The test can be any length.
  */
 paperRoutes.post('/papers/chat', async (c) => {
   const b = await readBody(c);
   const classLevel = int(b, 'class_level', { min: 6, max: 12 })!;
   const subjectId = uuid(b.subject_id, 'subject');
   const request = str(b, 'request', { max: 1500 })!;
-  const count = int(b, 'count', { min: 3, max: 40, optional: true }) ?? 15;
+  const count = int(b, 'count', { min: 1, max: WRITE_BATCH, optional: true }) ?? 15;
+  const paperId = b.paper_id == null ? null : uuid(b.paper_id, 'paper id');
   const subject = await q1('select name from subjects where id = $1', [subjectId]);
   if (!subject) throw notFound('This subject');
+
+  // The questions the paper already has, so a later call does not write them again.
+  let written: { text: string; seq: number }[] = [];
+  let paperName = '';
+  if (paperId) {
+    const p = await q1<{ exam_name: string; class_level: number; subject_id: string; category: string | null; page_count: number }>(
+      'select exam_name, class_level, subject_id, category, page_count from papers where id = $1',
+      [paperId],
+    );
+    if (!p) throw notFound('This paper');
+    if (p.category !== 'Made with AI' || p.page_count !== 0 || p.class_level !== classLevel || p.subject_id !== subjectId) {
+      throw bad('That paper was not written here, so questions cannot be added to it.');
+    }
+    paperName = p.exam_name;
+    written = await q<{ text: string; seq: number }>('select text, seq from paper_drafts where paper_id = $1 order by seq', [paperId]);
+  }
+  const already = written.slice(-150).map((w) => `- ${w.text.replace(/\s+/g, ' ').slice(0, 90)}`).join('\n');
 
   const { content } = await chat({
     task: 'write_questions',
@@ -112,21 +137,25 @@ paperRoutes.post('/papers/chat', async (c) => {
       { role: 'system', content: 'You write multiple-choice questions for a CBSE tuition teacher in India. You are exact about maths and science.' },
       {
         role: 'user',
-        content: `Write about ${count} multiple-choice questions for Class ${classLevel} CBSE ${subject.name}, as the teacher asks below. If the request names a number of questions, write that many (at most 40).
+        content: `Write exactly ${count} multiple-choice questions for Class ${classLevel} CBSE ${subject.name}, as the teacher asks below. The request may name a number of questions for the whole test: ignore that, this reply is ${count}.
 Teacher's request:
 """
 ${request}
 """
+${written.length ? `
+The test already has ${written.length} questions, listed below. Write ${count} new ones on new ground within the request: not the same question, and not one of these reworded.
+${already}
+` : ''}
 
 Reply only as JSON:
-{"name":"<short test name>","questions":[{"text":"<question>","options":["<a>","<b>","<c>","<d>"],"answer":"A"}]}
+{${written.length ? '' : '"name":"<short test name>",'}"questions":[{"text":"<question>","options":["<a>","<b>","<c>","<d>"],"answer":"A"}]}
 Rules:
 - Exactly four options per question, and exactly one is correct. "answer" is its letter: A, B, C or D. Spread the right answers over all four letters.
 - Write all maths, formulas and chemical equations in LaTeX inside $...$, in the options as well as in the question, e.g. $\\frac{3}{4}$, $x^2$, $90^\\circ$, $H_2O$. This is JSON, so write every LaTeX backslash twice, as in "$\\\\frac{3}{4}$". Give each option's text without a letter label.
 - Follow the teacher's topic and difficulty. Match the Class ${classLevel} CBSE syllabus.
 - Every question must be answerable from its text alone: no figures, graphs or diagrams, and no "all of the above" or "none of the above".
 - Wrong options are plausible mistakes. Do not repeat a question.
-- name: at most 40 characters, e.g. "Quadratic equations, set 1".`,
+${written.length ? '' : '- name: at most 40 characters, e.g. "Quadratic equations, set 1".'}`,
       },
     ],
   });
@@ -140,33 +169,39 @@ Rules:
     const letter = String(it?.answer ?? '').trim().toUpperCase().charAt(0);
     if (!text || options.length !== 4 || options.some((o: string) => !o) || !/^[A-D]$/.test(letter)) continue;
     items.push({ text, options, answer: letter.charCodeAt(0) - 65 });
-    if (items.length >= 40) break;
+    if (items.length >= count) break;
   }
   if (!items.length) throw new HttpError(502, 'ai_unreadable', 'AI could not write that test. Try again, in different words.');
-  let name = '';
-  try {
-    name = clip((parseJson<{ name?: unknown }>(content) as { name?: unknown })?.name, 40);
-  } catch {
-    // The questions are what matters: a missing name gets a plain one.
+  let name = paperName;
+  if (!paperId) {
+    try {
+      name = clip((parseJson<{ name?: unknown }>(content) as { name?: unknown })?.name, 40);
+    } catch {
+      // The questions are what matters: a missing name gets a plain one.
+    }
+    name ||= `${subject.name} questions`;
   }
+  const first = written.length ? Math.max(...written.map((w) => w.seq)) + 1 : 0;
 
   const paper = await tx(async (cx) => {
-    const p = await q1(
-      `insert into papers (class_level, exam_name, category, page_count, uploaded_by, subject_id)
-       values ($1, $2, 'Made with AI', 0, $3, $4) returning id`,
-      [classLevel, name || `${subject.name} questions`, c.get('user').id, subjectId],
-      cx,
-    );
+    const p = paperId
+      ? { id: paperId }
+      : await q1(
+          `insert into papers (class_level, exam_name, category, page_count, uploaded_by, subject_id)
+           values ($1, $2, 'Made with AI', 0, $3, $4) returning id`,
+          [classLevel, name, c.get('user').id, subjectId],
+          cx,
+        );
     for (const [i, it] of items.entries()) {
       await cx.query(
         `insert into paper_drafts (paper_id, page_no, seq, number_label, kind, text, options, answer_checked, proposed_option)
          values ($1, 1, $2, $3, 'mcq', $4, $5, false, $6)`,
-        [p.id, i, String(i + 1), it.text, it.options, it.answer],
+        [p.id, first + i, String(first + i + 1), it.text, it.options, it.answer],
       );
     }
     return p;
   });
-  return c.json({ paper: { id: paper.id, exam_name: name || `${subject.name} questions` }, questions: items.length }, 201);
+  return c.json({ paper: { id: paper.id, exam_name: name }, questions: items.length, total: first + items.length }, 201);
 });
 
 paperRoutes.post('/papers/:id/pages/:n/uploaded', async (c) => {

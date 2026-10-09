@@ -431,7 +431,9 @@ class _QuestionPickerState extends State<QuestionPicker> {
   Future<void> _load() async {
     try {
       final r = await api.get('/teacher/questions?class=${widget.classLevel}&subject=${widget.subjectId}');
-      if (mounted) setState(() => _all = (r['questions'] as List).cast<Map<String, dynamic>>());
+      // The ready-made library is not offered anywhere in the app.
+      final all = (r['questions'] as List).cast<Map<String, dynamic>>();
+      if (mounted) setState(() => _all = [for (final x in all) if (x['source'] != 'library') x]);
     } on ApiException catch (e) {
       if (mounted) setState(() => _error = e.message);
     }

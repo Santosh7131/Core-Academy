@@ -467,7 +467,6 @@ class _GroupScreenState extends State<GroupScreen> with WidgetsBindingObserver, 
   String get _query => 'class=${widget.classLevel}&subject=${widget.subjectId}&name=${_enc(widget.subjectName)}';
 
   Future<void> _makeTest() async {
-    final ready = (_d?['ready_made'] as List?)?.length ?? 0;
     final choice = await showCentredCard<String>(
       context,
       title: 'Make a test',
@@ -488,16 +487,6 @@ class _GroupScreenState extends State<GroupScreen> with WidgetsBindingObserver, 
           chevron: true,
           onTap: () => Navigator.of(ctx).pop('chat'),
         ),
-        if (ready > 0) ...[
-          const SizedBox(height: 10),
-          RowTile(
-            leading: Icon(Ph.books, size: 22, color: ink),
-            title: 'Use a ready-made test',
-            meta: '${f.count(ready, 'chapter test')} waiting',
-            chevron: true,
-            onTap: () => Navigator.of(ctx).pop('ready'),
-          ),
-        ],
       ]),
     );
     if (choice == null || !mounted) return;
@@ -506,8 +495,6 @@ class _GroupScreenState extends State<GroupScreen> with WidgetsBindingObserver, 
         _go('/t/papers/new?$_query');
       case 'chat':
         _go('/t/groups/${widget.classLevel}/${widget.subjectId}/chat?name=${_enc(widget.subjectName)}');
-      case 'ready':
-        _go('/t/groups/${widget.classLevel}/${widget.subjectId}/ready?name=${_enc(widget.subjectName)}');
     }
   }
 
@@ -623,41 +610,102 @@ class ChatTestScreen extends StatefulWidget {
 
 class _ChatTestScreenState extends State<ChatTestScreen> {
   final _text = TextEditingController();
-  int _count = 15;
+  final _countText = TextEditingController(text: '15');
   bool _busy = false;
   String? _error;
+
+  /// How far a long test has got, and how long AI asks us to wait when it has used its limit.
+  int _written = 0;
+  int _wanted = 0;
+  int _waitLeft = 0;
 
   @override
   void initState() {
     super.initState();
     _text.addListener(() => setState(() {}));
+    _countText.addListener(() => setState(() {}));
   }
 
   @override
   void dispose() {
     _text.dispose();
+    _countText.dispose();
     super.dispose();
   }
 
-  bool get _ready => _text.text.trim().length >= 5;
+  /// Any number from 1 up to a thousand (the top only guards against a slip of the finger).
+  int? get _count {
+    final n = int.tryParse(_countText.text.trim());
+    return n != null && n >= 1 && n <= 1000 ? n : null;
+  }
 
+  bool get _ready => _text.text.trim().length >= 5 && _count != null;
+
+  /// One call to the writer, waiting out AI's per-minute limit when it says so.
+  Future<Map<String, dynamic>> _ask(Map<String, dynamic> body) async {
+    for (var waits = 0;; waits++) {
+      try {
+        return Map<String, dynamic>.from(await api.post('/teacher/papers/chat', body, const Duration(minutes: 2)));
+      } on ApiException catch (e) {
+        if (e.code != 'ai_busy' || waits >= 8 || !mounted) rethrow;
+        final secs = (int.tryParse(RegExp(r'(\d+) second').firstMatch(e.message)?.group(1) ?? '') ?? 20).clamp(4, 60);
+        for (var left = secs; left > 0 && mounted; left--) {
+          setState(() => _waitLeft = left);
+          await Future<void>.delayed(const Duration(seconds: 1));
+        }
+        if (mounted) setState(() => _waitLeft = 0);
+      }
+    }
+  }
+
+  /// Writes the test twenty questions at a time, so it can be any length. The first call makes the
+  /// paper and each later one adds to it.
   Future<void> _write() async {
+    final total = _count!;
     setState(() {
       _busy = true;
       _error = null;
+      _written = 0;
+      _wanted = total;
     });
+    String? paperId;
+    String? stopped;
     try {
-      final r = await api.post(
-        '/teacher/papers/chat',
-        {'class_level': widget.classLevel, 'subject_id': widget.subjectId, 'request': _text.text.trim(), 'count': _count},
-        const Duration(minutes: 2),
-      );
-      if (mounted) context.pushReplacement('/t/papers/${r['paper']['id']}?read=1');
+      for (var calls = 0; _written < total && calls < total + 5; calls++) {
+        final left = total - _written;
+        final r = await _ask({
+          'class_level': widget.classLevel,
+          'subject_id': widget.subjectId,
+          'request': _text.text.trim(),
+          'count': left < 20 ? left : 20,
+          'paper_id': ?paperId,
+        });
+        paperId = '${r['paper']['id']}';
+        if (mounted) setState(() => _written = (r['total'] as num).toInt());
+      }
     } on ApiException catch (e) {
-      if (mounted) setState(() => _error = e.message);
-    } finally {
-      if (mounted) setState(() => _busy = false);
+      stopped = e.message;
     }
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (paperId == null) {
+      setState(() => _error = stopped);
+      return;
+    }
+    if (stopped != null) {
+      // Part of the test is written: say how much, then carry on with that.
+      await showCentredCard<void>(
+        context,
+        title: 'Only ${f.count(_written, 'question')} written',
+        builder: (ctx) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Fig('You asked for $total. $stopped', style: bodyStyle.copyWith(color: muted)),
+          const SizedBox(height: 18),
+          PrimaryButton('Use these $_written', onTap: () => Navigator.of(ctx).pop()),
+        ]),
+      );
+      if (!mounted) return;
+    }
+    context.pushReplacement('/t/papers/$paperId?read=1');
   }
 
   @override
@@ -668,7 +716,7 @@ class _ChatTestScreenState extends State<ChatTestScreen> {
           _busy ? 'Writing the questions' : 'Write the questions',
           leadingIcon: _busy ? null : Ph.scan,
           onTap: _ready && !_busy ? _write : null,
-          disabledReason: _busy || _ready ? null : 'Say what the test should cover.',
+          disabledReason: _busy || _ready ? null : (_text.text.trim().length < 5 ? 'Say what the test should cover.' : 'Type how many questions, from 1 to 1,000.'),
         ),
         children: [
           const SizedBox(height: 14),
@@ -688,24 +736,23 @@ class _ChatTestScreenState extends State<ChatTestScreen> {
             ),
           ]),
           const FormLabel('How many questions'),
-          SelectField(
-            value: '$_count questions',
-            onTap: _busy
-                ? null
-                : () async {
-                    final c = await showChoices<int>(
-                      context,
-                      title: 'How many questions',
-                      options: [for (final n in [10, 15, 20, 25, 30, 40]) Choice(n, '$n questions')],
-                      selected: _count,
-                    );
-                    if (c?.value != null) setState(() => _count = c!.value!);
-                  },
-          ),
+          GroupedInputs(children: [
+            BareField(controller: _countText, placeholder: 'For example 15', keyboard: TextInputType.number),
+          ]),
+          const SizedBox(height: 8),
+          Fig('Any number. AI writes twenty at a time, so a hundred take about a minute.', style: labelStyle),
           if (_error != null) ...[const SizedBox(height: 16), InlineNotice(_error!, tone: Tone.danger, icon: Ph.warning)],
           if (_busy) ...[
             const SizedBox(height: 16),
-            InlineNotice('AI is writing the questions. This takes about half a minute.', tone: Tone.ai, icon: Ph.scan),
+            InlineNotice(
+              _waitLeft > 0
+                  ? 'AI has used its limit for this minute. Carrying on in $_waitLeft s'
+                  : _wanted > 20
+                      ? 'Writing the questions: $_written of $_wanted done.'
+                      : 'AI is writing the questions. This takes a few seconds.',
+              tone: Tone.ai,
+              icon: Ph.scan,
+            ),
           ],
           const SizedBox(height: 16),
           Fig(
@@ -715,69 +762,4 @@ class _ChatTestScreenState extends State<ChatTestScreen> {
           ),
         ],
       );
-}
-
-// ---------------------------------------------------------------- ready-made tests
-
-class ReadyTestsScreen extends StatefulWidget {
-  const ReadyTestsScreen({super.key, required this.classLevel, required this.subjectId, required this.subjectName});
-  final int classLevel;
-  final String subjectId;
-  final String subjectName;
-
-  @override
-  State<ReadyTestsScreen> createState() => _ReadyTestsScreenState();
-}
-
-class _ReadyTestsScreenState extends State<ReadyTestsScreen> {
-  List<Map<String, dynamic>>? _rows;
-  String? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    try {
-      final d = await api.get('/teacher/groups/${widget.classLevel}/${widget.subjectId}');
-      if (mounted) setState(() => _rows = (d['ready_made'] as List).cast<Map<String, dynamic>>());
-    } on ApiException catch (e) {
-      if (mounted) setState(() => _error = e.message);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final rows = _rows;
-    return PushedPanel(
-      kicker: groupName(widget.classLevel, widget.subjectName),
-      title: 'Ready-made tests',
-      children: [
-        const SizedBox(height: 14),
-        Fig('One test for each chapter. Open one, choose when it closes, and post it.', style: bodyStyle.copyWith(color: muted)),
-        const SizedBox(height: 18),
-        if (rows == null && _error != null)
-          ErrorState(message: _error!, onRetry: _load)
-        else if (rows == null)
-          const LoadingState()
-        else if (rows.isEmpty)
-          Fig('Every ready-made test for this group has been posted.', style: bodyStyle.copyWith(color: muted))
-        else
-          for (final (i, t) in rows.indexed) ...[
-            if (i > 0) const SizedBox(height: gapRow),
-            RowTile(
-              title: '${t['title']}',
-              meta: f.count(_n(t['question_count']), 'question'),
-              chevron: true,
-              onTap: () async {
-                await context.push('/t/tests/${t['id']}/edit');
-                if (mounted) _load();
-              },
-            ),
-          ],
-      ],
-    );
-  }
 }

@@ -11,6 +11,7 @@ import { afterTestChange } from '../lib/notify.ts';
 import { mustKeepOrder } from '../lib/questions.ts';
 import { deleteObjects, maybeViewUrl, uploadUrl } from '../lib/storage.ts';
 import { MATHS, STUDENT_SUBJECTS, subjectIds } from '../lib/subjects.ts';
+import { freeUsername, usernameBase } from '../lib/usernames.ts';
 import { readBody } from './body.ts';
 
 // Mounted behind requireUser('teacher') in index.ts.
@@ -128,32 +129,53 @@ async function setStudentSubjects(cx: any, studentId: string, ids: string[]) {
   }
 }
 
+/** The login to suggest for a student of this name, free right now: two called Harini Venkatesh get harini.v and harini.v2. */
+teacherRoutes.get('/username-suggestion', async (c) => {
+  return c.json({ username: await freeUsername((c.req.query('name') ?? '').slice(0, 60)) });
+});
+
 teacherRoutes.post('/students', async (c) => {
   const b = await readBody(c);
   const displayName = str(b, 'display_name', { max: 60 })!;
   const classLevel = int(b, 'class_level', { min: 6, max: 12 })!;
-  const username = checkUsername(b.username);
+  const requested = checkUsername(b.username);
+  // The username the app suggests from the name ("harini.v", or "harini.v2"), when it is taken, becomes the
+  // next free one, so nobody has to think of a login for a second student with the same name. Any other
+  // username that is taken is refused, so the tutor can pick another.
+  const base = usernameBase(displayName);
+  const suggested = requested.startsWith(base) && /^\d*$/.test(requested.slice(base.length));
+  let username = requested;
+  if (suggested && (await q1('select 1 as x from users where username = $1', [requested]))) username = await freeUsername(displayName);
   // The app before subjects sends none: its students study maths.
   const subjects = 'subject_ids' in b ? subjectIds(b.subject_ids) : [MATHS];
   const pin = b.pin === undefined || b.pin === null || b.pin === '' ? newPin() : checkPin(b.pin);
   const { hash, salt } = await hashSecret(pin);
-  try {
-    const u = await tx(async (cx) => {
-      const row = await q1(
-        `insert into users (role, username, display_name, class_level, secret_hash, secret_salt)
-         values ('student', $1, $2, $3, $4, $5) returning id, username, display_name, class_level`,
-        [username, displayName, classLevel, hash, salt],
-        cx,
-      );
-      await setStudentSubjects(cx, row.id, subjects);
-      return row;
-    });
-    waitUntil(afterTestChange());
-    return c.json({ student: u, login: { username, pin } }, 201);
-  } catch (e: any) {
-    if (e.code === '23505') throw new HttpError(409, 'username_taken', `The username ${username} is already taken.`);
-    if (e.code === '23503') throw bad('One of those subjects no longer exists.');
-    throw e;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const u = await tx(async (cx) => {
+        const row = await q1(
+          `insert into users (role, username, display_name, class_level, secret_hash, secret_salt)
+           values ('student', $1, $2, $3, $4, $5) returning id, username, display_name, class_level`,
+          [username, displayName, classLevel, hash, salt],
+          cx,
+        );
+        await setStudentSubjects(cx, row.id, subjects);
+        return row;
+      });
+      waitUntil(afterTestChange());
+      return c.json({ student: u, login: { username, pin } }, 201);
+    } catch (e: any) {
+      if (e.code === '23505') {
+        // Someone took it between the check and the insert: try the next free one.
+        if (suggested && attempt < 3) {
+          username = await freeUsername(displayName, pool, [username]);
+          continue;
+        }
+        throw new HttpError(409, 'username_taken', `The username ${username} is already taken.`);
+      }
+      if (e.code === '23503') throw bad('One of those subjects no longer exists.');
+      throw e;
+    }
   }
 });
 
@@ -381,7 +403,10 @@ teacherRoutes.get('/home', async (c) => {
   });
 });
 
-/** One group's page: its students, its tests (live, posted, finished, drafts) and its ready-made tests. */
+/**
+ * One group's page: its students and its tests (live, posted, finished, drafts). The ready-made
+ * chapter tests of the library are left out: the app does not offer them.
+ */
 teacherRoutes.get('/groups/:cls/:subject', async (c) => {
   const cls = Number(c.req.param('cls'));
   if (!Number.isInteger(cls) || cls < 6 || cls > 12) throw bad('Choose a class from 6 to 12.');
@@ -410,13 +435,7 @@ teacherRoutes.get('/groups/:cls/:subject', async (c) => {
       limit 100`,
     [cls, subjectId],
   );
-  const ready = await q(
-    `select t.id, t.title, (select count(*) from test_questions tq where tq.test_id = t.id) as question_count
-       from tests t where t.class_level = $1 and t.subject_id = $2 and t.status = 'draft' and t.library_key is not null
-      order by t.library_key, t.title`,
-    [cls, subjectId],
-  );
-  return c.json({ group: { class_level: cls, subject_id: subjectId, subject: subject.name }, students, tests, ready_made: ready });
+  return c.json({ group: { class_level: cls, subject_id: subjectId, subject: subject.name }, students, tests });
 });
 
 // ---------------------------------------------------------------- tutors

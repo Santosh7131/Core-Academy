@@ -2,9 +2,9 @@
 
 An Android app for a small maths tuition (CBSE, Classes 6–12). Students take timed
 multiple-choice tests on their phones, the app marks them, and the tutors see every
-result. A tutor creates each student's login and makes a test in one of three ways: upload a
-school question paper (photos or a PDF) that AI types out for them to check, describe the test
-to AI and let it write the questions, or take a ready-made chapter test.
+result. A tutor creates each student's login and makes a test in one of two ways: upload a
+school question paper (photos or a PDF) that AI types out for them to check, or describe the
+test to AI and let it write the questions, as many as they ask for.
 
 ## What's here
 
@@ -55,9 +55,11 @@ underneath in one short list. Groups lists them all.
 
 A group (a class and a subject, "10th Maths") has one page: a Make a test button, its tests
 (live, posted, drafts, finished) and its students with an Add student button. Class and subject
-come from the group, so nothing asks for them again. Make a test offers upload, describe it to
-AI, or a ready-made chapter test. The app has no page of questions: a wrong answer is fixed
-from the test's own page, which marks everyone's attempt again.
+come from the group, so nothing asks for them again. Make a test offers upload or describe it
+to AI. The app has no page of questions: a wrong answer is fixed from the test's own page, which
+marks everyone's attempt again. Add student suggests a username from the name and numbers a
+repeat, so a second Harini Venkatesh gets harini.v2 without anyone thinking of one (the server
+decides, so the app of 1.3 and before gets it too).
 
 A test's page leads with its marks notice and its settings (time limit, opens, closes, order),
 and folds the questions to two with a link to show the rest. Settings (the avatar on Home) holds
@@ -85,6 +87,11 @@ written test, or a student, goes only after a second warning, and takes those re
 Deleting a paper also deletes the questions saved from it that no test uses.
 
 ## Ready-made questions
+
+The app no longer offers these: the tutor said they are not needed (2026-10-09). The questions
+and their draft chapter tests stay in the database and the tools stay here, but no screen lists
+them, the group page leaves the draft chapter tests out, and the test editor's question picker
+skips them.
 
 `tools/library/` holds original chapter-wise MCQs, with worked solutions, written for the
 NCERT 2026-27 books (nothing is copied from a paper or a book): ten per chapter for Class 7
@@ -128,22 +135,6 @@ guess would be a guess. The teacher checks the question and taps "Looks right, f
 PDF holding its pages twice) is skipped, and saving leaves out any question the bank already
 has. Skipped questions can be brought back.
 
-## Describing a test to AI
-
-In a group, Make a test, Describe it to AI takes a few words ("easy and medium questions on
-quadratic equations, with two word problems") and a question count (3 to 40). The server asks
-Gemini 3.1 Flash-Lite, with gpt-oss-120b behind it (`GROQ_WRITE_MODELS`), for the questions
-as JSON: four options each and the writer's answer. The result opens in the same review screen
-as an uploaded paper. The writer's answer is only a proposal. The two solving models work every
-question out without seeing it, and an answer is marked only when both agree with each other
-and with the writer; otherwise the question is left for the tutor with a note. Ten questions
-take about five seconds to write and a few more to check.
-
-Models write LaTeX in JSON with one backslash (`\frac`), which JSON reads as a form feed plus
-"rac". Every model reply passes through `fixLatexEscapes` first (`api/src/lib/latex-json.ts`,
-checked by `node tools/latex-json-test.mjs`), and an option that is all maths but came without
-`$...$` gets them.
-
 Pages are read by Google's Gemini 3.5 Flash-Lite on its free tier (`GEMINI_API_KEY`), about 4
 seconds a page. Groq's vision model reads instead whenever Gemini is busy or refuses a page,
 and Groq always works out the answers. Without a Gemini key, Groq reads too. Groq limits each
@@ -164,6 +155,28 @@ page is read, three workers start looking for answers, each taking its own batch
 still being read. A printed answer key on a late page replaces any answer AI worked out in the
 meantime. A 12-page worksheet took 2 minutes 45 seconds one step at a time and takes about 30
 seconds this way (`tools/out/try-parallel.mjs` replays the app's run against the local API).
+
+## Describing a test to AI
+
+In a group, Make a test, Describe it to AI takes a few words ("easy and medium questions on
+quadratic equations, with two word problems") and how many questions: any number up to a
+thousand, where the top only guards against a slip of the finger. The server asks Gemini 3.1
+Flash-Lite, with gpt-oss-120b behind it (`GROQ_WRITE_MODELS`), for the questions as JSON: four
+options each and the writer's answer. The result opens in the same review screen as an uploaded
+paper. The writer's answer is only a proposal. The two solving models work every question out
+without seeing it, and an answer is marked only when both agree with each other and with the
+writer; otherwise the question is left for the tutor with a note.
+
+One reply holds about 25 questions, so the app asks for twenty at a time. The first call makes
+the paper. Each later call sends its `paper_id`, is told which questions are already written and
+adds new ones, so a test can be any length: 47 questions took three calls and 19 seconds, with
+no repeats. The app shows how far it has got and waits out the free tier's per-minute limit. If
+the allowance runs out part way, it keeps what was written and says how many.
+
+Models write LaTeX in JSON with one backslash (`\frac`), which JSON reads as a form feed plus
+"rac". Every model reply passes through `fixLatexEscapes` first (`api/src/lib/latex-json.ts`,
+checked by `node tools/latex-json-test.mjs`), and an option that is all maths but came without
+`$...$` gets them.
 
 ## Screens stay current
 
@@ -360,7 +373,7 @@ and the scripts that read it would then point at the live database.
 |---|---|
 | `npm run typecheck` | The API type-checks. |
 | `npm run test:latex` | The LaTeX repair for model replies and the bare-maths wrapping (29 cases). |
-| `npm run test:api` | 135 end-to-end checks of the marking rules, when results open (closing time, last student, tutor, and which app versions wait), groups, the home and group pages, tutors, logins, question papers (including ones uploaded before their details are known, printed answer keys that replace AI answers, questions the bank already has, two answer calls at once and question groups) and the admin app's API against the deployed dev API (add `-- --env .env.main` for the live one; the admin checks run only where the logins file has a developer login). It creates its own students, subject, tests and paper, gives its tests only to those students, then removes them all. |
+| `npm run test:api` | 140 end-to-end checks of the marking rules, when results open (closing time, last student, tutor, and which app versions wait), usernames for students who share a name, groups, the home and group pages, tutors, logins, question papers (including ones uploaded before their details are known, printed answer keys that replace AI answers, questions the bank already has, two answer calls at once and question groups) and the admin app's API against the deployed dev API (add `-- --env .env.main` for the live one; the admin checks run only where the logins file has a developer login). It creates its own students, subject, tests and paper, gives its tests only to those students, then removes them all. |
 | `node tools/notify-test.ts --log server.log` | 25 checks of the notifications against the API on your PC, run with `PUSH_DRY_RUN=1` so each notification is written to the log instead of sent. Dev only. |
 | `node tools/check-answers.ts` | Every sample question's marked answer is right, and no other option equals it. |
 | `node tools/ai-test.ts` | How accurately the AI reads the 2-page sample paper (render it first with `tools/make-sample-paper.ps1`). |

@@ -48,14 +48,6 @@ final teacherRoutes = <RouteBase>[
       subjectName: s.uri.queryParameters['name'] ?? '',
     ),
   ),
-  _page(
-    '/t/groups/:cls/:subject/ready',
-    (s) => ReadyTestsScreen(
-      classLevel: int.parse(s.pathParameters['cls']!),
-      subjectId: s.pathParameters['subject']!,
-      subjectName: s.uri.queryParameters['name'] ?? '',
-    ),
-  ),
   _page('/t/students/new', (s) => AddStudentScreen(classLevel: _int(s, 'class'), subjectId: s.uri.queryParameters['subject'])),
   _page('/t/students/:id', (s) => StudentDetailScreen(id: s.pathParameters['id']!)),
   _page('/t/papers/new', (s) => UploadPaperScreen(classLevel: _int(s, 'class'), subjectId: s.uri.queryParameters['subject'])),
