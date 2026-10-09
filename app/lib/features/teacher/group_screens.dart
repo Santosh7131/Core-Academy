@@ -113,6 +113,9 @@ class _TutorHomeState extends State<TutorHome> with WidgetsBindingObserver, Auto
     final live = _n(totals['live']);
     final writing = _n(totals['writing']);
     final posted = groups.fold<int>(0, (s, g) => s + (g['posted'] as List).length);
+    final pending = _n(d['pending_requests']);
+    final code = '${d['tuition']?['join_code'] ?? ''}';
+    final noStudents = groups.every((g) => _n(g['students']) == 0);
     bool has(Map<String, dynamic> g, String k) => (g[k] as List).isNotEmpty;
     // Groups with something running come first (live before posted-only). The rest fold into one short list
     // so a tutor with a dozen groups still sees what matters without scrolling past empty cards.
@@ -127,12 +130,35 @@ class _TutorHomeState extends State<TutorHome> with WidgetsBindingObserver, Auto
     ].join(' · ');
     return [
       if (_error != null) Padding(padding: const EdgeInsets.fromLTRB(gutter, 16, gutter, 0), child: InlineNotice(_error!, icon: Ph.warning)),
+      // Students waiting to be let in come first; a tuition with no students yet shows how to invite them.
+      if (pending > 0)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(gutter, 16, gutter, 0),
+          child: RowTile(
+            leading: Icon(Ph.userPlus, size: 22, color: ink),
+            title: pending == 1 ? '1 student wants to join' : '$pending students want to join',
+            meta: 'Choose their class and subjects',
+            chevron: true,
+            onTap: () => context.push('/t/requests'),
+          ),
+        )
+      else if (noStudents && code.length == 6)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(gutter, 16, gutter, 0),
+          child: RowTile(
+            leading: Icon(Ph.shareNetwork, size: 22, color: ink),
+            title: 'Invite your students',
+            meta: 'Join code ${code.substring(0, 3)}-${code.substring(3)}',
+            chevron: true,
+            onTap: () => context.push('/t/code'),
+          ),
+        ),
       Padding(
         padding: const EdgeInsets.fromLTRB(gutter, 14, gutter, 18),
         child: Fig(summary, style: bodyStyle.copyWith(color: muted)),
       ),
       if (groups.isEmpty)
-        const EmptyState(icon: Ph.users, title: 'No groups yet', body: 'Open Groups and add your first student. Each class and subject becomes a group.')
+        const EmptyState(icon: Ph.users, title: 'No groups yet', body: 'Open Groups, add a group, then add your first student. Each class and subject is a group.')
       else ...[
         if (busy.isEmpty)
           Padding(
@@ -342,7 +368,15 @@ class _GroupsScreenState extends State<GroupsScreen> with WidgetsBindingObserver
           const FormLabel('Class', top: 4),
           ClassField(value: cls, onChanged: (c) => set(() => cls = c)),
           const FormLabel('Subject'),
-          SubjectField(subjects: subjects, value: subjectId, onChanged: (v) => set(() => subjectId = v)),
+          SubjectField(
+            subjects: subjects,
+            value: subjectId,
+            onChanged: (v) => set(() => subjectId = v),
+            onAdded: (s) => set(() {
+              subjects.add(s);
+              subjectId = s.id;
+            }),
+          ),
           const SizedBox(height: 18),
           PrimaryButton(
             'Open the group',
@@ -354,6 +388,14 @@ class _GroupsScreenState extends State<GroupsScreen> with WidgetsBindingObserver
     );
     if (ok != true || cls == null || subjectId == null || !mounted) return;
     final name = subjects.firstWhere((x) => x.id == subjectId).name;
+    // The group exists from now on, even before its first student.
+    try {
+      await api.post('/teacher/groups', {'class_level': cls, 'subject_id': subjectId});
+    } on ApiException catch (e) {
+      if (mounted) showProblem(context, e);
+      return;
+    }
+    if (!mounted) return;
     await context.push('/t/groups/$cls/$subjectId?name=${_enc(name)}');
     _load();
   }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/api.dart';
 import '../../core/changes.dart';
@@ -8,6 +9,7 @@ import '../../theme.dart';
 import '../../ui/kit.dart';
 import '../../ui/update_card.dart';
 import 'common.dart';
+import 'subjects.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -24,6 +26,7 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
   Future<void> refreshQuietly() => _load();
 
   Map<String, dynamic>? _s;
+  Map<String, dynamic> _tu = {};
   List<Map<String, dynamic>> _subjectRows = [];
   List<Map<String, dynamic>> _tutors = [];
   String? _meId;
@@ -54,6 +57,7 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
       final s = await api.get('/teacher/settings');
       final subjects = await api.get('/teacher/subjects');
       final tutors = await api.get('/teacher/tutors');
+      _tu = Map<String, dynamic>.from((await api.get('/teacher/tuition'))['tuition']);
       _tutors = (tutors['tutors'] as List).cast<Map<String, dynamic>>();
       _meId = '${tutors['me']}';
       _s = Map<String, dynamic>.from(s);
@@ -132,18 +136,45 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     _load();
   }
 
+  Future<void> _addSubject() async {
+    try {
+      final added = await addSubject(context);
+      if (added != null) {
+        if (mounted) setState(() => _notice = '${added.name} added.');
+        _load();
+      }
+    } on ApiException catch (e) {
+      if (mounted) showProblem(context, e);
+    }
+  }
+
+  /// A new join code: the old one stops working at once.
+  Future<void> _newCode() async {
+    final ok = await confirmCard(
+      context,
+      title: 'Make a new join code?',
+      body: 'The old code stops working. Students who are already in stay in.',
+      confirm: 'New code',
+    );
+    if (!ok) return;
+    await _run(() => api.post('/teacher/tuition/join-code'), 'New join code made.');
+    _load();
+  }
+
   Future<void> _editSubject(Map<String, dynamic> row) async {
-    // Maths is the main subject: it can be renamed but never deleted.
+    // A standard subject keeps its name; Maths is the first tuition's main subject and is never deleted.
     final canDelete = row['is_default'] != true;
+    final canRename = row['standard'] != true;
     final choice = await showCentredCard<String>(
       context,
       title: '${row['name']}',
       builder: (ctx) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        SecondaryButton('Rename', icon: Ph.pencilSimple, onTap: () => Navigator.of(ctx).pop('rename')),
+        if (canRename) SecondaryButton('Rename', icon: Ph.pencilSimple, onTap: () => Navigator.of(ctx).pop('rename')),
         if (canDelete) ...[
-          const SizedBox(height: 10),
-          SecondaryButton('Delete', icon: Ph.trash, tint: danger, onTap: () => Navigator.of(ctx).pop('delete')),
+          if (canRename) const SizedBox(height: 10),
+          SecondaryButton('Remove', icon: Ph.trash, tint: danger, onTap: () => Navigator.of(ctx).pop('delete')),
         ],
+        if (!canRename && !canDelete) Fig('This is the main subject, so it stays.', style: bodyStyle.copyWith(color: muted)),
       ]),
     );
     if (choice == 'rename') {
@@ -155,13 +186,13 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     } else if (choice == 'delete' && mounted) {
       final ok = await confirmCard(
         context,
-        title: 'Delete ${row['name']}?',
-        body: 'Students who take it are taken out of its groups. A subject that already has tests, papers or questions cannot be deleted.',
-        confirm: 'Delete',
+        title: 'Remove ${row['name']}?',
+        body: 'Students who take it are taken out of its groups. A subject that already has tests, papers or questions cannot be removed.',
+        confirm: 'Remove',
         destructive: true,
       );
       if (ok) {
-        await _run(() => api.delete('/teacher/subjects/${row['id']}'), 'Deleted.');
+        await _run(() => api.delete('/teacher/subjects/${row['id']}'), 'Removed.');
         _load();
       }
     }
@@ -180,7 +211,7 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     const rule = EdgeInsets.fromLTRB(0, 26, 0, 11);
 
     return PushedPanel(
-      kicker: 'Teacher',
+      kicker: 'Tutor',
       title: 'Settings',
       children: [
         if (_notice != null) ...[const SizedBox(height: 16), InlineNotice(_notice!, tone: Tone.success, icon: Ph.checkCircle)],
@@ -192,8 +223,32 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
         const SizedBox(height: 10),
         SecondaryButton('Save names', onTap: () => _run(() async {
               await api.patch('/teacher/settings', {'tuition_name': _tuition.text.trim(), 'display_name': _name.text.trim()});
-              await session.restore();
+              await session.refreshTuitions();
             }, 'Names saved.')),
+        const SectionRule('Students joining', padding: rule),
+        RowTile(
+          title: 'Join code',
+          meta: _tu['join_open'] == false ? 'Joining is closed' : 'Students type it to ask to join',
+          trailing: Text('${_tu['join_code_shown'] ?? ''}', style: numStyle(size: 16, weight: FontWeight.w700).copyWith(letterSpacing: 2)),
+          chevron: true,
+          onTap: () => context.push('/t/code'),
+        ),
+        const SizedBox(height: gapRow),
+        RowTile(
+          title: 'Join requests',
+          meta: (int.tryParse('${_tu['pending']}') ?? 0) == 0 ? 'None waiting' : '${_tu['pending']} waiting',
+          chevron: true,
+          onTap: () => context.push('/t/requests'),
+        ),
+        const SizedBox(height: 12),
+        Wrap(spacing: 8, children: [
+          SegChip('Joining open', selected: _tu['join_open'] != false, onTap: () => _run(() => api.patch('/teacher/tuition', {'join_open': true}), 'Students can ask to join.').then((_) => _load())),
+          SegChip('Joining closed', selected: _tu['join_open'] == false, onTap: () => _run(() => api.patch('/teacher/tuition', {'join_open': false}), 'Nobody can ask to join now.').then((_) => _load())),
+        ]),
+        if (_tu['role'] == 'owner') ...[
+          const SizedBox(height: 12),
+          SecondaryButton('New join code', icon: Ph.arrowsClockwise, onTap: _newCode),
+        ],
         SectionRule('Tutors', count: _tutors.length, padding: rule),
         for (final (i, t) in _tutors.indexed) ...[
           if (i > 0) const SizedBox(height: gapRow),
@@ -217,13 +272,7 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
           ),
         ],
         const SizedBox(height: gapRow),
-        SecondaryButton('Add subject', icon: Ph.plus, onTap: () async {
-          final name = await _ask('Add a subject', 'Subject name', action: 'Add');
-          if (name != null && name.trim().isNotEmpty) {
-            await _run(() => api.post('/teacher/subjects', {'name': name.trim()}), 'Subject added.');
-            _load();
-          }
-        }),
+        SecondaryButton('Add subject', icon: Ph.plus, onTap: _addSubject),
         const SectionRule('Theme', padding: rule),
         ListenableBuilder(
           listenable: session,

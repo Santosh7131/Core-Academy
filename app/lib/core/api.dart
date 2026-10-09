@@ -34,8 +34,15 @@ class Api {
   final _client = http.Client();
   String? token;
 
+  /// The tuition the app is showing, sent with every request. Without it the server answers for the
+  /// person's first tuition, which is all a person with one needs.
+  String? tuitionId;
+
   /// Called when the server says the session is gone (password reset, login turned off).
   void Function()? onSignedOut;
+
+  /// Called when the server says the person is no longer in the tuition the app was showing.
+  void Function()? onTuitionGone;
 
   Future<dynamic> get(String path) => _send('GET', path);
   Future<dynamic> post(String path, [Object? body, Duration? timeout]) => _send('POST', path, body: body, timeout: timeout);
@@ -47,6 +54,7 @@ class Api {
     final req = http.Request(method, Uri.parse('$apiBase$path'));
     req.headers.addAll(Device.headers);
     if (token != null) req.headers['authorization'] = 'Bearer $token';
+    if (tuitionId != null) req.headers['x-tuition'] = tuitionId!;
     if (body != null) {
       req.headers['content-type'] = 'application/json';
       req.body = jsonEncode(body);
@@ -79,6 +87,7 @@ class Api {
       err is Map ? '${err['message']}' : 'Something went wrong. Please try again.',
     );
     if (e.status == 401 && e.code == 'signed_out' && token != null) onSignedOut?.call();
+    if (e.status == 403 && e.code == 'not_a_member') onTuitionGone?.call();
     throw e;
   }
 

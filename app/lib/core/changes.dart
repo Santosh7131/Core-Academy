@@ -18,6 +18,10 @@ Set<Area> areasOf(String path) {
   if (p.startsWith('/teacher/subjects') || p.startsWith('/teacher/chapters') || p.startsWith('/teacher/settings')) {
     return {Area.settings, Area.questions, Area.students};
   }
+  // Groups, the join code and join requests change what Home, Groups and Settings show.
+  if (p.startsWith('/teacher/groups') || p.startsWith('/teacher/tuition') || p.startsWith('/teacher/join-requests')) {
+    return {Area.settings, Area.students, Area.tests};
+  }
   return const {};
 }
 

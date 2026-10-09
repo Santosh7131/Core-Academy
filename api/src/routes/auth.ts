@@ -126,6 +126,10 @@ authRoutes.post('/signup-tutor', async (c) => {
   return c.json({ token, user: { ...u, class_level: null }, tuitions: [] }, 201);
 });
 
+/** The standard subjects a new tuition can pick from while it is being set up (it has no tuition yet). */
+authRoutes.get('/standard-subjects', requireUser('teacher', { tuition: 'none' }), async (c) =>
+  c.json({ subjects: await q('select id, name from subjects where tuition_id is null order by sort_order, name') }));
+
 const MAX_OWNED = 3;
 
 /**

@@ -5,9 +5,11 @@ import '../student/profile_screen.dart';
 import '../student/result_screen.dart';
 import '../student/review_screen.dart';
 import 'group_screens.dart';
+import 'join_requests_screen.dart';
 import 'papers_screens.dart';
 import 'questions_screens.dart';
 import 'settings_screen.dart';
+import 'share_code_screen.dart';
 import 'shell.dart';
 import 'students_screens.dart';
 import 'tests_screens.dart';
@@ -60,5 +62,7 @@ final teacherRoutes = <RouteBase>[
   _page('/t/attempts/:id/review', (s) => ReviewScreen(attemptId: s.pathParameters['id']!, start: int.tryParse(s.uri.queryParameters['n'] ?? '') ?? 1, teacher: true)),
   _page('/t/attempts/:id', (s) => ResultScreen(attemptId: s.pathParameters['id']!, teacher: true)),
   _page('/t/settings', (_) => const SettingsScreen()),
+  _page('/t/code', (s) => ShareCodeScreen(first: s.uri.queryParameters['first'] == '1')),
+  _page('/t/requests', (_) => const JoinRequestsScreen()),
   _page('/t/profile', (_) => const ProfileScreen()),
 ];

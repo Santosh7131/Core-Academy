@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/session.dart';
 import '../../theme.dart';
@@ -24,7 +25,7 @@ class ProfileScreen extends StatelessWidget {
               );
           Widget line() => Container(height: 1, margin: const EdgeInsets.only(left: 17), color: hairline);
           return PushedPanel(
-            kicker: teacher ? 'Teacher' : 'Class ${u['class_level'] ?? ''}',
+            kicker: teacher ? 'Tutor' : 'Class ${session.classLevel ?? ''}',
             title: '${u['display_name'] ?? ''}',
             children: [
               const SizedBox(height: 22),
@@ -36,6 +37,27 @@ class ProfileScreen extends StatelessWidget {
                   fact('Tuition', session.tuitionName),
                 ]),
               ),
+              if (!teacher) ...[
+                SectionRule('Tuitions', count: session.tuitions.length, padding: const EdgeInsets.fromLTRB(0, 26, 0, 12)),
+                for (final (i, t) in session.tuitions.indexed) ...[
+                  if (i > 0) const SizedBox(height: gapRow),
+                  t['status'] == 'pending'
+                      ? RowTile(title: '${t['name']}', meta: 'Waiting for the tutor to let you in', trailing: const TagChip('Waiting', tone: Tone.warning))
+                      : RowTile(
+                          title: '${t['name']}',
+                          meta: 'Class ${t['class_level']}${t['id'] == session.tuitionId ? ' · showing now' : ''}',
+                          chevron: t['id'] != session.tuitionId,
+                          onTap: t['id'] == session.tuitionId
+                              ? null
+                              : () {
+                                  session.switchTuition('${t['id']}');
+                                  context.go('/s');
+                                },
+                        ),
+                ],
+                const SizedBox(height: gapRow),
+                SecondaryButton('Join another tuition', icon: Ph.plus, onTap: () => context.push('/s/join')),
+              ],
               const SectionRule('Theme', padding: EdgeInsets.fromLTRB(0, 26, 0, 12)),
               Wrap(spacing: 8, children: [
                 for (final (t, label) in [(ThemeChoice.system, 'Same as phone'), (ThemeChoice.light, 'Light'), (ThemeChoice.dark, 'Dark')])

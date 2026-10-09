@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/api.dart';
 import '../../core/session.dart';
@@ -96,11 +97,11 @@ class _LoginScreenState extends State<LoginScreen> {
                     const SizedBox(height: 36),
                     Kicker(session.tuitionName),
                     const SizedBox(height: 8),
-                    Text(_teacher ? 'Teacher login' : 'Log in', style: displayStyle),
+                    Text(_teacher ? 'Tutor login' : 'Log in', style: displayStyle),
                     const SizedBox(height: 10),
                     Text(
                       _teacher
-                          ? 'Use the username and password set up for you.'
+                          ? 'Log in with your username and password.'
                           : 'Your teacher gives you a username and a 4-digit PIN.',
                       style: bodyStyle.copyWith(color: muted),
                     ),
@@ -137,7 +138,8 @@ class _LoginScreenState extends State<LoginScreen> {
                     ],
                     const Spacer(),
                     const SizedBox(height: 16),
-                    Center(child: TextAction(_teacher ? 'I am a student' : 'I am the teacher', onTap: _toggle)),
+                    Center(child: TextAction(_teacher ? 'I am a student' : 'I am a tutor', onTap: _toggle)),
+                    if (_teacher) Center(child: TextAction('New tutor? Create your tuition', onTap: () => context.push('/signup'))),
                     const SizedBox(height: 8),
                   ]),
                 ),

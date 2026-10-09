@@ -14,7 +14,7 @@ class StartScreen extends StatelessWidget {
           child: Padding(
             padding: const EdgeInsets.fromLTRB(gutter, 36, gutter, 0),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Kicker('Maths tests'),
+              const Kicker('Tests for your tuition'),
               const SizedBox(height: 8),
               Text(session.tuitionName, style: displayStyle),
             ]),

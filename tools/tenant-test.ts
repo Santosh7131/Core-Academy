@@ -92,6 +92,9 @@ try {
   const TB = su.body.token as string;
   const noHome = await api('GET', '/teacher/home', TB);
   check('a tutor with no tuition is asked to create one', noHome.status === 409 && code(noHome) === 'no_tuition', noHome.body);
+  const std = await api('GET', '/auth/standard-subjects', TB);
+  check('a new tutor can read the standard subjects to choose from', std.status === 200 && std.body.subjects.some((s: any) => s.name === 'Physics') && std.body.subjects.some((s: any) => s.id === MATHS), std.body);
+  check('a student cannot', (await api('GET', '/auth/standard-subjects', SA1)).status === 403);
   const meNone = await api('GET', '/auth/me', TB);
   check('auth/me works before a tuition exists', meNone.status === 200 && meNone.body.tuitions.length === 0, meNone.body);
   const noName = await api('POST', '/auth/tuitions', TB, { name: '', groups: [] });

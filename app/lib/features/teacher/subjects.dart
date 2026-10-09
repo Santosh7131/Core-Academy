@@ -65,17 +65,17 @@ class SubjectFilter extends StatelessWidget {
   }
 }
 
-/// Asks for a new subject's name and adds it to the tuition. Null when cancelled.
-Future<Subject?> addSubject(BuildContext context, {String? suggestion}) async {
+/// Asks for a new subject's name in a card. Null when cancelled.
+Future<String?> _typeSubject(BuildContext context, String? suggestion) {
   final ctl = TextEditingController(text: suggestion ?? '');
-  final name = await showCentredCard<String>(
+  return showCentredCard<String>(
     context,
     title: 'Add a subject',
     builder: (ctx) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       GroupedInputs(children: [
         BareField(
           controller: ctl,
-          placeholder: 'Subject name, e.g. Social Science',
+          placeholder: 'Subject name, e.g. Accountancy',
           autofocus: true,
           capitalization: TextCapitalization.words,
           onSubmitted: (v) => Navigator.of(ctx).pop(v),
@@ -85,6 +85,36 @@ Future<Subject?> addSubject(BuildContext context, {String? suggestion}) async {
       PrimaryButton('Add', onTap: () => Navigator.of(ctx).pop(ctl.text)),
     ]),
   );
+}
+
+const _typeOwn = '+type';
+
+/// Adds a subject to the tuition: one of the standard subjects it does not teach yet, or one typed in.
+/// Null when cancelled.
+Future<Subject?> addSubject(BuildContext context, {String? suggestion}) async {
+  var standard = <Subject>[];
+  try {
+    final r = await api.get('/teacher/subject-catalogue');
+    standard = [for (final s in r['subjects'] as List) Subject.fromJson(Map<String, dynamic>.from(s))];
+  } on ApiException {
+    // Typing the name still works.
+  }
+  if (!context.mounted) return null;
+  String? name;
+  if (standard.isNotEmpty) {
+    final c = await showChoices<String>(
+      context,
+      title: 'Add a subject',
+      options: [for (final s in standard) Choice(s.name, s.name), const Choice(_typeOwn, 'Another subject')],
+      selected: null,
+    );
+    if (c?.value == null) return null;
+    if (c!.value != _typeOwn) name = c.value;
+  }
+  if (name == null) {
+    if (!context.mounted) return null;
+    name = await _typeSubject(context, suggestion);
+  }
   if (name == null || name.trim().isEmpty) return null;
   final r = await api.post('/teacher/subjects', {'name': name.trim()});
   return Subject('${r['subject']['id']}', '${r['subject']['name']}');

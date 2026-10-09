@@ -57,6 +57,17 @@ class _StudentHomeState extends State<StudentHome> with WidgetsBindingObserver, 
     _load();
   }
 
+  /// A student in several tuitions chooses which one the home shows.
+  Future<void> _switchTuition() async {
+    final c = await showChoices<String>(
+      context,
+      title: 'Tuition',
+      options: [for (final t in session.activeTuitions) Choice('${t['id']}', '${t['name']}')],
+      selected: session.tuitionId,
+    );
+    if (c?.value != null) session.switchTuition(c!.value!);
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = session.user ?? {};
@@ -72,7 +83,17 @@ class _StudentHomeState extends State<StudentHome> with WidgetsBindingObserver, 
                 Expanded(
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     const SizedBox(height: 14),
-                    Kicker('${session.tuitionName} · Class ${user['class_level'] ?? ''}'),
+                    session.hasChoice
+                        ? Pressable(
+                            label: 'Change tuition',
+                            onTap: _switchTuition,
+                            child: Row(mainAxisSize: MainAxisSize.min, children: [
+                              Flexible(child: Kicker('${session.tuitionName} · Class ${session.classLevel ?? ''}')),
+                              const SizedBox(width: 6),
+                              Icon(Ph.caretDown, size: 13, color: faint),
+                            ]),
+                          )
+                        : Kicker('${session.tuitionName} · Class ${session.classLevel ?? ''}'),
                     const SizedBox(height: 6),
                     Text(session.firstName, style: displayStyle, maxLines: 1, overflow: TextOverflow.ellipsis),
                   ]),
