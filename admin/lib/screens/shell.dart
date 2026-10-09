@@ -3,17 +3,20 @@ import 'package:flutter/material.dart';
 import '../core/updater.dart';
 import '../theme.dart';
 import '../ui/kit.dart';
+import 'clients.dart';
 import 'log.dart';
 import 'overview.dart';
 import 'people.dart';
-import 'phones.dart';
 import 'server.dart';
 
 /// Five tabs under the main app's floating navigation surface (solid, no blur).
 class Shell extends StatefulWidget {
   const Shell({super.key});
 
-  /// Lets a screen switch tabs (an Overview row opens Phones, Server or Log).
+  /// The tabs, by position, for [go].
+  static const overview = 0, clients = 1, people = 2, server = 3, log = 4;
+
+  /// Lets a screen switch tabs (an Overview row opens Clients, Server or Log).
   static void go(BuildContext context, int tab) => context.findAncestorStateOfType<_ShellState>()?._select(tab);
 
   @override
@@ -26,8 +29,8 @@ class _ShellState extends State<Shell> {
 
   static const _items = [
     (Ph.gauge, 'Overview'),
+    (Ph.buildings, 'Clients'),
     (Ph.users, 'People'),
-    (Ph.deviceMobile, 'Phones'),
     (Ph.hardDrives, 'Server'),
     (Ph.listBullets, 'Log'),
   ];
@@ -54,8 +57,8 @@ class _ShellState extends State<Shell> {
             bottom: false,
             child: IndexedStack(index: _tab, children: [
               page(0, () => const OverviewScreen()),
-              page(1, () => const PeopleScreen()),
-              page(2, () => const PhonesScreen()),
+              page(1, () => const ClientsScreen()),
+              page(2, () => const PeopleScreen()),
               page(3, () => const ServerScreen()),
               page(4, () => const LogScreen()),
             ]),

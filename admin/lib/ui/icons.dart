@@ -86,4 +86,7 @@ abstract final class Ph {
   static const bug = IconData(0xe5f4, fontFamily: _family);
   static const globe = IconData(0xe288, fontFamily: _family);
   static const circle = IconData(0xe18a, fontFamily: _family);
+  static const buildings = IconData(0xe102, fontFamily: _family);
+  static const currencyInr = IconData(0xe558, fontFamily: _family);
+  static const pulse = IconData(0xe000, fontFamily: _family);
 }

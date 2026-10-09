@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/api.dart';
+import '../core/auto_refresh.dart';
 import '../core/format.dart' as f;
 import '../core/github.dart';
 import '../theme.dart';
@@ -12,7 +13,10 @@ enum _Show { all, shared, admin }
 
 const _showLabels = {_Show.all: 'Core Academy app', _Show.shared: 'Shared phones', _Show.admin: 'Admin app'};
 
-/// Every installed copy of the apps: its model, Android and app version, and who uses it.
+const _rule = EdgeInsets.fromLTRB(0, 26, 0, 11);
+
+/// Every installed copy of the apps: its model, Android and app version, and who uses it. A pushed
+/// panel, opened from People and from the Overview's app versions.
 class PhonesScreen extends StatefulWidget {
   const PhonesScreen({super.key});
 
@@ -20,12 +24,15 @@ class PhonesScreen extends StatefulWidget {
   State<PhonesScreen> createState() => _PhonesScreenState();
 }
 
-class _PhonesScreenState extends State<PhonesScreen> {
+class _PhonesScreenState extends State<PhonesScreen> with WidgetsBindingObserver, AutoRefresh<PhonesScreen> {
   List<Map<String, dynamic>>? _phones;
   List<Map<String, dynamic>> _old = [];
   String? _newest;
   String? _error;
   _Show _show = _Show.all;
+
+  @override
+  Future<void> refreshQuietly() => _load();
 
   @override
   void initState() {
@@ -37,6 +44,7 @@ class _PhonesScreenState extends State<PhonesScreen> {
     try {
       final r = await api.get('/admin/phones');
       if (!mounted) return;
+      markLoaded();
       setState(() {
         _phones = (r['phones'] as List).cast<Map<String, dynamic>>();
         _old = (r['old_app_sessions'] as List).cast<Map<String, dynamic>>();
@@ -46,7 +54,7 @@ class _PhonesScreenState extends State<PhonesScreen> {
         if (mounted && v != null) setState(() => _newest = v);
       });
     } on ApiException catch (e) {
-      if (mounted) setState(() => _error = e.message);
+      if (mounted && _phones == null) setState(() => _error = e.message);
     }
   }
 
@@ -58,19 +66,21 @@ class _PhonesScreenState extends State<PhonesScreen> {
         _Show.admin => p['app'] == 'admin',
       }).toList();
 
+  Widget _stack(List<Widget> rows) => Column(children: [
+        for (final (i, r) in rows.indexed) ...[if (i > 0) const SizedBox(height: gapRow), r],
+      ]);
+
   @override
   Widget build(BuildContext context) {
     final shown = _of(_show);
     final oldCount = _old.fold<int>(0, (a, s) => a + f.asInt(s['sessions']));
-    return PullToRefresh(
+    return PushedPanel(
+      kicker: _phones == null ? 'Phones' : '${f.plural(_of(_Show.all)!.length, 'phone')} known · ${f.plural(oldCount, 'older app')}',
+      title: 'Phones',
       onRefresh: _load,
-      child: ListView(padding: EdgeInsets.zero, physics: const AlwaysScrollableScrollPhysics(), children: [
-        TabHeader(
-          kicker: _phones == null ? 'Phones' : '${f.plural(_of(_Show.all)!.length, 'phone')} known · ${f.plural(oldCount, 'older app')}',
-          title: 'Phones',
-        ),
-        const SizedBox(height: 18),
-        FilterBar(children: [
+      children: [
+        const SizedBox(height: 16),
+        FilterBar(padding: EdgeInsets.zero, children: [
           SelectPill(
             label: _showLabels[_show]!,
             count: shown?.length,
@@ -92,24 +102,21 @@ class _PhonesScreenState extends State<PhonesScreen> {
           const LoadingState()
         else ...[
           SectionRule(switch (_show) { _Show.all => 'Known phones', _Show.shared => 'Used by more than one account', _Show.admin => 'Admin app' },
-              count: shown!.length),
+              count: shown!.length, padding: _rule),
           if (shown.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: gutter),
-              child: Text(
-                switch (_show) {
-                  _Show.all => 'No phone has reported itself yet. Phones start to once they run app 1.2.1.',
-                  _Show.shared => 'No phone is shared between accounts.',
-                  _Show.admin => 'None yet.',
-                },
-                style: bodyStyle.copyWith(color: muted),
-              ),
+            Text(
+              switch (_show) {
+                _Show.all => 'No phone has reported itself yet. Phones start to once they run app 1.2.1.',
+                _Show.shared => 'No phone is shared between accounts.',
+                _Show.admin => 'None yet.',
+              },
+              style: bodyStyle.copyWith(color: muted),
             )
           else
-            Rows([for (final p in shown) _row(p)]),
+            _stack([for (final p in shown) _row(p)]),
           if (_show == _Show.all && _old.isNotEmpty) ...[
-            SectionRule('On app 1.2.0 or older', count: oldCount),
-            Rows([
+            SectionRule('On app 1.2.0 or older', count: oldCount, padding: _rule),
+            _stack([
               for (final s in _old)
                 RowTile(
                   leading: AppAvatar(name: '${s['display_name']}', seed: '${s['id']}'),
@@ -120,13 +127,12 @@ class _PhonesScreenState extends State<PhonesScreen> {
                 ),
             ]),
             Padding(
-              padding: const EdgeInsets.fromLTRB(gutter, 10, gutter, 0),
+              padding: const EdgeInsets.only(top: 10),
               child: Fig('Older apps do not say which phone they are on; each login counts as one phone until it updates.', style: labelStyle),
             ),
           ],
         ],
-        navClearance,
-      ]),
+      ],
     );
   }
 

@@ -8,6 +8,10 @@ import { hashSecret, newPin } from '../api/src/lib/auth.ts';
 import { shuffle } from '../api/src/lib/attempts.ts';
 import { chapters, questions, students } from './sample-data.ts';
 
+// The tuition the app was first built for (made by migration 012). Every row names its tuition: none falls back to it.
+const TUITION = '00000000-0000-4000-8000-0000000000a1';
+const MATHS = '00000000-0000-4000-8000-000000000001';
+
 const args = process.argv.slice(2);
 const envFile = args.includes('--env') ? args[args.indexOf('--env') + 1] : '.env.local';
 process.loadEnvFile(envFile);
@@ -59,7 +63,7 @@ try {
       [hash, salt],
     ))[0].id;
     // The first tuition (made by migration 012) gets its owner.
-    await q(`insert into memberships (tuition_id, user_id, role, status) values ('00000000-0000-4000-8000-0000000000a1', $1, 'owner', 'active')`, [teacherId]);
+    await q(`insert into memberships (tuition_id, user_id, role, status) values ($2, $1, 'owner', 'active')`, [teacherId, TUITION]);
     logins.push(`Teacher: username coreacademy, password ${password} (change it in Settings)`);
     machine.teacher = { username: 'coreacademy', password };
   }
@@ -70,20 +74,25 @@ try {
     const ids: Record<string, string> = {};
     for (const [i, name] of names.entries()) {
       ids[name] = (await q(
-        `insert into chapters (class_level, name, sort_order, is_sample) values ($1, $2, $3, true)
-         on conflict (class_level, subject_id, name) do update set sort_order = excluded.sort_order returning id`,
-        [cls, name, i],
+        `insert into chapters (tuition_id, class_level, name, sort_order, is_sample) values ($1, $2, $3, $4, true)
+         on conflict (tuition_id, class_level, subject_id, name) do update set sort_order = excluded.sort_order returning id`,
+        [TUITION, cls, name, i],
       ))[0].id;
     }
     questionIds[Number(cls)] = [];
     for (const qq of questions[Number(cls)]) {
       const row = (await q(
-        `insert into questions (class_level, chapter_id, text, options, correct_option, solution, created_by, is_sample)
-         values ($1, $2, $3, $4, $5, $6, $7, true) returning id`,
-        [cls, ids[qq.chapter], qq.text, qq.options, qq.correct, qq.solution, teacherId],
+        `insert into questions (tuition_id, class_level, chapter_id, text, options, correct_option, solution, created_by, is_sample)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, true) returning id`,
+        [TUITION, cls, ids[qq.chapter], qq.text, qq.options, qq.correct, qq.solution, teacherId],
       ))[0];
       questionIds[Number(cls)].push(row.id);
     }
+  }
+
+  // A class and subject are a group of the tuition from the moment anything is made for them.
+  for (const cls of Object.keys(chapters)) {
+    await q('insert into groups (tuition_id, class_level, subject_id) values ($1, $2, $3) on conflict do nothing', [TUITION, cls, MATHS]);
   }
 
   // Students.
@@ -98,8 +107,12 @@ try {
       [s.username, s.name, s.classLevel, hash, salt],
     ))[0].id;
     await q(
-      `insert into memberships (tuition_id, user_id, role, status, class_level) values ('00000000-0000-4000-8000-0000000000a1', $1, 'student', 'active', $2)`,
-      [studentIds[s.username], s.classLevel],
+      `insert into memberships (tuition_id, user_id, role, status, class_level) values ($3, $1, 'student', 'active', $2)`,
+      [studentIds[s.username], s.classLevel, TUITION],
+    );
+    await q(
+      `insert into student_subjects (tuition_id, student_id, subject_id) values ($1, $2, $3) on conflict do nothing`,
+      [TUITION, studentIds[s.username], MATHS],
     );
     logins.push(`- Class ${s.classLevel}: ${s.name}: ${s.username}, ${pin}`);
     machine.students.push({ username: s.username, pin, class_level: s.classLevel });
@@ -110,9 +123,9 @@ try {
   const tests: Record<number, Record<'weekly' | 'unit1' | 'practice' | 'unit2', T>> = {};
   const makeTest = async (cls: number, title: string, qids: string[], opens: Date, closes: Date, limit: number): Promise<T> => {
     const id = (await q(
-      `insert into tests (title, class_level, time_limit_min, opens_at, closes_at, shuffle, assign_all, status, created_by, is_sample)
-       values ($1, $2, $3, $4, $5, true, true, 'published', $6, true) returning id`,
-      [title, cls, limit, opens, closes, teacherId],
+      `insert into tests (tuition_id, title, class_level, time_limit_min, opens_at, closes_at, shuffle, assign_all, status, created_by, is_sample)
+       values ($1, $2, $3, $4, $5, $6, true, true, 'published', $7, true) returning id`,
+      [TUITION, title, cls, limit, opens, closes, teacherId],
     ))[0].id;
     for (const [i, qid] of qids.entries()) {
       await q('insert into test_questions (test_id, question_id, position) values ($1, $2, $3)', [id, qid, i + 1]);

@@ -57,3 +57,16 @@ String plural(num n, String one, [String? many]) => '${count(n)} ${n == 1 ? one 
 
 int asInt(Object? v) => v is num ? v.toInt() : int.tryParse('$v') ?? 0;
 double asDouble(Object? v) => v is num ? v.toDouble() : double.tryParse('$v') ?? 0;
+
+final _rupees2 = NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 2);
+final _rupees0 = NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 0);
+
+/// ₹12.40, and ₹1,234 from a thousand up, where paise are noise.
+String rupees(num n) => n >= 1000 ? _rupees0.format(n) : _rupees2.format(n);
+
+/// 840, 12.4k, 1.2M: a token count at a glance.
+String tokens(num n) {
+  if (n < 1000) return '${n.round()}';
+  if (n < 1000000) return '${(n / 1000).toStringAsFixed(n < 10000 ? 1 : 0)}k';
+  return '${(n / 1000000).toStringAsFixed(1)}M';
+}

@@ -38,8 +38,8 @@ Color get dangerSoft  => _dark ? const Color(0xFF3A1A18) : const Color(0xFFFEF0E
 Color get successSoft => _dark ? const Color(0xFF12301F) : const Color(0xFFEBF8F1);
 Color get warningSoft => _dark ? const Color(0xFF33240E) : const Color(0xFFFDF4E7);
 
-// ---- the ONE accent. Single purpose: the AI paper reader (Papers tab,
-// "Read with AI", the AI mark on drafted questions). Nowhere else.
+// ---- the ONE accent. Single purpose: AI (reading an uploaded paper, writing a test from a
+// description, "Read with AI", the AI mark on drafted questions). Nowhere else.
 const aiAccent = Color(0xFF5B3DF5);
 Color get aiAccentSoft => _dark ? const Color(0xFF1E1940) : const Color(0xFFF0EDFF);
 

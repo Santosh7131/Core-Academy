@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../core/api.dart';
+import '../core/auto_refresh.dart';
 import '../core/format.dart' as f;
 import '../core/github.dart';
 import '../core/session.dart';
@@ -9,11 +10,12 @@ import '../theme.dart';
 import '../ui/common.dart';
 import '../ui/kit.dart';
 import 'account.dart';
+import 'phones.dart';
 import 'settings.dart';
 import 'shell.dart';
 import 'update_card.dart';
 
-/// The admin app's Home: who is using the app now, the month's compute, versions, today, alerts.
+/// The admin app's Home: who is using the app now, the clients, the month's compute, versions, today, alerts.
 class OverviewScreen extends StatefulWidget {
   const OverviewScreen({super.key});
 
@@ -21,10 +23,16 @@ class OverviewScreen extends StatefulWidget {
   State<OverviewScreen> createState() => _OverviewScreenState();
 }
 
-class _OverviewScreenState extends State<OverviewScreen> {
+class _OverviewScreenState extends State<OverviewScreen> with WidgetsBindingObserver, AutoRefresh<OverviewScreen> {
   Map<String, dynamic>? _d;
   String? _newest;
   String? _error;
+
+  @override
+  Duration? get pollEvery => const Duration(seconds: 60);
+
+  @override
+  Future<void> refreshQuietly() => _load();
 
   @override
   void initState() {
@@ -36,6 +44,7 @@ class _OverviewScreenState extends State<OverviewScreen> {
     try {
       final d = await api.get('/admin/overview');
       if (!mounted) return;
+      markLoaded();
       setState(() {
         _d = Map<String, dynamic>.from(d);
         _error = null;
@@ -44,9 +53,12 @@ class _OverviewScreenState extends State<OverviewScreen> {
         if (mounted && v != null) setState(() => _newest = v);
       });
     } on ApiException catch (e) {
-      if (mounted) setState(() => _error = e.message);
+      // A later load that fails keeps what is shown; only the first one has nothing to fall back on.
+      if (mounted && _d == null) setState(() => _error = e.message);
     }
   }
+
+  void _openPhones() => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PhonesScreen()));
 
   @override
   Widget build(BuildContext context) {
@@ -58,7 +70,6 @@ class _OverviewScreenState extends State<OverviewScreen> {
           kicker: 'Admin · ${DateFormat('d MMMM').format(DateTime.now())}',
           title: 'Overview',
           actions: [
-            RefreshButton(onRefresh: _load),
             Pressable(
               label: 'Settings',
               onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SettingsScreen())),
@@ -70,7 +81,7 @@ class _OverviewScreenState extends State<OverviewScreen> {
         if (d == null && _error != null)
           ErrorState(message: _error!, onRetry: _load)
         else if (d == null)
-          const LoadingState()
+          const LoadingState(inset: true)
         else
           ..._body(d),
         navClearance,
@@ -83,6 +94,8 @@ class _OverviewScreenState extends State<OverviewScreen> {
     final today = Map<String, dynamic>.from(d['today']);
     final compute = Map<String, dynamic>.from(d['compute']);
     final services = Map<String, dynamic>.from(d['services']);
+    final clients = Map<String, dynamic>.from(d['clients'] ?? const {});
+    final aiCost = Map<String, dynamic>.from(d['ai_cost'] ?? const {});
     final versions = (d['versions'] as List).cast<Map<String, dynamic>>();
     final alerts = (d['alerts'] as List).cast<Map<String, dynamic>>();
     final cu = f.asDouble(compute['cu_hours']);
@@ -90,6 +103,8 @@ class _OverviewScreenState extends State<OverviewScreen> {
     final projected = compute['projected_cu_hours'];
     final since = f.parseTime(compute['counting_since']);
     final resets = f.parseTime(compute['resets_at']);
+    final clientCount = f.asInt(clients['total']);
+    final newClients = f.asInt(clients['new_week']);
 
     return [
       Padding(
@@ -113,7 +128,7 @@ class _OverviewScreenState extends State<OverviewScreen> {
         padding: const EdgeInsets.fromLTRB(gutter, gapRow, gutter, 0),
         child: Pressable(
           label: 'Compute this month',
-          onTap: () => Shell.go(context, 3),
+          onTap: () => Shell.go(context, Shell.server),
           child: MeasurementCard(
             label: 'Compute this month, estimated',
             value: cu.toStringAsFixed(1),
@@ -126,6 +141,27 @@ class _OverviewScreenState extends State<OverviewScreen> {
           ),
         ),
       ),
+      SectionRule('Clients', count: clientCount),
+      Rows([
+        RowTile(
+          leading: Container(
+            width: 34,
+            height: 34,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(color: fill, shape: BoxShape.circle),
+            child: Icon(Ph.buildings, size: 17, color: ink),
+          ),
+          title: f.plural(clientCount, 'client'),
+          meta: '${f.asInt(clients['active_week'])} active this week${newClients > 0 ? ' · $newClients new' : ''}',
+          trailing: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+            Fig(f.rupees(f.asDouble(aiCost['month_inr'])), style: rowTitleStyle),
+            const SizedBox(height: 2),
+            Fig('AI this month', style: labelStyle),
+          ]),
+          chevron: true,
+          onTap: () => Shell.go(context, Shell.clients),
+        ),
+      ]),
       SectionRule('App versions', count: versions.fold<int>(0, (a, v) => a + f.asInt(v['phones']))),
       if (versions.isEmpty)
         Padding(padding: const EdgeInsets.symmetric(horizontal: gutter), child: Text('No phone has been used this week.', style: bodyStyle.copyWith(color: muted)))
@@ -141,7 +177,7 @@ class _OverviewScreenState extends State<OverviewScreen> {
                 final x => x == _newest ? 'The newest release' : 'Behind the newest release',
               },
               trailing: Fig('${v['phones']} phone${f.asInt(v['phones']) == 1 ? '' : 's'}', style: rowTitleStyle),
-              onTap: () => Shell.go(context, 2),
+              onTap: _openPhones,
             ),
         ]),
       const SectionRule('Today'),
@@ -154,6 +190,7 @@ class _OverviewScreenState extends State<OverviewScreen> {
           ('Wrong PINs, lockouts', '${today['wrong_secrets']}, ${today['lockouts']}'),
           ('API requests, errors', '${f.count(f.asInt(today['requests']))}, ${today['errors']}'),
           ('AI reads, failed', '${today['ai_calls']}, ${today['ai_failed']}'),
+          if (aiCost['today_inr'] != null) ('AI work, at list prices', f.rupees(f.asDouble(aiCost['today_inr']))),
         ]),
       ),
       SectionRule('Needs a look', count: alerts.length, alert: alerts.isNotEmpty),
@@ -181,7 +218,7 @@ class _OverviewScreenState extends State<OverviewScreen> {
                 if (a['user_id'] != null) {
                   Navigator.of(context).push(MaterialPageRoute(builder: (_) => AccountScreen(id: '${a['user_id']}')));
                 } else {
-                  Shell.go(context, a['kind'] == 'errors' ? 3 : 4);
+                  Shell.go(context, a['kind'] == 'errors' ? Shell.server : Shell.log);
                 }
               },
             ),

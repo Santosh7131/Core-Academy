@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/api.dart';
+import '../core/auto_refresh.dart';
 import '../core/format.dart' as f;
 import '../theme.dart';
 import '../ui/common.dart';
@@ -19,12 +20,18 @@ class LogScreen extends StatefulWidget {
   State<LogScreen> createState() => _LogScreenState();
 }
 
-class _LogScreenState extends State<LogScreen> {
+class _LogScreenState extends State<LogScreen> with WidgetsBindingObserver, AutoRefresh<LogScreen> {
   List<Map<String, dynamic>>? _events;
   String? _error;
   bool _more = true;
   bool _loadingMore = false;
   _Kind _kind = _Kind.all;
+
+  @override
+  Duration? get pollEvery => const Duration(seconds: 60);
+
+  @override
+  Future<void> refreshQuietly() => _load();
 
   @override
   void initState() {
@@ -36,13 +43,20 @@ class _LogScreenState extends State<LogScreen> {
     try {
       final r = await api.get('/admin/log');
       if (!mounted) return;
+      markLoaded();
+      final fresh = (r['events'] as List).cast<Map<String, dynamic>>();
       setState(() {
-        _events = (r['events'] as List).cast<Map<String, dynamic>>();
-        _more = _events!.length >= 80;
+        // Older pages already opened stay, below the fresh first page.
+        final oldest = fresh.isEmpty ? null : f.parseTime(fresh.last['at']);
+        final kept = oldest == null || fresh.length < 80
+            ? const <Map<String, dynamic>>[]
+            : (_events ?? const <Map<String, dynamic>>[]).where((e) => (f.parseTime(e['at'])?.isBefore(oldest) ?? false)).toList();
+        _events = [...fresh, ...kept];
+        _more = kept.isNotEmpty ? _more : fresh.length >= 80;
         _error = null;
       });
     } on ApiException catch (e) {
-      if (mounted) setState(() => _error = e.message);
+      if (mounted && _events == null) setState(() => _error = e.message);
     }
   }
 
@@ -109,7 +123,7 @@ class _LogScreenState extends State<LogScreen> {
         if (events == null && _error != null)
           ErrorState(message: _error!, onRetry: _load)
         else if (events == null)
-          const LoadingState()
+          const LoadingState(inset: true)
         else if (shown!.isEmpty)
           EmptyState(icon: Ph.listBullets, title: 'Nothing here yet', body: 'Logins, tests, papers, AI reads and errors show up here as they happen.')
         else

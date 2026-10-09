@@ -24,7 +24,7 @@ const admin = [
   'x', 'arrowLeft', 'gauge', 'users', 'deviceMobile', 'hardDrives', 'listBullets', 'arrowsClockwise', 'magnifyingGlass',
   'caretDown', 'caretRight', 'lockKey', 'lockKeyOpen', 'warning', 'checkCircle', 'signOut', 'gear', 'arrowCircleUp',
   'database', 'cloud', 'lightning', 'robot', 'bell', 'bellSlash', 'clock', 'key', 'userCircle', 'exam', 'fileText',
-  'bug', 'globe', 'check', 'copy', 'circle',
+  'bug', 'globe', 'check', 'copy', 'circle', 'buildings', 'currencyInr', 'pulse',
 ];
 
 function write(target, list, fontDir) {

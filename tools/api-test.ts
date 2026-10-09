@@ -606,6 +606,21 @@ try {
       srv.status === 200 && srv.body?.database?.bytes > 0 && typeof srv.body?.storage?.files === 'number', srv.body?.database);
     const lg = await api('GET', '/admin/log', D);
     check('the log lists recent logins', lg.status === 200 && lg.body?.events?.some((e: any) => e.kind === 'login'), lg.body?.events?.slice(0, 3));
+    // Clients: a tuition each, how much it uses the API, what its AI use is worth. Students appear only as numbers.
+    await new Promise((ok) => setTimeout(ok, 1500)); // the request counts are written just after each reply
+    const cl = await api('GET', '/admin/clients', D);
+    const mine = cl.body?.clients?.find((x: any) => x.id === FIRST_TUITION);
+    check('the admin app lists the clients with their size and use',
+      cl.status === 200 && cl.body?.totals?.clients >= 1 && mine?.students > 0 && typeof mine?.ai?.cost_month_inr === 'number', cl.body?.totals);
+    check('the requests made so far were counted against their client', mine?.requests?.today > 0 && mine?.requests?.total >= mine?.requests?.today, mine?.requests);
+    const one = await api('GET', `/admin/clients/${FIRST_TUITION}`, D);
+    check('one client has its days, AI lines, tutors and classes',
+      one.status === 200 && Array.isArray(one.body?.requests?.days) && Array.isArray(one.body?.ai?.lines) && one.body?.tutors?.length > 0 && Array.isArray(one.body?.classes),
+      Object.keys(one.body ?? {}));
+    check('no student is named on the client pages', !JSON.stringify([cl.body, one.body]).includes('Test Student'), 'a test student appeared');
+    check('a client that does not exist is a 404', (await api('GET', '/admin/clients/00000000-0000-4000-8000-0000000000ff', D)).status === 404);
+    check('the teacher cannot open the clients', (await api('GET', '/admin/clients', T)).status === 403);
+    check('the overview counts the clients and what AI cost', ov.body?.clients?.total >= 1 && typeof ov.body?.ai_cost?.month_inr === 'number', [ov.body?.clients, ov.body?.ai_cost]);
     await api('POST', '/auth/logout', D);
   }
   // Each run's teacher login would otherwise stay signed in, and count as another phone.

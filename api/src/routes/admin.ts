@@ -4,6 +4,7 @@ import type { AppEnv } from '../lib/auth.ts';
 import { pool, q, q1 } from '../lib/db.ts';
 import { aiConfigured } from '../lib/groq.ts';
 import { HttpError, notFound, uuid } from '../lib/http.ts';
+import { costInr, isEstimated, rupees, USD_INR } from '../lib/pricing.ts';
 import { pushConfigured } from '../lib/push.ts';
 import { listObjects, readObject, viewUrl } from '../lib/storage.ts';
 import { readBody } from './body.ts';
@@ -13,6 +14,9 @@ export const adminRoutes = new Hono<AppEnv>();
 
 // Midnight today, India time, as a timestamptz.
 const IST_TODAY = `(date_trunc('day', now() at time zone 'Asia/Kolkata') at time zone 'Asia/Kolkata')`;
+// Midnight at the start of this month, India time.
+const IST_MONTH = `(date_trunc('month', now() at time zone 'Asia/Kolkata') at time zone 'Asia/Kolkata')`;
+const IST_DATE = `(now() at time zone 'Asia/Kolkata')::date`;
 /** An account signed in on this many phones or more is flagged. */
 const MANY_PHONES = 3;
 /** The compute is fixed at 0.25 CU, and the free plan allows 100 CU-hours a month. */
@@ -65,10 +69,26 @@ function prune() {
       await pool.query(`delete from auth_events where at < now() - interval '90 days'`);
       await pool.query(`delete from api_errors where at < now() - interval '30 days'`);
       await pool.query(`delete from api_daily where day < current_date - 90`);
+      await pool.query(`delete from api_daily_tuition where day < current_date - 400`);
       await pool.query(`delete from compute_wakes where started_at < now() - interval '120 days'`);
     })().catch(() => {}),
   );
 }
+
+type Use = { tuition_id: string | null; model: string; calls: string; failed: string; prompt: string; completion: string };
+
+/** AI calls and tokens by client and model from [from] (an SQL timestamp) on, optionally for one client. */
+const usedBy = (from: string, tuition?: string) =>
+  q<Use>(
+    `select tuition_id, model, count(*) as calls, count(*) filter (where not ok) as failed,
+            coalesce(sum(prompt_tokens), 0) as prompt, coalesce(sum(completion_tokens), 0) as completion
+       from ai_usage where created_at >= ${from} ${tuition ? 'and tuition_id = $1' : ''}
+      group by tuition_id, model`,
+    tuition ? [tuition] : [],
+  );
+
+/** What those calls would cost at list prices, in rupees. */
+const costOf = (rows: Use[]) => rows.reduce((a, r) => a + costInr(r.model, Number(r.prompt), Number(r.completion)), 0);
 
 adminRoutes.get('/overview', async (c) => {
   prune();
@@ -126,6 +146,15 @@ adminRoutes.get('/overview', async (c) => {
   )) {
     alerts.push({ kind: 'locked', user_id: r.id, title: `${r.display_name} is locked after 5 wrong tries`, detail: `unlocks by itself`, at: r.locked_until });
   }
+  const clients = await q1(
+    `select count(*) as total,
+            count(*) filter (where created_at > now() - interval '7 days') as new_week,
+            count(*) filter (where exists (select 1 from memberships m join users u on u.id = m.user_id
+                                            where m.tuition_id = t.id and u.last_seen_at > now() - interval '7 days')) as active_week
+       from tuitions t`,
+  );
+  const aiMonth = await usedBy(IST_MONTH);
+  const aiToday = await usedBy(IST_TODAY);
   const errs = await q1(`select count(*) as n, max(at) as last from api_errors where at > now() - interval '24 hours'`);
   if (errs?.n) alerts.push({ kind: 'errors', title: `${errs.n} server error${errs.n === 1 ? '' : 's'} in the last 24 hours`, detail: 'see Server', at: errs.last });
   if (today?.ai_failed) alerts.push({ kind: 'ai', title: `${today.ai_failed} AI read${today.ai_failed === 1 ? '' : 's'} failed today`, detail: 'see Log' });
@@ -138,6 +167,8 @@ adminRoutes.get('/overview', async (c) => {
     phones: { ...phones, many_threshold: MANY_PHONES },
     versions,
     today,
+    clients,
+    ai_cost: { today_inr: rupees(costOf(aiToday)), month_inr: rupees(costOf(aiMonth)), usd_inr: USD_INR },
     compute: await computeThisMonth(),
     alerts,
   });
@@ -338,6 +369,166 @@ adminRoutes.get('/log', async (c) => {
     [until],
   );
   return c.json({ events: rows });
+});
+
+// ---------------------------------------------------------------- clients
+
+/** One row per tuition: what it is, how big, how much it uses the API, what its AI use is worth. */
+const CLIENT_BASE = `
+  select t.id, t.name, t.created_at, t.join_open, t.plan,
+         (select u.display_name from memberships m join users u on u.id = m.user_id where m.tuition_id = t.id and m.role = 'owner' limit 1) as owner,
+         (select u.username from memberships m join users u on u.id = m.user_id where m.tuition_id = t.id and m.role = 'owner' limit 1) as owner_username,
+         (select count(*) from memberships m where m.tuition_id = t.id and m.role = 'student' and m.status = 'active') as students,
+         (select count(*) from memberships m where m.tuition_id = t.id and m.role in ('owner', 'tutor') and m.status = 'active') as tutors,
+         (select count(*) from memberships m where m.tuition_id = t.id and m.status = 'pending') as pending,
+         (select count(*) from groups g where g.tuition_id = t.id) as groups,
+         (select count(*) from tests x where x.tuition_id = t.id and x.status = 'published') as tests,
+         (select count(*) from papers p where p.tuition_id = t.id) as papers,
+         (select max(u.last_seen_at) from memberships m join users u on u.id = m.user_id where m.tuition_id = t.id) as last_active_at
+    from tuitions t`;
+
+const num = (v: unknown) => Number(v ?? 0);
+
+adminRoutes.get('/clients', async (c) => {
+  const base = await q(`${CLIENT_BASE} order by last_active_at desc nulls last, t.created_at`);
+  const reqs = await q(
+    `select tuition_id,
+            coalesce(sum(requests) filter (where day = ${IST_DATE}), 0) as today,
+            coalesce(sum(requests) filter (where day > ${IST_DATE} - 7), 0) as week,
+            coalesce(sum(requests) filter (where day > ${IST_DATE} - 30), 0) as month,
+            coalesce(sum(requests), 0) as total
+       from api_daily_tuition group by tuition_id`,
+  );
+  const since = await q1(`select min(day) as since from api_daily_tuition`);
+  const month = await usedBy(IST_MONTH);
+  const ever = await usedBy(`'-infinity'::timestamptz`);
+  const byId = <T extends { tuition_id: string | null }>(rows: T[]) => {
+    const m = new Map<string, T[]>();
+    for (const r of rows) if (r.tuition_id) m.set(r.tuition_id, [...(m.get(r.tuition_id) ?? []), r]);
+    return m;
+  };
+  const reqOf = new Map(reqs.map((r) => [r.tuition_id as string, r]));
+  const monthOf = byId(month);
+  const everOf = byId(ever);
+  const clients = base.map((t) => {
+    const r = reqOf.get(t.id);
+    const m = monthOf.get(t.id) ?? [];
+    return {
+      id: t.id, name: t.name, created_at: t.created_at, owner: t.owner, owner_username: t.owner_username,
+      students: num(t.students), tutors: num(t.tutors), pending: num(t.pending), groups: num(t.groups), tests: num(t.tests), papers: num(t.papers),
+      last_active_at: t.last_active_at,
+      requests: { today: num(r?.today), week: num(r?.week), month: num(r?.month), total: num(r?.total) },
+      ai: {
+        calls_month: m.reduce((a, x) => a + num(x.calls), 0),
+        failed_month: m.reduce((a, x) => a + num(x.failed), 0),
+        cost_month_inr: rupees(costOf(m)),
+        cost_total_inr: rupees(costOf(everOf.get(t.id) ?? [])),
+      },
+    };
+  });
+  const sum = (f: (x: (typeof clients)[number]) => number) => clients.reduce((a, x) => a + f(x), 0);
+  const unattributed = month.filter((r) => !r.tuition_id);
+  return c.json({
+    server_time: new Date().toISOString(),
+    counting_since: since?.since ?? null,
+    usd_inr: USD_INR,
+    totals: {
+      clients: clients.length,
+      active_week: clients.filter((x) => x.last_active_at && Date.now() - new Date(x.last_active_at).getTime() < 7 * 86_400_000).length,
+      students: sum((x) => x.students),
+      tutors: sum((x) => x.tutors),
+      requests_today: sum((x) => x.requests.today),
+      requests_month: sum((x) => x.requests.month),
+      ai_calls_month: sum((x) => x.ai.calls_month),
+      ai_cost_month_inr: rupees(costOf(month)),
+      ai_cost_unattributed_month_inr: rupees(costOf(unattributed)),
+    },
+    clients,
+  });
+});
+
+adminRoutes.get('/clients/:id', async (c) => {
+  const id = uuid(c.req.param('id'), 'client id');
+  const t = await q1(`${CLIENT_BASE} where t.id = $1`, [id]);
+  if (!t) throw notFound('This client');
+  const requests = await q(
+    `select to_char(day, 'YYYY-MM-DD') as day, requests, errors, round(total_ms::numeric / nullif(requests, 0)) as avg_ms
+       from api_daily_tuition where tuition_id = $1 and day > ${IST_DATE} - 14 order by day`,
+    [id],
+  );
+  const totals = await q1(
+    `select coalesce(sum(requests), 0) as total, coalesce(sum(errors), 0) as errors,
+            coalesce(sum(requests) filter (where day > ${IST_DATE} - 30), 0) as month,
+            min(day) as since
+       from api_daily_tuition where tuition_id = $1`,
+    [id],
+  );
+  const month = await usedBy(IST_MONTH, id);
+  const ever = await usedBy(`'-infinity'::timestamptz`, id);
+  // AI by task and model this month, with what each line is worth at list prices.
+  const lines = await q<Use & { task: string }>(
+    `select task, model, count(*) as calls, count(*) filter (where not ok) as failed,
+            coalesce(sum(prompt_tokens), 0) as prompt, coalesce(sum(completion_tokens), 0) as completion
+       from ai_usage where tuition_id = $1 and created_at >= ${IST_MONTH} group by task, model order by calls desc`,
+    [id],
+  );
+  // The last 14 days of AI calls and their worth, by day.
+  const aiDays = await q<{ day: string; model: string; calls: string; prompt: string; completion: string }>(
+    `select to_char((created_at at time zone 'Asia/Kolkata')::date, 'YYYY-MM-DD') as day, model, count(*) as calls,
+            coalesce(sum(prompt_tokens), 0) as prompt, coalesce(sum(completion_tokens), 0) as completion
+       from ai_usage where tuition_id = $1 and created_at > ${IST_TODAY} - interval '13 days' group by 1, 2 order by 1`,
+    [id],
+  );
+  const byDay = new Map<string, { calls: number; cost: number }>();
+  for (const r of aiDays) {
+    const d = byDay.get(r.day) ?? { calls: 0, cost: 0 };
+    d.calls += num(r.calls);
+    d.cost += costInr(r.model, num(r.prompt), num(r.completion));
+    byDay.set(r.day, d);
+  }
+  // The tutors by name; students only as numbers, since they are children.
+  const tutors = await q(
+    `select u.display_name, u.username, m.role, u.last_seen_at
+       from memberships m join users u on u.id = m.user_id
+      where m.tuition_id = $1 and m.role in ('owner', 'tutor') and m.status = 'active' order by m.role, u.display_name`,
+    [id],
+  );
+  // A class the tutor named themselves (LKG, "NEET 2027") carries its name.
+  const classes = await q(
+    `select m.class_level, l.label, count(*) as students from memberships m
+       left join tuition_levels l on l.tuition_id = m.tuition_id and l.code = m.class_level
+      where m.tuition_id = $1 and m.role = 'student' and m.status = 'active' group by m.class_level, l.label order by m.class_level`,
+    [id],
+  );
+  const lastWeek = await q1(
+    `select (select count(*) from papers where tuition_id = $1 and created_at > now() - interval '7 days') as papers,
+            (select count(*) from tests where tuition_id = $1 and created_at > now() - interval '7 days') as tests,
+            (select count(*) from attempts a join tests x on x.id = a.test_id where x.tuition_id = $1 and a.submitted_at > now() - interval '7 days') as attempts`,
+    [id],
+  );
+  return c.json({
+    client: {
+      id: t.id, name: t.name, created_at: t.created_at, owner: t.owner, owner_username: t.owner_username, join_open: t.join_open, plan: t.plan,
+      students: num(t.students), tutors: num(t.tutors), pending: num(t.pending), groups: num(t.groups), tests: num(t.tests), papers: num(t.papers),
+      last_active_at: t.last_active_at,
+    },
+    requests: { days: requests, total: num(totals?.total), month: num(totals?.month), errors: num(totals?.errors), counting_since: totals?.since ?? null },
+    ai: {
+      cost_month_inr: rupees(costOf(month)),
+      cost_total_inr: rupees(costOf(ever)),
+      calls_month: month.reduce((a, x) => a + num(x.calls), 0),
+      failed_month: month.reduce((a, x) => a + num(x.failed), 0),
+      usd_inr: USD_INR,
+      lines: lines.map((l) => ({
+        task: l.task, model: l.model, calls: num(l.calls), failed: num(l.failed),
+        tokens: num(l.prompt) + num(l.completion), cost_inr: rupees(costInr(l.model, num(l.prompt), num(l.completion))), estimated: isEstimated(l.model),
+      })),
+      days: [...byDay.entries()].map(([day, v]) => ({ day, calls: v.calls, cost_inr: rupees(v.cost) })),
+    },
+    tutors,
+    classes: classes.map((x) => ({ class_level: x.class_level, label: x.label ?? null, students: num(x.students) })),
+    last_week: { papers: num(lastWeek?.papers), tests: num(lastWeek?.tests), attempts: num(lastWeek?.attempts) },
+  });
 });
 
 /** The admin app's own update: kept in private storage, so only this login can fetch it. */

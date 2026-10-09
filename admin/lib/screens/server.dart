@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../core/api.dart';
+import '../core/auto_refresh.dart';
 import '../core/format.dart' as f;
 import '../core/github.dart';
 import '../theme.dart';
@@ -16,10 +17,16 @@ class ServerScreen extends StatefulWidget {
   State<ServerScreen> createState() => _ServerScreenState();
 }
 
-class _ServerScreenState extends State<ServerScreen> {
+class _ServerScreenState extends State<ServerScreen> with WidgetsBindingObserver, AutoRefresh<ServerScreen> {
   Map<String, dynamic>? _d;
   List<AppRelease>? _releases;
   String? _error;
+
+  @override
+  Duration? get pollEvery => const Duration(seconds: 120);
+
+  @override
+  Future<void> refreshQuietly() => _load();
 
   @override
   void initState() {
@@ -31,6 +38,7 @@ class _ServerScreenState extends State<ServerScreen> {
     try {
       final d = await api.get('/admin/server');
       if (!mounted) return;
+      markLoaded();
       setState(() {
         _d = Map<String, dynamic>.from(d);
         _error = null;
@@ -39,7 +47,7 @@ class _ServerScreenState extends State<ServerScreen> {
         if (mounted && r != null) setState(() => _releases = r);
       });
     } on ApiException catch (e) {
-      if (mounted) setState(() => _error = e.message);
+      if (mounted && _d == null) setState(() => _error = e.message);
     }
   }
 
@@ -56,7 +64,7 @@ class _ServerScreenState extends State<ServerScreen> {
         if (d == null && _error != null)
           ErrorState(message: _error!, onRetry: _load)
         else if (d == null)
-          const LoadingState()
+          const LoadingState(inset: true)
         else
           ..._body(d),
         navClearance,

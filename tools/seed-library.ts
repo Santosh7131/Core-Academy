@@ -17,6 +17,9 @@ if (branch === 'main' && !args.includes('--allow-main')) {
 const onlyClass = arg('--class') ? Number(arg('--class')) : null;
 const onlySubject = arg('--subject')?.toLowerCase() ?? null;
 
+// The tuition the app was first built for (made by migration 012). Every row names its tuition: none falls back to it.
+const TUITION = '00000000-0000-4000-8000-0000000000a1';
+
 const key = (...parts: (string | number)[]) => createHash('sha256').update(parts.join('|')).digest('hex').slice(0, 24);
 
 const db = new pg.Client({ connectionString: process.env.DATABASE_URL_UNPOOLED ?? process.env.DATABASE_URL });
@@ -36,27 +39,33 @@ try {
   for (const book of books) {
     if (onlyClass && book.classLevel !== onlyClass) continue;
     if (onlySubject && book.subject.toLowerCase() !== onlySubject) continue;
+    // A standard subject (one every tuition can use), or this tuition's own of that name.
     const subject =
-      (await q1('select id from subjects where lower(name) = lower($1)', [book.subject])) ??
+      (await q1(
+        'select id from subjects where lower(name) = lower($1) and (tuition_id is null or tuition_id = $2) order by tuition_id nulls first limit 1',
+        [book.subject, TUITION],
+      )) ??
       (await q1(`insert into subjects (name, sort_order) values ($1, (select coalesce(max(sort_order) + 1, 0) from subjects)) returning id`, [book.subject]));
+    await db.query('insert into tuition_subjects (tuition_id, subject_id) values ($1, $2) on conflict do nothing', [TUITION, subject.id]);
+    await db.query('insert into groups (tuition_id, class_level, subject_id) values ($1, $2, $3) on conflict do nothing', [TUITION, book.classLevel, subject.id]);
 
     for (const [ci, chapter] of book.chapters.entries()) {
       const ch = await q1(
-        `insert into chapters (class_level, subject_id, name, sort_order) values ($1, $2, $3, $4)
-         on conflict (class_level, subject_id, name) do update set sort_order = excluded.sort_order returning id`,
-        [book.classLevel, subject.id, chapter.name, ci],
+        `insert into chapters (tuition_id, class_level, subject_id, name, sort_order) values ($1, $2, $3, $4, $5)
+         on conflict (tuition_id, class_level, subject_id, name) do update set sort_order = excluded.sort_order returning id`,
+        [TUITION, book.classLevel, subject.id, chapter.name, ci],
       );
       const ids: string[] = [];
       for (const qq of chapter.questions) {
         const { options, correct } = arrange(qq);
         const row = await q1(
-          `insert into questions (class_level, chapter_id, subject_id, text, options, correct_option, solution, marks, source, library_key, created_by)
-           values ($1, $2, $3, $4, $5, $6, $7, 1, 'library', $8, $9)
+          `insert into questions (tuition_id, class_level, chapter_id, subject_id, text, options, correct_option, solution, marks, source, library_key, created_by)
+           values ($10, $1, $2, $3, $4, $5, $6, $7, 1, 'library', $8, $9)
            on conflict (library_key) do update set chapter_id = excluded.chapter_id, subject_id = excluded.subject_id, text = excluded.text,
              options = excluded.options, correct_option = excluded.correct_option, solution = excluded.solution, updated_at = now()
            returning id`,
           [book.classLevel, ch.id, subject.id, qq.text, options, correct, qq.solution,
-            key('question', book.classLevel, book.subject, chapter.name, qq.text), teacher.id],
+            key('question', book.classLevel, book.subject, chapter.name, qq.text), teacher.id, TUITION],
         );
         ids.push(row.id);
         questions++;
@@ -75,9 +84,9 @@ try {
         continue;
       }
       const test = existing ?? await q1(
-        `insert into tests (title, class_level, subject_id, time_limit_min, shuffle, assign_all, assign_group, status, created_by, library_key)
-         values ($1, $2, $3, $4, true, false, true, 'draft', $5, $6) returning id`,
-        [`${chapter.name}: chapter test`, book.classLevel, subject.id, Math.max(10, Math.ceil(chapter.questions.length * 1.5)), teacher.id, testKey],
+        `insert into tests (tuition_id, title, class_level, subject_id, time_limit_min, shuffle, assign_all, assign_group, status, created_by, library_key)
+         values ($7, $1, $2, $3, $4, true, false, true, 'draft', $5, $6) returning id`,
+        [`${chapter.name}: chapter test`, book.classLevel, subject.id, Math.max(10, Math.ceil(chapter.questions.length * 1.5)), teacher.id, testKey, TUITION],
       );
       await db.query(`update tests set created_at = now() - make_interval(secs => $2) where id = $1`, [test.id, age]);
       await db.query('delete from test_questions where test_id = $1', [test.id]);

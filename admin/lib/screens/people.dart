@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 
 import '../core/api.dart';
+import '../core/auto_refresh.dart';
 import '../core/format.dart' as f;
 import '../core/github.dart';
 import '../theme.dart';
 import '../ui/common.dart';
 import '../ui/kit.dart';
 import 'account.dart';
+import 'phones.dart';
 
 enum _Show { all, online, flagged, quiet }
 
@@ -20,7 +22,7 @@ class PeopleScreen extends StatefulWidget {
   State<PeopleScreen> createState() => _PeopleScreenState();
 }
 
-class _PeopleScreenState extends State<PeopleScreen> {
+class _PeopleScreenState extends State<PeopleScreen> with WidgetsBindingObserver, AutoRefresh<PeopleScreen> {
   List<Map<String, dynamic>>? _rows;
   int _many = 3;
   String? _newest;
@@ -28,6 +30,12 @@ class _PeopleScreenState extends State<PeopleScreen> {
   _Show _show = _Show.all;
   int? _class;
   final _search = TextEditingController();
+
+  @override
+  Duration? get pollEvery => const Duration(seconds: 60);
+
+  @override
+  Future<void> refreshQuietly() => _load();
 
   @override
   void initState() {
@@ -45,6 +53,7 @@ class _PeopleScreenState extends State<PeopleScreen> {
     try {
       final r = await api.get('/admin/people');
       if (!mounted) return;
+      markLoaded();
       setState(() {
         _rows = (r['people'] as List).cast<Map<String, dynamic>>();
         _many = f.asInt(r['many_threshold']);
@@ -54,7 +63,7 @@ class _PeopleScreenState extends State<PeopleScreen> {
         if (mounted && v != null) setState(() => _newest = v);
       });
     } on ApiException catch (e) {
-      if (mounted) setState(() => _error = e.message);
+      if (mounted && _rows == null) setState(() => _error = e.message);
     }
   }
 
@@ -110,6 +119,22 @@ class _PeopleScreenState extends State<PeopleScreen> {
         TabHeader(
           kicker: rows == null ? 'Accounts' : '${f.plural(rows.length, 'account')} · ${f.plural(phones, 'phone')}',
           title: 'People',
+          actions: [
+            Pressable(
+              label: 'Phones',
+              onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PhonesScreen())),
+              child: Container(
+                height: 40,
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                decoration: surface(radius: rPill, shadow: e1),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(Ph.deviceMobile, size: 18, color: ink),
+                  const SizedBox(width: 7),
+                  Text('Phones', style: chipStyle.copyWith(color: ink, fontWeight: FontWeight.w700)),
+                ]),
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 18),
         FilterBar(children: [
@@ -150,7 +175,7 @@ class _PeopleScreenState extends State<PeopleScreen> {
         if (rows == null && _error != null)
           ErrorState(message: _error!, onRetry: _load)
         else if (rows == null)
-          const LoadingState()
+          const LoadingState(inset: true)
         else if (shown!.isEmpty)
           EmptyState(icon: Ph.users, title: 'Nobody here', body: 'No account matches these filters.')
         else

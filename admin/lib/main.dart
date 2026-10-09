@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'core/auto_refresh.dart';
 import 'core/device.dart';
 import 'core/session.dart';
 import 'core/updater.dart';
@@ -97,16 +98,21 @@ class _AdminAppState extends State<AdminApp> with WidgetsBindingObserver {
         systemNavigationBarColor: bg,
         systemNavigationBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
       ),
-      child: MaterialApp(
-        title: 'Core Academy Admin',
-        debugShowCheckedModeBanner: false,
-        theme: theme,
-        home: ListenableBuilder(
-          listenable: session,
-          builder: (context, _) {
-            if (!session.restored) return const StartScreen();
-            return session.signedIn ? const Shell() : const LoginScreen();
-          },
+      // Any touch counts as use, so the screens stop checking for news when the phone sits untouched.
+      child: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: (_) => lastTouch = DateTime.now(),
+        child: MaterialApp(
+          title: 'Core Academy Admin',
+          debugShowCheckedModeBanner: false,
+          theme: theme,
+          home: ListenableBuilder(
+            listenable: session,
+            builder: (context, _) {
+              if (!session.restored) return const StartScreen();
+              return session.signedIn ? const Shell() : const LoginScreen();
+            },
+          ),
         ),
       ),
     );
