@@ -28,7 +28,12 @@ if (("$callState" -and "$callState" -notmatch 'mCallState=0') -or ("$audioMode" 
 function Dump {
   & $adb -s $serial shell uiautomator dump /sdcard/ca-ui.xml 2>$null | Out-Null
   & $adb -s $serial pull /sdcard/ca-ui.xml $local 2>$null | Out-Null
-  [xml](Get-Content $local -Raw -Encoding utf8)
+  $x = [xml](Get-Content $local -Raw -Encoding utf8)
+  # The notification shade and quick settings sit over an app without changing the resumed activity:
+  # when the window that has focus is not Core Academy, touch nothing.
+  $pkg = "$($x.SelectSingleNode('//node').package)"
+  if ($pkg -notmatch '^com\.coreacademy\.core_academy') { Remove-Item $local -Force -ErrorAction SilentlyContinue; "REFUSED: another window has focus ($pkg), such as the notification shade"; exit 2 }
+  $x
 }
 
 function Nodes($xml) {

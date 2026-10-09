@@ -37,7 +37,15 @@ if (("$callState" -and "$callState" -notmatch 'mCallState=0') -or ("$audioMode" 
 # own, so refuse when another app is in front.
 function Test-Ours {
   $top = Adb shell dumpsys activity activities | Select-String -Pattern 'topResumedActivity' | Select-Object -First 1
-  "$top" -match 'com\.coreacademy\.core_academy(\.dev)?/'
+  if ("$top" -notmatch 'com\.coreacademy\.core_academy(\.dev)?/') { return $false }
+  # The notification shade and quick settings sit over an app without changing the resumed activity, and
+  # a capture then shows the owner's Wi-Fi, earbuds and notifications. The window that has focus says
+  # whether it is still the app: only its package name is read from the dump.
+  Adb shell uiautomator dump /sdcard/ca-guard.xml 2>$null | Out-Null
+  $xml = (Adb shell cat /sdcard/ca-guard.xml 2>$null) -join ''
+  Adb shell rm /sdcard/ca-guard.xml 2>$null | Out-Null
+  $pkg = [regex]::Match($xml, 'package="([^"]+)"').Groups[1].Value
+  return $pkg -match '^com\.coreacademy\.core_academy'
 }
 function Assert-Ours { if (-not (Test-Ours)) { "REFUSED: Core Academy is not in front"; exit 2 } }
 if ($Cmd -in @('tap', 'swipe', 'text', 'key', 'back', 'shot')) { Assert-Ours }
