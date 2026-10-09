@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { requireUser, type AppEnv } from '../lib/auth.ts';
-import { ASSIGNED, resultPayload, saveAnswers, startOrResume, submitAttempt } from '../lib/attempts.ts';
+import { ASSIGNED, releaseFinishedTests, RESULTS_OPEN, saveAnswers, startOrResume, studentResult, submitAttempt } from '../lib/attempts.ts';
 import { q, q1 } from '../lib/db.ts';
 import { uuid } from '../lib/http.ts';
 import { readBody } from './body.ts';
@@ -14,8 +14,10 @@ type TestState = 'open' | 'in_progress' | 'upcoming' | 'done' | 'missed';
 studentRoutes.get('/home', async (c) => {
   const me = c.get('user');
   await q('select finalize_expired_attempts()');
+  await releaseFinishedTests();
   const rows = await q(
     `select t.id, t.title, t.class_level, t.time_limit_min, t.opens_at, t.closes_at, now() as now,
+            ${RESULTS_OPEN} as results_open,
             (select count(*) from test_questions tq where tq.test_id = t.id) as question_count,
             (select coalesce(sum(qq.marks), 0) from test_questions tq join questions qq on qq.id = tq.question_id
               where tq.test_id = t.id) as max_marks,
@@ -47,8 +49,13 @@ studentRoutes.get('/home', async (c) => {
       max_marks: r.max_marks,
       state,
       retake: r.retake,
+      // Marks stay hidden until the test closes, everyone has finished, or the tutor opens them.
+      results_open: r.results_open,
       attempt: r.attempt_id
-        ? { id: r.attempt_id, attempt_no: r.attempt_no, submitted_at: r.submitted_at, deadline_at: r.deadline_at, score: r.score, max_score: r.max_score }
+        ? {
+            id: r.attempt_id, attempt_no: r.attempt_no, submitted_at: r.submitted_at, deadline_at: r.deadline_at,
+            score: r.results_open ? r.score : null, max_score: r.results_open ? r.max_score : null,
+          }
         : null,
     };
   });
@@ -71,13 +78,18 @@ studentRoutes.post('/attempts/:id/submit', async (c) => {
 });
 
 studentRoutes.get('/attempts/:id/result', async (c) => {
-  return c.json(await resultPayload(uuid(c.req.param('id'), 'attempt id'), { studentId: c.get('user').id }));
+  return c.json(await studentResult(uuid(c.req.param('id'), 'attempt id'), c.get('user').id));
 });
 
 studentRoutes.get('/results', async (c) => {
+  await releaseFinishedTests();
   const rows = await q(
-    `select a.id, a.test_id, t.title, a.attempt_no, a.score, a.max_score, a.correct_count, a.wrong_count,
-            a.skipped_count, a.started_at, a.submitted_at, a.auto_submitted
+    `select a.id, a.test_id, t.title, t.closes_at, a.attempt_no, a.started_at, a.submitted_at, a.auto_submitted,
+            ${RESULTS_OPEN} as results_open,
+            case when ${RESULTS_OPEN} then a.score end as score, case when ${RESULTS_OPEN} then a.max_score end as max_score,
+            case when ${RESULTS_OPEN} then a.correct_count end as correct_count,
+            case when ${RESULTS_OPEN} then a.wrong_count end as wrong_count,
+            case when ${RESULTS_OPEN} then a.skipped_count end as skipped_count
        from attempts a join tests t on t.id = a.test_id
       where a.student_id = $1 and a.submitted_at is not null
       order by a.submitted_at desc`,

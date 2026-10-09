@@ -1,6 +1,6 @@
 import { randomInt } from 'node:crypto';
 import type pg from 'pg';
-import { q, q1, tx, type Db } from './db.ts';
+import { pool, q, q1, tx, type Db } from './db.ts';
 import { HttpError, notFound } from './http.ts';
 import { maybeViewUrl } from './storage.ts';
 
@@ -31,6 +31,30 @@ export const ASSIGNED_CTE = `assigned as (
     from tests t join test_students ts on ts.test_id = t.id join users u on u.id = ts.student_id and u.active
    where t.status = 'published' and not t.assign_all and not t.assign_group
 )`;
+
+/**
+ * SQL condition: the marks of test t are open to its students: a tutor opened them, or the last
+ * student finished (both stamp results_released_at), or the test has closed. A test with no
+ * closing time (from before closing was compulsory) has nothing to wait for.
+ */
+export const RESULTS_OPEN = `(t.results_released_at is not null or t.closes_at is null or t.closes_at <= now())`;
+
+/**
+ * Opens the marks of every published test whose assigned students have all submitted. Called
+ * whenever someone looks at tests or submits one, so "the last student finished" takes effect at
+ * once without a timer. Returns how many tests it opened.
+ */
+export async function releaseFinishedTests(db: Db = pool): Promise<number> {
+  const r = await db.query(
+    `with ${ASSIGNED_CTE}
+     update tests t set results_released_at = now()
+      where t.status = 'published' and t.results_released_at is null
+        and exists (select 1 from assigned a where a.test_id = t.id)
+        and not exists (select 1 from assigned a where a.test_id = t.id
+                         and not exists (select 1 from attempts x where x.test_id = t.id and x.student_id = a.student_id and x.submitted_at is not null))`,
+  );
+  return r.rowCount ?? 0;
+}
 
 /** SQL condition: test t is given to student $1 in class $2. */
 export const ASSIGNED = `((t.assign_all or t.assign_group) and t.class_level = $2
@@ -247,6 +271,24 @@ export async function submitAttempt(studentId: string, attemptId: string, raw: u
     );
     await c.query('select grade_attempt($1)', [a.id]);
   });
+  return studentResult(attemptId, studentId);
+}
+
+/**
+ * What a student sees of one of their attempts: the marks and the review once the test's marks
+ * are open, until then only a note saying when (the closing time, or earlier once everyone has
+ * finished or the tutor opens them).
+ */
+export async function studentResult(attemptId: string, studentId: string) {
+  await releaseFinishedTests();
+  const t = await q1<{ title: string; closes_at: Date | null; submitted_at: Date | null; open: boolean }>(
+    `select t.title, t.closes_at, a.submitted_at, ${RESULTS_OPEN} as open
+       from attempts a join tests t on t.id = a.test_id where a.id = $1 and a.student_id = $2`,
+    [attemptId, studentId],
+  );
+  if (!t) throw notFound('This attempt');
+  if (!t.submitted_at) throw new HttpError(409, 'not_submitted', 'This test has not been submitted yet.');
+  if (!t.open) return { waiting: true, title: t.title, results_at: t.closes_at };
   return resultPayload(attemptId, { studentId });
 }
 

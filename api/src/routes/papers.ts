@@ -1,8 +1,9 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../lib/auth.ts';
 import { pool, q, q1, tx, type Db } from '../lib/db.ts';
-import { CHECK_MODELS, chat, parseJson, SOLVE_MODELS, VISION_MODELS } from '../lib/groq.ts';
+import { CHECK_MODELS, chat, parseJson, SOLVE_MODELS, VISION_MODELS, WRITE_MODELS } from '../lib/groq.ts';
 import { bad, HttpError, int, notFound, str, uuid, uuidOpt } from '../lib/http.ts';
+import { wrapBareMath } from '../lib/latex-json.ts';
 import { mustKeepOrder } from '../lib/questions.ts';
 import { deleteObjects, maybeViewUrl, readObject, uploadUrl, viewUrl } from '../lib/storage.ts';
 import { MATHS } from '../lib/subjects.ts';
@@ -82,6 +83,90 @@ paperRoutes.post('/papers', async (c) => {
     Array.from({ length: pages }, async (_, i) => ({ page_no: i + 1, put_url: await uploadUrl(pageKey(paper.id, i + 1)) })),
   );
   return c.json({ paper, uploads }, 201);
+});
+
+/**
+ * The chat: the tutor says what test they want and AI writes it. The questions become the drafts
+ * of a new paper with no pages, so they get the same checking as an uploaded one: two other models
+ * solve each question without seeing the writer's answer, and it is marked only when both agree
+ * with each other and with the writer. Anything else is left for the tutor, with a warning.
+ */
+paperRoutes.post('/papers/chat', async (c) => {
+  const b = await readBody(c);
+  const classLevel = int(b, 'class_level', { min: 6, max: 12 })!;
+  const subjectId = uuid(b.subject_id, 'subject');
+  const request = str(b, 'request', { max: 1500 })!;
+  const count = int(b, 'count', { min: 3, max: 40, optional: true }) ?? 15;
+  const subject = await q1('select name from subjects where id = $1', [subjectId]);
+  if (!subject) throw notFound('This subject');
+
+  const { content } = await chat({
+    task: 'write_questions',
+    userId: c.get('user').id,
+    models: WRITE_MODELS,
+    json: true,
+    maxTokens: 8000,
+    temperature: 0.7,
+    reasoning: 'low',
+    messages: [
+      { role: 'system', content: 'You write multiple-choice questions for a CBSE tuition teacher in India. You are exact about maths and science.' },
+      {
+        role: 'user',
+        content: `Write about ${count} multiple-choice questions for Class ${classLevel} CBSE ${subject.name}, as the teacher asks below. If the request names a number of questions, write that many (at most 40).
+Teacher's request:
+"""
+${request}
+"""
+
+Reply only as JSON:
+{"name":"<short test name>","questions":[{"text":"<question>","options":["<a>","<b>","<c>","<d>"],"answer":"A"}]}
+Rules:
+- Exactly four options per question, and exactly one is correct. "answer" is its letter: A, B, C or D. Spread the right answers over all four letters.
+- Write all maths, formulas and chemical equations in LaTeX inside $...$, in the options as well as in the question, e.g. $\\frac{3}{4}$, $x^2$, $90^\\circ$, $H_2O$. This is JSON, so write every LaTeX backslash twice, as in "$\\\\frac{3}{4}$". Give each option's text without a letter label.
+- Follow the teacher's topic and difficulty. Match the Class ${classLevel} CBSE syllabus.
+- Every question must be answerable from its text alone: no figures, graphs or diagrams, and no "all of the above" or "none of the above".
+- Wrong options are plausible mistakes. Do not repeat a question.
+- name: at most 40 characters, e.g. "Quadratic equations, set 1".`,
+      },
+    ],
+  });
+
+  const items: { text: string; options: string[]; answer: number }[] = [];
+  for (const it of listIn(content, 'questions')) {
+    const text = clip(it?.text, 4000);
+    const options = Array.isArray(it?.options)
+      ? it.options.map((o: unknown) => wrapBareMath(clip(typeof o === 'string' ? o : String(o ?? ''), 500)))
+      : [];
+    const letter = String(it?.answer ?? '').trim().toUpperCase().charAt(0);
+    if (!text || options.length !== 4 || options.some((o: string) => !o) || !/^[A-D]$/.test(letter)) continue;
+    items.push({ text, options, answer: letter.charCodeAt(0) - 65 });
+    if (items.length >= 40) break;
+  }
+  if (!items.length) throw new HttpError(502, 'ai_unreadable', 'AI could not write that test. Try again, in different words.');
+  let name = '';
+  try {
+    name = clip((parseJson<{ name?: unknown }>(content) as { name?: unknown })?.name, 40);
+  } catch {
+    // The questions are what matters: a missing name gets a plain one.
+  }
+
+  const paper = await tx(async (cx) => {
+    const p = await q1(
+      `insert into papers (class_level, exam_name, category, page_count, uploaded_by, subject_id)
+       values ($1, $2, 'Made with AI', 0, $3, $4) returning id`,
+      [classLevel, name || `${subject.name} questions`, c.get('user').id, subjectId],
+      cx,
+    );
+    for (const [i, it] of items.entries()) {
+      await cx.query(
+        `insert into paper_drafts (paper_id, page_no, seq, number_label, kind, text, options, answer_checked, proposed_option)
+         values ($1, 1, $2, $3, 'mcq', $4, $5, false, $6)`,
+        [p.id, i, String(i + 1), it.text, it.options, it.answer],
+      );
+    }
+    return p;
+  });
+  return c.json({ paper: { id: paper.id, exam_name: name || `${subject.name} questions` }, questions: items.length }, 201);
 });
 
 paperRoutes.post('/papers/:id/pages/:n/uploaded', async (c) => {
@@ -612,11 +697,11 @@ paperRoutes.post('/papers/:id/answers', async (c) => {
   // AI cannot see a figure, so those wait for the teacher.
   await pool.query(`update paper_drafts set answer_checked = true where ${open} and needs_diagram`, [id]);
   const batch = (
-    await q<{ id: string; text: string; options: string[]; page_no: number; seq: number }>(
+    await q<{ id: string; text: string; options: string[]; page_no: number; seq: number; proposed_option: number | null }>(
       `update paper_drafts set answer_claimed_at = now()
         where id in (select id from paper_drafts where ${open} and array_length(options, 1) = 4
                       order by page_no, seq limit ${ANSWER_BATCH} for update skip locked)
-        returning id, text, options, page_no, seq`,
+        returning id, text, options, page_no, seq, proposed_option`,
       [id],
     )
   ).sort((x, y) => x.page_no - y.page_no || x.seq - y.seq);
@@ -629,18 +714,24 @@ paperRoutes.post('/papers/:id/answers', async (c) => {
         for (const [i, d] of batch.entries()) {
           const x = a.get(i);
           const y = b.get(i);
-          const sure = x && y && x.answer != null && x.answer === y.answer && x.confidence >= SURE && y.confidence >= SURE;
+          // A question AI wrote in the chat also needs its writer's answer to match.
+          const proposed = d.proposed_option;
+          const sure = x && y && x.answer != null && x.answer === y.answer && x.confidence >= SURE && y.confidence >= SURE
+            && (proposed == null || proposed === x.answer);
           if (sure) byAi++;
           // Neither model found an option that fits: most often a misprint, so the card says so.
           const none = x != null && y != null && x.answer == null && y.answer == null;
+          // Both gave an answer and they (or the writer) differ: the tutor decides.
+          const differ = x != null && y != null && x.answer != null && y.answer != null
+            && (x.answer !== y.answer || (proposed != null && proposed !== x.answer));
           await cx.query(
             `update paper_drafts set answer_checked = true, answer_claimed_at = null,
                     correct_option = case when $2::smallint is null then correct_option else $2 end,
                     answer_source = case when $2::smallint is null then answer_source else 'ai' end,
                     ai_confidence = $3,
-                    ai_note = case when $4 and ai_note is null then 'no_option' else ai_note end
+                    ai_note = case when $4::text is not null and ai_note is null then $4 else ai_note end
               where id = $1 and correct_option is null`,
-            [d.id, sure ? x.answer : null, sure ? Math.min(x.confidence, y.confidence) : null, none],
+            [d.id, sure ? x.answer : null, sure ? Math.min(x.confidence, y.confidence) : null, none ? 'no_option' : differ && !sure ? 'disagree' : null],
           );
         }
       });

@@ -37,7 +37,7 @@ const login = (username: string, secret: string) => api('POST', '/auth/login', u
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const iso = (msFromNow: number) => new Date(Date.now() + msFromNow).toISOString();
 
-const created = { users: [] as string[], questions: [] as string[], tests: [] as string[], subjects: [] as string[], papers: [] as string[] };
+const created = { users: [] as string[], questions: [] as string[], tests: [] as string[], subjects: [] as string[], papers: [] as string[], tutors: [] as string[] };
 const tag = `apitest${randomInt(1000, 9999)}`;
 
 try {
@@ -69,13 +69,21 @@ try {
   const keep = await api('GET', `/teacher/questions/${created.questions[2]}`, T);
   check('"Both (a) and (b)" question keeps option order', keep.body?.question?.keep_option_order === true, keep.body?.question);
 
-  const mkTest = async (title: string, extra: Record<string, unknown>) => {
-    const r = await api('POST', '/teacher/tests', T, {
+  // Every test needs a closing time (one day ahead unless given), and a closing time already past is
+  // set after posting, since the server will not post such a test. Marks are opened for the students
+  // straight away unless `hold`: these checks are about marking, not about when marks show.
+  const mkTest = async (title: string, extra: Record<string, unknown>, hold = false) => {
+    const wanted = (extra.closes_at as string | undefined) ?? iso(86_400_000);
+    const past = new Date(wanted).getTime() <= Date.now();
+    const body = {
       title: `${tag} ${title}`, class_level: 9, question_ids: created.questions, shuffle: true,
-      assign_all: false, student_ids: created.users, ...extra,
-    });
+      assign_all: false, student_ids: created.users, ...extra, closes_at: past ? iso(3_600_000) : wanted,
+    };
+    const r = await api('POST', '/teacher/tests', T, body);
     created.tests.push(r.body.id);
     const p = await api('POST', `/teacher/tests/${r.body.id}/publish`, T, { published: true });
+    if (past) await api('PATCH', `/teacher/tests/${r.body.id}`, T, { ...body, closes_at: wanted });
+    if (!hold) await api('POST', `/teacher/tests/${r.body.id}/release-results`, T);
     check(`test "${title}" created and published`, r.status === 201 && p.status === 200, [r.body, p.body]);
     return r.body.id as string;
   };
@@ -155,6 +163,63 @@ try {
   check('the dashboard lists an open test nobody has started', dash.body?.live?.some((x: any) => x.id === forever && x.writing === 0), dash.body?.live);
   check('the older app still gets a school list, now empty', JSON.stringify((await api('GET', '/teacher/schools', T)).body) === '{"schools":[]}');
   check('students no longer have a school', !('school' in ((await api('GET', '/teacher/students', T)).body?.students?.[0] ?? {})));
+
+  // Closing is compulsory, and marks stay hidden from students until the test closes, the last
+  // student has finished, or the tutor shows them.
+  const body0 = { title: `${tag} no closing`, class_level: 9, question_ids: created.questions, assign_all: false, student_ids: created.users };
+  const ncl = await api('POST', '/teacher/tests', T, body0);
+  created.tests.push(ncl.body.id);
+  await api('POST', `/teacher/tests/${ncl.body.id}/publish`, T, { published: true });
+  const nclRow = (await api('GET', `/teacher/tests/${ncl.body.id}`, T)).body?.test;
+  const nclHours = (new Date(nclRow?.closes_at).getTime() - Date.now()) / 3_600_000;
+  check('a test posted without a closing time gets one, at 9 pm in India', nclHours >= 3 && nclHours <= 27 && new Date(nclRow.closes_at).getUTCMinutes() === 30, nclRow);
+  check('and cannot lose it afterwards',
+    (await api('PATCH', `/teacher/tests/${ncl.body.id}`, T, { ...body0, closes_at: null })).status === 200
+    && !!(await api('GET', `/teacher/tests/${ncl.body.id}`, T)).body?.test?.closes_at);
+  const pcl = await api('POST', '/teacher/tests', T, { ...body0, title: `${tag} past`, closes_at: iso(-60_000) });
+  created.tests.push(pcl.body.id);
+  check('nor with a closing time that has passed',
+    (await api('POST', `/teacher/tests/${pcl.body.id}/publish`, T, { published: true })).body?.error?.code === 'closing_passed');
+
+  const H = await mkTest('marks held', { closes_at: iso(86_400_000) }, true);
+  const h1 = await api('POST', `/student/tests/${H}/start`, S1);
+  const hsub = await api('POST', `/student/attempts/${h1.body.attempt.id}/submit`, S1, { answers: [] });
+  check('a student who submits is told their marks come later', hsub.status === 200 && hsub.body?.waiting === true && !('review' in hsub.body), hsub.body);
+  const hres = await api('GET', `/student/attempts/${h1.body.attempt.id}/result`, S1);
+  check('and cannot read them early', hres.body?.waiting === true && !('review' in hres.body), hres.body);
+  const hhome = (await api('GET', '/student/home', S1)).body?.tests?.find((x: any) => x.id === H);
+  check('the home list hides the marks', hhome?.results_open === false && hhome?.attempt?.score === null, hhome);
+  check('so does the results list', (await api('GET', '/student/results', S1)).body?.results?.find((x: any) => x.test_id === H)?.score === null);
+  check('the tutor still sees the marks', (await api('GET', `/teacher/attempts/${h1.body.attempt.id}`, T)).body?.attempt?.max_score === 3);
+  const h2 = await api('POST', `/student/tests/${H}/start`, S2);
+  const hsub2 = await api('POST', `/student/attempts/${h2.body.attempt.id}/submit`, S2, { answers: [] });
+  check('when the last student submits, everyone sees their marks',
+    hsub2.body?.attempt?.max_score === 3 && (await api('GET', `/student/attempts/${h1.body.attempt.id}/result`, S1)).body?.review?.length === 3, hsub2.body);
+
+  const M = await mkTest('marks shown by the tutor', { closes_at: iso(86_400_000) }, true);
+  const m1 = await api('POST', `/student/tests/${M}/start`, S1);
+  await api('POST', `/student/attempts/${m1.body.attempt.id}/submit`, S1, { answers: [] });
+  check('with a student still to write it, marks stay hidden', (await api('GET', `/student/attempts/${m1.body.attempt.id}/result`, S1)).body?.waiting === true);
+  check('the tutor shows the marks', (await api('POST', `/teacher/tests/${M}/release-results`, T)).status === 200);
+  check('and the student sees them', (await api('GET', `/student/attempts/${m1.body.attempt.id}/result`, S1)).body?.review?.length === 3);
+  check('the results page says whether marks are open', (await api('GET', `/teacher/tests/${M}/results`, T)).body?.test?.results_open === true
+    && (await api('GET', `/teacher/tests/${H}/results`, T)).body?.test?.results_open === true);
+
+  // Several tutors share one tuition, and the home and group pages group tests by class and subject.
+  const tutorName = `${tag}.tutor`;
+  const nt = await api('POST', '/teacher/tutors', T, { display_name: 'Test Tutor', username: tutorName, password: 'tutor-pass-123' });
+  check('a tutor adds another tutor', nt.status === 201 && nt.body?.tutor?.username === tutorName, nt.body);
+  created.tutors.push(nt.body?.tutor?.id);
+  const tl = await login(tutorName, 'tutor-pass-123');
+  check('the new tutor logs in and sees the same groups',
+    tl.status === 200 && JSON.stringify((await api('GET', '/teacher/home', tl.body.token)).body?.groups) === JSON.stringify((await api('GET', '/teacher/home', T)).body?.groups));
+  check('a tutor cannot turn off their own login', (await api('POST', `/teacher/tutors/${t.body.user.id}/active`, T, { active: false })).status === 409);
+  check('the tutor turns the other one off', (await api('POST', `/teacher/tutors/${nt.body.tutor.id}/active`, T, { active: false })).status === 200
+    && (await login(tutorName, 'tutor-pass-123')).status !== 200);
+  const home9 = (await api('GET', '/teacher/home', T)).body?.groups?.find((g: any) => g.class_level === 9 && g.live.some((x: any) => x.id === H));
+  check('home lists the live test under its group', !!home9 && home9.students >= 2 && home9.live.find((x: any) => x.id === H)?.assigned === 2, home9);
+  const grp9 = await api('GET', `/teacher/groups/9/${home9?.subject_id}`, T);
+  check('the group page lists its students and tests', grp9.status === 200 && grp9.body?.students?.length >= 2 && grp9.body?.tests?.some((x: any) => x.id === H), grp9.body?.group);
 
   // Window rules.
   const B = await mkTest('future', { opens_at: iso(86_400_000), closes_at: iso(90_000_000) });
@@ -459,7 +524,7 @@ try {
   await db.query('delete from questions where id = any($1::uuid[]) or paper_id = any($2::uuid[])', [created.questions, created.papers]);
   await db.query('delete from papers where id = any($1::uuid[])', [created.papers]);
   await db.query('delete from app_installs where install_id like $1', [`${tag}-%`]);
-  await db.query('delete from users where id = any($1::uuid[])', [created.users]);
+  await db.query('delete from users where id = any($1::uuid[])', [[...created.users, ...created.tutors.filter(Boolean)]]);
   await db.query('delete from subjects where id = any($1::uuid[])', [created.subjects]);
   await db.end();
   console.log(`\n${pass} passed, ${fail} failed (test data removed)`);

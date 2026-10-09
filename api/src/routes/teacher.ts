@@ -4,7 +4,7 @@ import { Hono } from 'hono';
 import {
   checkPassword, checkPin, checkUsername, hashSecret, killSessions, newPin, verifySecret, type AppEnv,
 } from '../lib/auth.ts';
-import { ASSIGNED_CTE, resultPayload } from '../lib/attempts.ts';
+import { ASSIGNED_CTE, releaseFinishedTests, resultPayload } from '../lib/attempts.ts';
 import { pool, q, q1, tx } from '../lib/db.ts';
 import { bad, bool, date, HttpError, int, notFound, str, uuid, uuidOpt } from '../lib/http.ts';
 import { afterTestChange } from '../lib/notify.ts';
@@ -17,6 +17,19 @@ import { readBody } from './body.ts';
 export const teacherRoutes = new Hono<AppEnv>();
 
 const pct = (score: number | null, max: number | null) => (score == null || !max ? null : score / max);
+
+/**
+ * Every test closes: students see their marks after that, so a test posted without a closing time
+ * (by an older app, or by someone who skipped it) closes at the next 9:00 pm India time that is at
+ * least three hours away.
+ */
+export function defaultClosing(now = new Date()): Date {
+  const ist = 5.5 * 3_600_000;
+  const local = new Date(now.getTime() + ist); // shifted, so the UTC getters read India time
+  let t = Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate(), 21) - ist;
+  if (t - now.getTime() < 3 * 3_600_000) t += 86_400_000;
+  return new Date(t);
+}
 
 // ---------------------------------------------------------------- dashboard
 
@@ -310,6 +323,139 @@ teacherRoutes.get('/groups', async (c) => {
       order by u.class_level, sj.sort_order, sj.name`,
   );
   return c.json({ groups: rows });
+});
+
+/** The counts a test row shows: students given it, submitted, and writing right now. */
+const TEST_COUNTS = `(select count(*) from assigned a where a.test_id = t.id) as assigned,
+            (select count(distinct x.student_id) from attempts x where x.test_id = t.id and x.submitted_at is not null) as submitted,
+            (select count(*) from attempts x where x.test_id = t.id and x.submitted_at is null
+                and (x.deadline_at is null or x.deadline_at > now())) as writing`;
+
+/**
+ * The home screen: every group, each with the tests its students can write now (live) and the
+ * ones posted to open later, with how many students have submitted and how many are writing.
+ */
+teacherRoutes.get('/home', async (c) => {
+  await q('select finalize_expired_attempts()');
+  await releaseFinishedTests();
+  const groups = await q<any>(
+    `select u.class_level, sj.id as subject_id, sj.name as subject, count(*) as students
+       from student_subjects ss join users u on u.id = ss.student_id and u.role = 'student' and u.active
+       join subjects sj on sj.id = ss.subject_id
+      group by u.class_level, sj.id, sj.name, sj.sort_order
+      order by u.class_level, sj.sort_order, sj.name`,
+  );
+  const tests = await q<any>(
+    `with ${ASSIGNED_CTE}
+     select t.id, t.title, t.class_level, t.subject_id, (select name from subjects where id = t.subject_id) as subject,
+            t.opens_at, t.closes_at, t.time_limit_min, now() as now, ${TEST_COUNTS}
+       from tests t
+      where t.status = 'published'
+        and (t.closes_at is null or t.closes_at > now()
+             or exists (select 1 from attempts x where x.test_id = t.id and x.submitted_at is null
+                         and (x.deadline_at is null or x.deadline_at > now())))
+      order by t.closes_at nulls last, coalesce(t.opens_at, t.created_at) desc`,
+  );
+  const out: { class_level: number; subject_id: string; subject: string; students: number; live: any[]; posted: any[] }[] = groups.map((g) => ({
+    class_level: g.class_level, subject_id: g.subject_id, subject: g.subject, students: Number(g.students), live: [], posted: [],
+  }));
+  for (const t of tests) {
+    let g = out.find((x) => x.class_level === t.class_level && x.subject_id === t.subject_id);
+    if (!g) {
+      // A test for a group nobody is in yet still shows.
+      g = { class_level: t.class_level, subject_id: t.subject_id, subject: t.subject, students: 0, live: [], posted: [] };
+      out.push(g);
+    }
+    const { now, ...row } = t;
+    (t.opens_at && t.opens_at > now ? g.posted : g.live).push(row);
+  }
+  out.sort((a, b) => a.class_level - b.class_level || a.subject.localeCompare(b.subject));
+  const now = await q1('select now()');
+  return c.json({
+    server_now: now.now,
+    groups: out,
+    totals: {
+      live: out.reduce((s, g) => s + g.live.length, 0),
+      writing: out.reduce((s, g) => s + g.live.reduce((n, t) => n + Number(t.writing), 0), 0),
+    },
+  });
+});
+
+/** One group's page: its students, its tests (live, posted, finished, drafts) and its ready-made tests. */
+teacherRoutes.get('/groups/:cls/:subject', async (c) => {
+  const cls = Number(c.req.param('cls'));
+  if (!Number.isInteger(cls) || cls < 6 || cls > 12) throw bad('Choose a class from 6 to 12.');
+  const subjectId = uuid(c.req.param('subject'), 'subject');
+  const subject = await q1('select id, name from subjects where id = $1', [subjectId]);
+  if (!subject) throw notFound('This subject');
+  await q('select finalize_expired_attempts()');
+  await releaseFinishedTests();
+  const students = await q(
+    `select u.id, u.display_name, u.username, u.active, u.last_seen_at,
+            (select avg(score / nullif(max_score, 0)) from attempts a where a.student_id = u.id and a.submitted_at is not null) as avg_pct,
+            (select count(*) from attempts a where a.student_id = u.id and a.submitted_at is not null) as tests_done
+       from users u
+      where u.role = 'student' and u.class_level = $1
+        and exists (select 1 from student_subjects ss where ss.student_id = u.id and ss.subject_id = $2)
+      order by u.active desc, u.display_name`,
+    [cls, subjectId],
+  );
+  const tests = await q(
+    `with ${ASSIGNED_CTE}
+     select t.id, t.title, t.status, t.opens_at, t.closes_at, t.results_released_at, t.time_limit_min, now() as now,
+            (select count(*) from test_questions tq where tq.test_id = t.id) as question_count, ${TEST_COUNTS}
+       from tests t
+      where t.class_level = $1 and t.subject_id = $2 and not (t.status = 'draft' and t.library_key is not null)
+      order by coalesce(t.closes_at, t.opens_at, t.created_at) desc, t.title
+      limit 100`,
+    [cls, subjectId],
+  );
+  const ready = await q(
+    `select t.id, t.title, (select count(*) from test_questions tq where tq.test_id = t.id) as question_count
+       from tests t where t.class_level = $1 and t.subject_id = $2 and t.status = 'draft' and t.library_key is not null
+      order by t.library_key, t.title`,
+    [cls, subjectId],
+  );
+  return c.json({ group: { class_level: cls, subject_id: subjectId, subject: subject.name }, students, tests, ready_made: ready });
+});
+
+// ---------------------------------------------------------------- tutors
+
+/** Every tutor login: tutors share one tuition, so each sees every group and student. */
+teacherRoutes.get('/tutors', async (c) => {
+  const rows = await q(
+    `select id, display_name, username, active, last_seen_at, created_at from users where role = 'teacher' order by created_at`,
+  );
+  return c.json({ tutors: rows, me: c.get('user').id });
+});
+
+teacherRoutes.post('/tutors', async (c) => {
+  const b = await readBody(c);
+  const displayName = str(b, 'display_name', { max: 60 })!;
+  const username = checkUsername(b.username);
+  const { hash, salt } = await hashSecret(checkPassword(b.password));
+  try {
+    const u = await q1(
+      `insert into users (role, username, display_name, secret_hash, secret_salt) values ('teacher', $1, $2, $3, $4)
+       returning id, display_name, username, active, created_at`,
+      [username, displayName, hash, salt],
+    );
+    return c.json({ tutor: u }, 201);
+  } catch (e: any) {
+    if (e.code === '23505') throw new HttpError(409, 'username_taken', `The username ${username} is already taken.`);
+    throw e;
+  }
+});
+
+/** Turns a tutor's login off (signing them out) or back on. Not your own. */
+teacherRoutes.post('/tutors/:id/active', async (c) => {
+  const id = uuid(c.req.param('id'), 'tutor id');
+  if (id === c.get('user').id) throw new HttpError(409, 'self', 'You cannot turn off your own login.');
+  const active = bool(await readBody(c), 'active');
+  const u = await q1(`update users set active = $2 where id = $1 and role = 'teacher' returning id, active`, [id, active]);
+  if (!u) throw notFound('This tutor');
+  if (!active) await killSessions(id);
+  return c.json({ tutor: u });
 });
 
 teacherRoutes.get('/chapters', async (c) => {
@@ -637,6 +783,9 @@ teacherRoutes.patch('/tests/:id', async (c) => {
     if (cur.attempts > 0 && !sameQuestions) {
       throw new HttpError(409, 'has_attempts', 'Students have already started this test, so its questions cannot change.');
     }
+    // A published test always has a closing time: students see their marks after it.
+    const st = await q1('select status from tests where id = $1', [id], cx);
+    if (st?.status === 'published' && !t.closes_at) t.closes_at = defaultClosing();
     // Moved to open later: students are told again when it opens. A new closing time gets its
     // own reminder.
     const row = await q1(
@@ -663,6 +812,11 @@ teacherRoutes.post('/tests/:id/publish', async (c) => {
   if (published) {
     const n = await q1('select count(*) as n from test_questions where test_id = $1', [id]);
     if (!n || n.n === 0) throw new HttpError(409, 'empty_test', 'Add at least one question before publishing.');
+    // Every test closes: students see their marks after that, so it cannot stay open for ever.
+    // Posted with no closing time, it gets the default one.
+    const w = await q1('select closes_at, now() as now from tests where id = $1', [id]);
+    if (w && !w.closes_at) await pool.query('update tests set closes_at = $2 where id = $1', [id, defaultClosing()]);
+    else if (w && w.closes_at <= w.now) throw new HttpError(400, 'closing_passed', 'The closing time has already passed. Choose a later one.');
   }
   const t = await q1(
     `update tests set status = $2 where id = $1 returning id, status`,
@@ -685,11 +839,26 @@ teacherRoutes.delete('/tests/:id', async (c) => {
   return c.json({ ok: true, results_deleted: n.n });
 });
 
+/** Opens the marks and answers to the test's students now, without waiting for the closing time. */
+teacherRoutes.post('/tests/:id/release-results', async (c) => {
+  const id = uuid(c.req.param('id'), 'test id');
+  const t = await q1(
+    `update tests set results_released_at = coalesce(results_released_at, now())
+      where id = $1 and status = 'published' returning id, results_released_at`,
+    [id],
+  );
+  if (!t) throw new HttpError(409, 'not_published', 'Only a published test has marks to show.');
+  return c.json({ ok: true, results_released_at: t.results_released_at });
+});
+
 teacherRoutes.get('/tests/:id/results', async (c) => {
   const id = uuid(c.req.param('id'), 'test id');
   await q('select finalize_expired_attempts()');
+  await releaseFinishedTests();
   const t = await q1(
-    `select id, title, class_level, opens_at, closes_at, time_limit_min, status, now() as now, subject_id, assign_group,
+    `select id, title, class_level, opens_at, closes_at, time_limit_min, status, now() as now, subject_id, assign_group, shuffle,
+            results_released_at,
+            (results_released_at is not null or closes_at is null or closes_at <= now()) as results_open,
             (select name from subjects where id = tests.subject_id) as subject
        from tests where id = $1`,
     [id],

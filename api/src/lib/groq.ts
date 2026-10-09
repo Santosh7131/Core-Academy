@@ -1,6 +1,7 @@
 import { pool } from './db.ts';
 import { geminiChat, geminiConfigured, isGemini } from './gemini.ts';
 import { HttpError } from './http.ts';
+import { fixLatexEscapes } from './latex-json.ts';
 
 // One chat() for both providers: models named gemini-* go to Google (lib/gemini.ts), the rest to
 // Groq. Groq keys rotate per call, starting at a random one so a fresh server does not always lean
@@ -23,6 +24,12 @@ export const TEXT_MODELS = list(process.env.GROQ_TEXT_MODELS, 'openai/gpt-oss-12
 // a day, so it is a late stand-in. gpt-oss-20b is the same family as the solver, so it comes
 // after Gemini: a second opinion that is less independent is still better than none.
 export const SOLVE_MODELS = list(process.env.GROQ_SOLVE_MODELS, 'openai/gpt-oss-120b');
+// The chat writes a test with Gemini first and gpt-oss-120b behind it. Its answers are then solved
+// again by the models above, which never see the writer's answer.
+export const WRITE_MODELS = list(
+  process.env.GROQ_WRITE_MODELS,
+  geminiConfigured() ? 'gemini-3.1-flash-lite,openai/gpt-oss-120b' : 'openai/gpt-oss-120b',
+);
 export const CHECK_MODELS = list(
   process.env.GROQ_CHECK_MODELS,
   geminiConfigured()
@@ -146,8 +153,8 @@ export async function chat(opts: ChatOptions): Promise<{ content: string; model:
   );
 }
 
-/** Parses a model's JSON reply, tolerating a stray code fence. */
+/** Parses a model's JSON reply, tolerating a stray code fence and LaTeX written with a single backslash. */
 export function parseJson<T>(text: string): T {
   const cleaned = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
-  return JSON.parse(cleaned) as T;
+  return JSON.parse(fixLatexEscapes(cleaned)) as T;
 }
