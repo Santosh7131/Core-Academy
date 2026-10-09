@@ -66,7 +66,7 @@ class _AddStudentScreenState extends State<AddStudentScreen> {
 
   int _suggestSeq = 0;
 
-  /// "Harini Venkatesh" -> "harini.v", and "harini.v2" for a second one: the server knows which are taken, so it
+  /// "Harini Venkatesh" -> "harini.v", and "harini.v.2" for a second one: the server knows which are taken, so it
   /// has the last word a moment after the typing stops. The tutor never has to think of a login.
   void _suggest(String name) {
     if (_usernameEdited) return;

@@ -58,7 +58,7 @@ A group (a class and a subject, "10th Maths") has one page: a Make a test button
 come from the group, so nothing asks for them again. Make a test offers upload or describe it
 to AI. The app has no page of questions: a wrong answer is fixed from the test's own page, which
 marks everyone's attempt again. Add student suggests a username from the name and numbers a
-repeat, so a second Harini Venkatesh gets harini.v2 without anyone thinking of one (the server
+repeat, so a second Harini Venkatesh gets harini.v.2 without anyone thinking of one (the server
 decides, so the app of 1.3 and before gets it too).
 
 A test's page leads with its marks notice and its settings (time limit, opens, closes, order),

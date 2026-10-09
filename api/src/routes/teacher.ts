@@ -129,7 +129,7 @@ async function setStudentSubjects(cx: any, studentId: string, ids: string[]) {
   }
 }
 
-/** The login to suggest for a student of this name, free right now: two called Harini Venkatesh get harini.v and harini.v2. */
+/** The login to suggest for a student of this name, free right now: two called Harini Venkatesh get harini.v and harini.v.2. */
 teacherRoutes.get('/username-suggestion', async (c) => {
   return c.json({ username: await freeUsername((c.req.query('name') ?? '').slice(0, 60)) });
 });
@@ -139,11 +139,11 @@ teacherRoutes.post('/students', async (c) => {
   const displayName = str(b, 'display_name', { max: 60 })!;
   const classLevel = int(b, 'class_level', { min: 6, max: 12 })!;
   const requested = checkUsername(b.username);
-  // The username the app suggests from the name ("harini.v", or "harini.v2"), when it is taken, becomes the
+  // The username the app suggests from the name ("harini.v", or "harini.v.2"), when it is taken, becomes the
   // next free one, so nobody has to think of a login for a second student with the same name. Any other
   // username that is taken is refused, so the tutor can pick another.
   const base = usernameBase(displayName);
-  const suggested = requested.startsWith(base) && /^\d*$/.test(requested.slice(base.length));
+  const suggested = requested.startsWith(base) && /^(\.\d+)?$/.test(requested.slice(base.length));
   let username = requested;
   if (suggested && (await q1('select 1 as x from users where username = $1', [requested]))) username = await freeUsername(displayName);
   // The app before subjects sends none: its students study maths.

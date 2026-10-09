@@ -16,8 +16,9 @@ export function usernameBase(name: string): string {
 }
 
 /**
- * The first free username for this name: the suggestion itself, or the suggestion with 2, 3, 4 and
- * so on after it when it is taken. Two students called Harini Venkatesh get harini.v and harini.v2.
+ * The first free username for this name: the suggestion itself, or the suggestion with .2, .3, .4
+ * and so on after it when it is taken. Two students called Harini Venkatesh get harini.v and
+ * harini.v.2 (a bare 2 on the end would read like a version number).
  */
 export async function freeUsername(name: string, db: Db = pool, skip: string[] = []): Promise<string> {
   const base = usernameBase(name);
@@ -25,7 +26,7 @@ export async function freeUsername(name: string, db: Db = pool, skip: string[] =
   const taken = new Set([...rows.rows.map((r) => r.username), ...skip]);
   if (base.length >= 3 && !taken.has(base)) return base;
   for (let n = 2; ; n++) {
-    const candidate = `${base}${n}`;
+    const candidate = `${base}.${n}`;
     if (candidate.length >= 3 && !taken.has(candidate)) return candidate;
   }
 }

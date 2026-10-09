@@ -492,12 +492,12 @@ try {
   };
   const w1 = await makeTwin('zqx.t');
   const w2 = await makeTwin('zqx.t');
-  const w3 = await makeTwin('zqx.t2');
+  const w3 = await makeTwin('zqx.t.2');
   check('the first student of a name keeps the suggested username', w1.status === 201 && w1.body?.login?.username === 'zqx.t', w1.body);
-  check('the second gets the next free one', w2.status === 201 && w2.body?.login?.username === 'zqx.t2', w2.body);
-  check('and the third, the one after', w3.status === 201 && w3.body?.login?.username === 'zqx.t3', w3.body);
+  check('the second gets the next free one', w2.status === 201 && w2.body?.login?.username === 'zqx.t.2', w2.body);
+  check('and the third, the one after', w3.status === 201 && w3.body?.login?.username === 'zqx.t.3', w3.body);
   check('the app is told the next free username as the name is typed',
-    (await api('GET', '/teacher/username-suggestion?name=Zqx%20Twin', T)).body?.username === 'zqx.t4');
+    (await api('GET', '/teacher/username-suggestion?name=Zqx%20Twin', T)).body?.username === 'zqx.t.4');
   const typed = await api('POST', '/teacher/students', T, { display_name: 'Someone Else', class_level: 9, username: 'zqx.t', pin: '3333' });
   check('a username typed by hand that is taken is still refused', typed.status === 409 && typed.body?.error?.code === 'username_taken', typed.body);
   for (const id of twinIds) await api('DELETE', `/teacher/students/${id}`, T);
