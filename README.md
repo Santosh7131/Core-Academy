@@ -1,8 +1,10 @@
 # Core Academy
 
-An Android app for a small maths tuition (CBSE, Classes 6–12). Students take timed
-multiple-choice tests on their phones, the app marks them, and the tutors see every
-result. A tutor creates each student's login and makes a test in one of two ways: upload a
+An Android app where tutors run tuitions (CBSE, Classes 6–12) and their students take timed
+multiple-choice tests on their phones. The app marks them, and the tutors see every
+result. Each tutor has a tuition of their own, and a student can learn from several tutors. A tutor
+creates each student's login (or lets a student in who asks with the tuition's join code) and makes
+a test in one of two ways: upload a
 school question paper (photos or a PDF) that AI types out for them to check, or describe the
 test to AI and let it write the questions, as many as they ask for.
 
@@ -66,6 +68,46 @@ and folds the questions to two with a link to show the rest. Settings (the avata
 the tuition's name, the tutors, the subjects, the theme and the password. Several tutors can
 share one tuition: they all see every group and test, and any tutor can add another or turn one off
 (not themselves) in Settings.
+
+## Tuitions
+
+A tuition is a tutor's business: its own students, groups, subjects, papers, questions and tests.
+A person (tutor or student) has one login and belongs to tuitions through memberships, so a tutor
+can run a tuition of their own and a student can learn from more than one tutor. Nothing in one
+tuition can be read or changed from another: every tutor route reads and writes only the tuition
+the request is for, and `tools/tenant-test.ts` checks that by trying every route with another
+tuition's ids.
+
+- **Which tuition a request is for.** The app sends the one it is showing in the `x-tuition` header.
+  Without it the server uses the person's first tuition, which is how the apps from before tuitions
+  keep working. A person who names a tuition they are not an active member of gets 403.
+- **Tutors sign up** from the login screen (`POST /auth/signup-tutor`, capped per phone and per hour),
+  then create their tuition with the classes and subjects they teach (`POST /auth/tuitions`). The
+  first run in the app does both. A tutor can run up to three tuitions.
+- **Students join with a code.** A tuition has a six-character join code (no 0, O, 1 or I). A student
+  who already has a login types it in the app (`POST /student/join`), waits as "pending", and the
+  tutor lets them in from Home with the class and subjects they choose (`/teacher/join-requests`).
+  Wrong codes are counted, so a code cannot be guessed. A tutor can still add a student directly,
+  as before, and the owner can close joining or make a new code.
+- **A student's class and subjects are per tuition,** so one tutor regrouping, resetting the PIN of
+  or removing a shared student leaves the student's other tuitions alone. A name belongs to the
+  person: it can be changed only while the student has no other tuition.
+- **Subjects.** Standard subjects (Maths, Science, Physics, Chemistry, Biology, English, Hindi, Tamil,
+  Social Science, Computer Science) are shared; a tuition picks the ones it teaches and can add
+  subjects of its own. Groups are explicit, so a new tutor has theirs before any student exists.
+- **AI use is told per tuition** (`ai_usage.tuition_id`), and the evening summary goes to each
+  tuition's own tutors.
+- **Existing data is tuition 1.** Migration 012 gives everything that existed to the first tuition and
+  defaults every new `tuition_id` column to it, so the API from before this change keeps working
+  against the new schema (its 140 checks pass), and the apps of 1.3.1 and before see no difference.
+
+Going live with tuitions takes three steps, in this order, and each needs the owner's go-ahead:
+
+1. Back up the live data (a Neon snapshot and a JSON copy of every table), then apply 012 on `main`.
+   The API running at that moment is the old one, and it keeps working.
+2. Deploy the API to `main`, and check `/` and a login.
+3. Apply 013 (to be written then): it gives any person who has no membership one in tuition 1 (the
+   few minutes between steps 1 and 2) and drops the `tuition_id` defaults.
 
 ## Groups and subjects
 
@@ -394,11 +436,15 @@ and the scripts that read it would then point at the live database.
 |---|---|
 | `npm run typecheck` | The API type-checks. |
 | `npm run test:latex` | The LaTeX repair for model replies and the bare-maths wrapping (29 cases). |
+| `node tools/tenant-test.ts` | 128 checks that tuitions are walled off from each other, and that sign-up, joining, switching, PIN resets, removals, the owner's join code and the rate limits behave. It makes its own tutors, tuitions and students, and removes them. |
+| `node tools/summary-test.ts --log server.log` | The evening summary goes to each tuition's own tutors (after 8 pm India time; local API, dry-run push). |
 | `npm run test:api` | 140 end-to-end checks of the marking rules, when results open (closing time, last student, tutor, and which app versions wait), usernames for students who share a name, groups, the home and group pages, tutors, logins, question papers (including ones uploaded before their details are known, printed answer keys that replace AI answers, questions the bank already has, two answer calls at once and question groups) and the admin app's API against the deployed dev API (add `-- --env .env.main` for the live one; the admin checks run only where the logins file has a developer login). It creates its own students, subject, tests and paper, gives its tests only to those students, then removes them all. |
 | `node tools/notify-test.ts --log server.log` | 25 checks of the notifications against the API on your PC, run with `PUSH_DRY_RUN=1` so each notification is written to the log instead of sent. Dev only. |
 | `node tools/check-answers.ts` | Every sample question's marked answer is right, and no other option equals it. |
 | `node tools/ai-test.ts` | How accurately the AI reads the 2-page sample paper (render it first with `tools/make-sample-paper.ps1`). |
 | `flutter analyze` and `flutter test` (in `app/`) | The app's lints and unit tests. |
+| `SHOTS=1 flutter test test/shots/screens_test.dart` (in `app/`) | Draws the tuition screens, light and dark, to `tools/out/shots` on your PC from a stub server: the real widgets and fonts, no phone. |
+| `flutter test test/contract/tenant_flow_test.dart --dart-define=API_BASE=http://127.0.0.1:8787` (in `app/`) | The app's session code against the local API: sign up, make a tuition, join a second one, be let in, switch. Then `node tools/out/cleanup-contract.mjs`. |
 | `python tools/audit.py` | The design audit: type scale only, no stray colours, no banned patterns, and where the accent is used. |
 
 ## Design

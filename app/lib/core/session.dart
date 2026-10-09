@@ -5,6 +5,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api.dart';
+import 'brand.dart';
 import 'changes.dart';
 
 enum ThemeChoice { system, light, dark }
@@ -18,7 +19,7 @@ class Session extends ChangeNotifier {
   late SharedPreferences _prefs;
 
   Map<String, dynamic>? user;
-  String tuitionName = 'Core Academy';
+  String tuitionName = appName;
   ThemeChoice theme = ThemeChoice.system;
   bool restored = false;
 
@@ -56,7 +57,7 @@ class Session extends ChangeNotifier {
   Future<void> loadPrefs() async {
     _prefs = await SharedPreferences.getInstance();
     theme = ThemeChoice.values.firstWhere((t) => t.name == _prefs.getString('theme'), orElse: () => ThemeChoice.system);
-    tuitionName = _prefs.getString('tuition_name') ?? 'Core Academy';
+    tuitionName = _prefs.getString('tuition_name') ?? appName;
   }
 
   Future<void> restore() async {

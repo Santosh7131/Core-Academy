@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'core/api.dart';
+import 'core/brand.dart';
 import 'core/changes.dart';
 import 'core/device.dart';
 import 'core/push.dart';
@@ -110,7 +111,7 @@ class _CoreAcademyAppState extends State<CoreAcademyApp> with WidgetsBindingObse
       child: Listener(
         onPointerDown: (_) => changes.lastTouch = DateTime.now(),
         child: MaterialApp.router(
-          title: 'Core Academy',
+          title: appName,
           debugShowCheckedModeBanner: false,
           theme: theme,
           routerConfig: _router,

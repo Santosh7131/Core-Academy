@@ -133,11 +133,12 @@ class _LogScreenState extends State<LogScreen> {
     final who = '${e['who'] ?? ''}';
     final (IconData icon, Color fg, Color bgc, String title, String meta) = switch (kind) {
       'login' => (
-          what == 'ok' ? Ph.key : Ph.lockKey,
-          what == 'ok' ? success : danger,
-          what == 'ok' ? successSoft : dangerSoft,
+          what == 'ok' || what == 'signup' ? Ph.key : Ph.lockKey,
+          what == 'ok' || what == 'signup' ? success : danger,
+          what == 'ok' || what == 'signup' ? successSoft : dangerSoft,
           switch (what) {
             'ok' => '$who logged in',
+            'signup' => '$who signed up as a tutor',
             'wrong_secret' => '$who: wrong PIN or password',
             'lockout' => '$who locked after 5 wrong tries',
             'locked' => '$who tried while locked',

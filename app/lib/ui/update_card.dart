@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../core/brand.dart';
 import '../core/updater.dart';
 import '../theme.dart';
 import 'kit.dart';
@@ -39,14 +40,14 @@ class UpdateCard extends StatelessWidget {
         ),
       UpdateStep.allow => (
           'Allow updates',
-          'Android asks once if Core Academy may install its own updates. Turn on "Allow from this source", then come back here.',
+          'Android asks once if $appName may install its own updates. Turn on "Allow from this source", then come back here.',
         ),
       UpdateStep.downloading => ('Downloading version ${r.version}', '${(updater.progress * 100).floor()}% of ${_mb(r.size)}'),
       UpdateStep.installing => (
           'Installing version ${r.version}',
           updater.silent
-              ? 'Core Academy closes for a moment while the update goes in. Then open it again.'
-              : 'Tap Update when Android asks. Core Academy closes for a moment while the update goes in.',
+              ? '$appName closes for a moment while the update goes in. Then open it again.'
+              : 'Tap Update when Android asks. $appName closes for a moment while the update goes in.',
         ),
       UpdateStep.failed => ('The update did not finish', updater.problem ?? 'Try again.'),
     };
