@@ -23,6 +23,9 @@ class Session extends ChangeNotifier {
   ThemeChoice theme = ThemeChoice.system;
   bool restored = false;
 
+  /// The opening animation has played (or was skipped). The router leaves the start screen once this and [restored] are both true.
+  bool splashDone = false;
+
   /// The tuitions the person is in or waiting to join: {id, name, role, status, class_level, join_code?}.
   List<Map<String, dynamic>> tuitions = [];
 
@@ -119,6 +122,12 @@ class Session extends ChangeNotifier {
 
   /// Tells listeners something this class holds was changed from outside (the router checks it again).
   void changed() => notifyListeners();
+
+  void finishSplash() {
+    if (splashDone) return;
+    splashDone = true;
+    notifyListeners();
+  }
 
   Future<void> login(String username, String secret) async {
     final r = await api.post('/auth/login', {'username': username.trim().toLowerCase(), 'secret': secret});

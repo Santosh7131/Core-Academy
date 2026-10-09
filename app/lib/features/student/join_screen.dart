@@ -102,13 +102,6 @@ class _JoinScreenState extends State<JoinScreen> with WidgetsBindingObserver, Au
                   Kicker(_waiting ? 'Welcome' : 'Your tuitions'),
                   const SizedBox(height: 6),
                   Text('Join a tuition', style: displayStyle),
-                  const SizedBox(height: 10),
-                  Fig(
-                    _waiting
-                        ? 'Ask your tutor for their join code and enter it below.'
-                        : 'Enter the code from another tutor to join their tuition as well.',
-                    style: bodyStyle.copyWith(color: muted),
-                  ),
                   if (session.tuitions.isNotEmpty) ...[
                     SectionRule('Your tuitions', count: session.tuitions.length, padding: const EdgeInsets.fromLTRB(0, 26, 0, 11)),
                     for (final (i, t) in session.tuitions.indexed) ...[
@@ -137,7 +130,7 @@ class _JoinScreenState extends State<JoinScreen> with WidgetsBindingObserver, Au
                   if (_error != null) ...[const SizedBox(height: 14), InlineNotice(_error!, icon: Ph.warning)],
                   if (_sent != null) ...[const SizedBox(height: 14), InlineNotice(_sent!, tone: Tone.success, icon: Ph.checkCircle)],
                   const SizedBox(height: 18),
-                  PrimaryButton(_busy ? 'Sending' : 'Ask to join', onTap: _busy ? null : _join),
+                  PrimaryButton('Ask to join', busy: _busy, onTap: _join),
                   if (_waiting) ...[
                     const SizedBox(height: 22),
                     Center(

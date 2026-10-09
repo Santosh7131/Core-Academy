@@ -2,6 +2,7 @@
 // fonts, answers from a stub server. Without SHOTS=1 it only checks that each screen builds.
 //   SHOTS=1 flutter test test/shots/screens_test.dart
 // Pictures go to ../tools/out/shots (git-ignored).
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -9,12 +10,12 @@ import 'dart:ui' as ui;
 import 'package:core_academy/core/api.dart';
 import 'package:core_academy/core/session.dart';
 import 'package:core_academy/features/auth/login_screen.dart';
+import 'package:core_academy/features/auth/start_screen.dart';
 import 'package:core_academy/features/auth/signup_screen.dart';
 import 'package:core_academy/features/student/home_screen.dart';
 import 'package:core_academy/features/student/join_screen.dart';
 import 'package:core_academy/features/student/profile_screen.dart';
 import 'package:core_academy/features/student/result_screen.dart';
-import 'package:core_academy/features/student/test_intro_screen.dart';
 import 'package:core_academy/features/student/test_screen.dart';
 import 'package:core_academy/features/teacher/group_screens.dart';
 import 'package:core_academy/features/teacher/join_requests_screen.dart';
@@ -41,8 +42,14 @@ String _iso(Duration from) => DateTime.now().add(from).toUtc().toIso8601String()
 /// What the stub server answers, by path. Replaced by each test.
 final routes = <String, Object? Function(http.Request)>{};
 
+/// A route that answers only when its future completes, so a screen can be drawn while it waits.
+final holds = <String, Future<void>>{};
+
 Future<http.Response> _answer(http.Request r) async {
-  final h = routes['${r.method} ${r.url.path}'] ?? routes[r.url.path];
+  final key = '${r.method} ${r.url.path}';
+  final hold = holds[key] ?? holds[r.url.path];
+  if (hold != null) await hold;
+  final h = routes[key] ?? routes[r.url.path];
   if (h == null) {
     return http.Response(jsonEncode({'error': {'code': 'not_found', 'message': 'No stub for ${r.url.path}'}}), 404);
   }
@@ -67,7 +74,7 @@ Future<void> _show(WidgetTester t, Widget screen, {bool dark = false, double hei
 }
 
 Future<void> _settle(WidgetTester t) async {
-  for (var i = 0; i < 10; i++) {
+  for (var i = 0; i < 34; i++) {
     await t.pump(const Duration(milliseconds: 60));
   }
 }
@@ -103,6 +110,17 @@ void _sessionAs({required String role, List<Map<String, dynamic>> tuitions = con
   if (active != null) session.tuitionName = '${active['name']}';
 }
 
+/// A screenshot test. Tests draw shadows as flat blocks by default; the pictures should show them as a phone
+/// does, and the test framework wants the default back before the test ends.
+void shotTest(String name, Future<void> Function(WidgetTester t) body) => testWidgets(name, (t) async {
+      debugDisableShadows = false;
+      try {
+        await body(t);
+      } finally {
+        debugDisableShadows = true;
+      }
+    });
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -113,27 +131,69 @@ void main() {
       final loader = FontLoader(family)..addFont(rootBundle.load(asset));
       await loader.load();
     }
+    // The maths package's own fonts, so formulas draw as they do on a phone and not as boxes.
+    const katex = {
+      'KaTeX_Main': ['Regular', 'Italic', 'Bold', 'BoldItalic'],
+      'KaTeX_Math': ['Italic', 'BoldItalic'],
+      'KaTeX_AMS': ['Regular'],
+      'KaTeX_Size1': ['Regular'],
+      'KaTeX_Size2': ['Regular'],
+      'KaTeX_Size3': ['Regular'],
+      'KaTeX_Size4': ['Regular'],
+      'KaTeX_SansSerif': ['Regular', 'Italic', 'Bold'],
+      'KaTeX_Typewriter': ['Regular'],
+    };
+    for (final e in katex.entries) {
+      final loader = FontLoader('packages/flutter_math_fork/${e.key}');
+      for (final style in e.value) {
+        loader.addFont(rootBundle.load('packages/flutter_math_fork/lib/katex_fonts/fonts/${e.key}-$style.ttf'));
+      }
+      await loader.load();
+    }
     // The first use of the API client makes its http client, so it is made with the stub.
     http.runWithClient(() => api.token = 'test', () => MockClient(_answer));
   });
 
   setUp(routes.clear);
 
-  testWidgets('login, as a tutor', (t) async {
+  shotTest('login, as a tutor', (t) async {
     api.token = null;
     session.user = null;
     session.tuitionName = 'Core Academy';
+    await _both(t, 'login-student', () => const LoginScreen());
     await _both(t, 'login-tutor', () => const LoginScreen(), then: (t) async {
-      await t.tap(find.text('I am a tutor'));
+      await t.tap(find.text('Tutor'));
       await _settle(t);
     });
   });
 
-  testWidgets('sign up', (t) async {
+  shotTest('the opening', (t) async {
+    session.splashDone = false;
+    session.restored = false;
+    setResolvedDark(false);
+    t.view.physicalSize = const Size(1080, 2400);
+    t.view.devicePixelRatio = _ratio;
+    addTearDown(t.view.reset);
+    await t.pumpWidget(RepaintBoundary(
+      key: _boundary,
+      child: MaterialApp(debugShowCheckedModeBanner: false, theme: buildTheme(Brightness.light), home: const StartScreen()),
+    ));
+    await t.pump();
+    await t.pump(const Duration(milliseconds: 350));
+    await _shot(t, 'opening-1');
+    await t.pump(const Duration(milliseconds: 450));
+    await _shot(t, 'opening-2');
+    await t.pump(const Duration(milliseconds: 1100));
+    await _shot(t, 'opening-3');
+    await t.pumpWidget(const SizedBox.shrink());
+    session.restored = true;
+  });
+
+  shotTest('sign up', (t) async {
     await _both(t, 'signup', () => const TutorSignUpScreen());
   });
 
-  testWidgets('set up the tuition', (t) async {
+  shotTest('set up the tuition', (t) async {
     _sessionAs(role: 'teacher');
     routes['/auth/standard-subjects'] = (_) => {
           'subjects': [for (final (i, n) in ['Maths', 'Science', 'Physics', 'Chemistry', 'Biology', 'English', 'Hindi', 'Tamil', 'Social Science', 'Computer Science'].indexed) {'id': 'std-$i', 'name': n}],
@@ -168,13 +228,13 @@ void main() {
     }
   });
 
-  testWidgets('the join code', (t) async {
+  shotTest('the join code', (t) async {
     _sessionAs(role: 'teacher', tuitions: [{'id': 't-1', 'name': 'Priya Maths Classes', 'role': 'owner', 'status': 'active'}]);
     routes['/teacher/tuition'] = (_) => {'tuition': _tuition()};
     await _both(t, 'code-first', () => const ShareCodeScreen(first: true));
   });
 
-  testWidgets('join requests', (t) async {
+  shotTest('join requests', (t) async {
     _sessionAs(role: 'teacher', tuitions: [{'id': 't-1', 'name': 'Priya Maths Classes', 'role': 'owner', 'status': 'active'}]);
     routes['/teacher/join-requests'] = (_) => {
           'requests': [
@@ -199,7 +259,7 @@ void main() {
     }
   });
 
-  testWidgets('tutor home', (t) async {
+  shotTest('tutor home', (t) async {
     _sessionAs(role: 'teacher', tuitions: [{'id': 't-1', 'name': 'Priya Maths Classes', 'role': 'owner', 'status': 'active'}]);
     Map<String, Object?> group(int cls, String subject, int students, {List<Object?> live = const [], List<Object?> posted = const []}) =>
         {'class_level': cls, 'subject_id': 'sub-$subject', 'subject': subject, 'students': students, 'live': live, 'posted': posted};
@@ -231,7 +291,7 @@ void main() {
     await _both(t, 'home-new', () => const Scaffold(body: TutorHome()));
   });
 
-  testWidgets('settings', (t) async {
+  shotTest('settings', (t) async {
     _sessionAs(role: 'teacher', tuitions: [{'id': 't-1', 'name': 'Priya Maths Classes', 'role': 'owner', 'status': 'active'}]);
     routes['/teacher/settings'] = (_) => {
           'tuition_name': 'Priya Maths Classes', 'tuition': {'id': 't-1', 'name': 'Priya Maths Classes', 'role': 'owner'},
@@ -254,7 +314,7 @@ void main() {
     await _both(t, 'settings', () => const SettingsScreen(), height: 5600);
   });
 
-  testWidgets('student join', (t) async {
+  shotTest('student join', (t) async {
     // Waiting to be let into the first tuition.
     _sessionAs(role: 'student', tuitions: [{'id': 't-1', 'name': 'Priya Maths Classes', 'role': 'student', 'status': 'pending', 'class_level': 9}]);
     await _both(t, 'join-waiting', () => const JoinScreen());
@@ -266,7 +326,7 @@ void main() {
     await _both(t, 'join-second', () => const JoinScreen());
   });
 
-  testWidgets('student home with two tuitions', (t) async {
+  shotTest('student home with two tuitions', (t) async {
     _sessionAs(role: 'student', tuitions: [
       {'id': 't-1', 'name': 'Priya Maths Classes', 'role': 'student', 'status': 'active', 'class_level': 9},
       {'id': 't-2', 'name': 'Ravi Science Tuition', 'role': 'student', 'status': 'active', 'class_level': 9},
@@ -287,6 +347,10 @@ void main() {
           ],
         };
     await _both(t, 'student-home', () => const StudentHome());
+    await _both(t, 'student-start', () => const StudentHome(), then: (t) async {
+      await t.tap(find.text('Start test').first);
+      await _settle(t);
+    });
     for (final dark in [false, true]) {
       await _show(t, const StudentHome(), dark: dark);
       await t.tap(find.byWidgetPredicate((w) => w is Text && (w.textSpan?.toPlainText() ?? w.data ?? '').contains('PRIYA MATHS CLASSES')).first);
@@ -297,7 +361,7 @@ void main() {
   });
 
   // ---- the screens as they are today, for comparing with the redesign comps (design/comps/s2-*.html)
-  testWidgets('student: taking a test', (t) async {
+  shotTest('student: taking a test', (t) async {
     _sessionAs(role: 'student', tuitions: [{'id': 't-1', 'name': 'Priya Maths Classes', 'role': 'student', 'status': 'active', 'class_level': 9}]);
     routes['POST /student/tests/a/start'] = (_) => {
           'attempt': {'id': 'att-1', 'server_now': _iso(Duration.zero), 'title': 'Linear equations', 'deadline_at': _iso(const Duration(minutes: 14, seconds: 42))},
@@ -314,21 +378,7 @@ void main() {
     await _both(t, 'test-taking', () => const TestScreen(testId: 'a'));
   });
 
-  testWidgets('student: the page before a test', (t) async {
-    _sessionAs(role: 'student', tuitions: [{'id': 't-1', 'name': 'Priya Maths Classes', 'role': 'student', 'status': 'active', 'class_level': 9}]);
-    routes['/student/home'] = (_) => {
-          'server_now': _iso(Duration.zero),
-          'tests': [
-            {
-              'id': 'a', 'title': 'Linear equations', 'class_level': 9, 'time_limit_min': 20, 'opens_at': null, 'closes_at': _iso(const Duration(hours: 3)),
-              'question_count': 12, 'max_marks': 12, 'state': 'open', 'retake': false, 'results_open': false, 'attempt': null,
-            },
-          ],
-        };
-    await _both(t, 'test-intro', () => const TestIntroScreen(testId: 'a'));
-  });
-
-  testWidgets('student: a result', (t) async {
+  shotTest('student: a result', (t) async {
     _sessionAs(role: 'student', tuitions: [{'id': 't-1', 'name': 'Priya Maths Classes', 'role': 'student', 'status': 'active', 'class_level': 9}]);
     final marks = [true, true, true, false, true, true, true, true, false, true];
     final names = [
@@ -351,7 +401,7 @@ void main() {
     await _both(t, 'result', () => const ResultScreen(attemptId: 'att-9'), height: 3000);
   });
 
-  testWidgets('tutor: a student', (t) async {
+  shotTest('tutor: a student', (t) async {
     _sessionAs(role: 'teacher', tuitions: [{'id': 't-1', 'name': 'Priya Maths Classes', 'role': 'owner', 'status': 'active'}]);
     routes['/teacher/students/s-1'] = (_) => {
           'student': {
@@ -372,10 +422,14 @@ void main() {
           ],
           'missed': [{'id': 'x', 'title': 'Unit test 2', 'closes_at': _iso(const Duration(days: -6))}],
         };
-    await _both(t, 'tutor-student', () => const StudentDetailScreen(id: 's-1'), height: 4400);
+    await _both(t, 'tutor-student', () => const StudentDetailScreen(id: 's-1'), height: 2600);
+    await _both(t, 'tutor-student-menu', () => const StudentDetailScreen(id: 's-1'), height: 2400, then: (t) async {
+      await t.tap(find.bySemanticsLabel('More'));
+      await _settle(t);
+    });
   });
 
-  testWidgets('tutor: checking a paper', (t) async {
+  shotTest('tutor: checking a paper', (t) async {
     _sessionAs(role: 'teacher', tuitions: [{'id': 't-1', 'name': 'Priya Maths Classes', 'role': 'owner', 'status': 'active'}]);
     var seq = 0;
     Map<String, Object?> d(String n, int page, String text, List<String> opts,
@@ -409,7 +463,48 @@ void main() {
     await _both(t, 'paper-check', () => const PaperReviewScreen(id: 'p-1'), height: 4000);
   });
 
-  testWidgets('student profile', (t) async {
+  shotTest('tutor: adding a paper', (t) async {
+    _sessionAs(role: 'teacher', tuitions: [{'id': 't-1', 'name': 'Priya Maths Classes', 'role': 'owner', 'status': 'active'}]);
+    await _both(t, 'upload-add', () => const UploadPaperScreen(classLevel: 10, subjectId: 'sub-0', subjectName: 'Maths'));
+  });
+
+  shotTest('tutor: a paper being read', (t) async {
+    _sessionAs(role: 'teacher', tuitions: [{'id': 't-1', 'name': 'Priya Maths Classes', 'role': 'owner', 'status': 'active'}]);
+    final gate = Completer<void>();
+    holds['POST /teacher/papers/p-2/pages/2/read'] = gate.future;
+    holds['POST /teacher/papers/p-2/pages/3/read'] = gate.future;
+    holds['POST /teacher/papers/p-2/pages/4/read'] = gate.future;
+    Map<String, Object?> d(int n, int page, String text, {int? correct}) => {
+          'id': 'r-$n', 'paper_id': 'p-2', 'page_no': page, 'seq': n, 'number_label': '$n', 'kind': 'mcq', 'status': 'draft', 'text': text,
+          'options': ['1', '2', '3', '4'], 'correct_option': correct, 'answer_source': correct == null ? null : 'ai', 'ai_confidence': correct == null ? null : 0.98,
+          'ai_note': null, 'ai_picks': null, 'ai_votes': null, 'proposed_option': null, 'answer_checked': correct != null, 'needs_diagram': false, 'image_key': null,
+          'image_url': null, 'chapter': null, 'chapter_id': null, 'ai_chapter_guess': null,
+        };
+    routes['/teacher/papers/p-2'] = (_) => {
+          'paper': {
+            'id': 'p-2', 'class_level': 10, 'exam_name': 'Paper 10 Oct', 'category': null, 'subject': 'Maths', 'subject_id': 'sub-0', 'chapter': null,
+            'chapter_id': null, 'ai_details': {'ok': true}, 'page_count': 4, 'missing': <String>[],
+          },
+          'pages': [
+            for (var i = 1; i <= 4; i++) {'page_no': i, 'ai_status': i == 1 ? 'done' : (i == 2 ? 'reading' : 'pending'), 'uploaded': true, 'image_url': null},
+          ],
+          'drafts': [
+            d(1, 1, 'The decimal expansion of 17 over 8 terminates after how many places?', correct: 2),
+            d(2, 1, 'If one zero of x squared plus kx minus 6 is 2, then k is', correct: 1),
+            d(3, 1, 'The common difference of the AP is', correct: 0),
+            d(4, 1, 'The sum of the roots is'),
+            d(5, 1, 'The distance between the points is', correct: 2),
+            d(6, 1, 'Which of these is a quadratic equation?'),
+          ],
+          'chapters': <Object?>[], 'questions': <Object?>[], 'tests': <Object?>[],
+        };
+    routes['POST /teacher/papers/p-2/answers'] = (_) => {'from_key': 0, 'by_ai': 0, 'tried': 0, 'left': 0, 'second': 0};
+    await _both(t, 'paper-reading', () => const PaperReviewScreen(id: 'p-2', autoRead: true), height: 2400);
+    gate.complete();
+    holds.clear();
+  });
+
+  shotTest('student profile', (t) async {
     _sessionAs(role: 'student', tuitions: [
       {'id': 't-1', 'name': 'Priya Maths Classes', 'role': 'student', 'status': 'active', 'class_level': 9},
       {'id': 't-2', 'name': 'Ravi Science Tuition', 'role': 'student', 'status': 'active', 'class_level': 9},

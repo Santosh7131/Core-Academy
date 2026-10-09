@@ -38,9 +38,10 @@ const _unnamed = 'New paper';
 /// Pages first: AI works out the rest once they are uploaded.
 class UploadPaperScreen extends StatefulWidget {
   /// From a group's page: the paper's class and subject are the group's.
-  const UploadPaperScreen({super.key, this.classLevel, this.subjectId});
+  const UploadPaperScreen({super.key, this.classLevel, this.subjectId, this.subjectName});
   final int? classLevel;
   final String? subjectId;
+  final String? subjectName;
 
   @override
   State<UploadPaperScreen> createState() => _UploadPaperScreenState();
@@ -139,72 +140,98 @@ class _UploadPaperScreenState extends State<UploadPaperScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final full = _pages.length >= 20;
+    final locked = _busy || _pages.length >= 20;
+    final subject = widget.subjectName;
     return PushedPanel(
-      kicker: 'Question paper',
-      title: 'Upload paper',
+      kicker: widget.classLevel != null && subject != null && subject.isNotEmpty ? groupName(widget.classLevel!, subject) : 'Question paper',
+      title: 'Add the paper',
       footer: PrimaryButton(
-        _status ?? 'Read with AI',
-        leadingIcon: _busy ? null : Ph.scan,
+        _status ?? (_pages.isEmpty ? 'Read with AI' : 'Read ${f.count(_pages.length, 'page')} with AI'),
+        leadingIcon: Ph.scan,
+        busy: _busy,
         onTap: _pages.isNotEmpty && !_busy ? _upload : null,
         disabledReason: _busy ? null : (_pages.isEmpty ? 'Add at least one page.' : null),
       ),
       children: [
         const SizedBox(height: 14),
-        Fig(
-          'Add the pages, including the answer key if the paper has one. AI reads them, names the paper and marks the '
-          'answers it can. You check everything before it is saved.',
-          style: bodyStyle.copyWith(color: muted),
-        ),
-        FormLabel(_pages.isEmpty ? 'Pages' : 'Pages · ${_pages.length}'),
-        if (_pages.isNotEmpty) ...[
-          Wrap(spacing: 10, runSpacing: 10, children: [
-            for (final (i, b) in _pages.indexed)
-              Stack(clipBehavior: Clip.none, children: [
-                Container(
-                  width: 84,
-                  height: 112,
-                  decoration: surface(radius: rSmall, shadow: e1),
-                  clipBehavior: Clip.antiAlias,
-                  child: Image.memory(b, fit: BoxFit.cover),
-                ),
-                Positioned(left: 6, bottom: 6, child: TagChip('${i + 1}')),
-                Positioned(
-                  right: -8,
-                  top: -8,
-                  child: CircleBtn(icon: Ph.x, size: 30, label: 'Remove page ${i + 1}', onTap: _busy ? null : () => setState(() => _pages.removeAt(i))),
-                ),
-              ]),
+        Fig('Include the answer key if the paper has one.', style: bodyStyle.copyWith(color: muted)),
+        const SizedBox(height: 20),
+        Surface(
+          child: Column(children: [
+            _SourceRow(icon: Ph.camera, title: 'Take photos', caption: 'One for each page, in good light', onTap: locked ? null : _camera),
+            _SourceRow(icon: Ph.images, title: 'Choose from the gallery', caption: 'Photos you already took', onTap: locked ? null : _gallery),
+            _SourceRow(icon: Ph.filePdf, title: 'Pick a PDF', caption: 'Up to 20 pages', onTap: locked ? null : _pdf, last: true),
           ]),
-          const SizedBox(height: 14),
+        ),
+        if (_pages.isNotEmpty) ...[
+          SectionRule('Pages', count: _pages.length, padding: const EdgeInsets.fromLTRB(0, 28, 0, 14)),
+          Wrap(spacing: 12, runSpacing: 14, children: [
+            for (final (i, b) in _pages.indexed)
+              Reveal(
+                dy: 8,
+                child: Stack(clipBehavior: Clip.none, children: [
+                  Container(
+                    width: 72,
+                    height: 96,
+                    decoration: surface(radius: 12, shadow: e1),
+                    clipBehavior: Clip.antiAlias,
+                    child: Image.memory(b, fit: BoxFit.cover),
+                  ),
+                  Positioned(left: 6, bottom: 6, child: TagChip('${i + 1}')),
+                  Positioned(
+                    right: -8,
+                    top: -8,
+                    child: CircleBtn(icon: Ph.x, size: 28, label: 'Remove page ${i + 1}', filled: true, onTap: _busy ? null : () => setState(() => _pages.removeAt(i))),
+                  ),
+                ]),
+              ),
+          ]),
         ],
-        Row(children: [
-          Expanded(child: SecondaryButton('Camera', icon: Ph.camera, onTap: _busy || full ? null : _camera)),
-          const SizedBox(width: 8),
-          Expanded(child: SecondaryButton('Gallery', icon: Ph.images, onTap: _busy || full ? null : _gallery)),
-          const SizedBox(width: 8),
-          Expanded(child: SecondaryButton('PDF', icon: Ph.filePdf, onTap: _busy || full ? null : _pdf)),
-        ]),
-        const SizedBox(height: 10),
-        Fig('Lay the paper flat in good light, with the whole page in the photo. Up to 20 pages.', style: labelStyle),
       ],
     );
   }
 }
 
+/// One way of adding pages: its icon, what it does, a caret.
+class _SourceRow extends StatelessWidget {
+  const _SourceRow({required this.icon, required this.title, required this.caption, required this.onTap, this.last = false});
+  final IconData icon;
+  final String title;
+  final String caption;
+  final VoidCallback? onTap;
+  final bool last;
+
+  @override
+  Widget build(BuildContext context) => Pressable(
+        label: title,
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(17, 14, 15, 14),
+          decoration: last ? null : BoxDecoration(border: Border(bottom: BorderSide(color: hairline))),
+          child: Row(children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(color: fill, borderRadius: BorderRadius.circular(13)),
+              child: Icon(icon, size: 21, color: onTap == null ? faint : ink),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(title, style: rowTitleStyle.copyWith(color: onTap == null ? muted : ink)),
+                const SizedBox(height: 2),
+                Fig(caption, style: labelStyle),
+              ]),
+            ),
+            Icon(Ph.caretRight, size: 16, color: faint),
+          ]),
+        ),
+      );
+}
+
 // ---------------------------------------------------------------- review
 
-enum _Filter { toCheck, ready, byAi, other, saved, skipped, all }
-
-const _filterLabels = {
-  _Filter.toCheck: 'To check',
-  _Filter.ready: 'Ready to save',
-  _Filter.byAi: 'Answered by AI',
-  _Filter.other: 'Not multiple choice',
-  _Filter.saved: 'Saved',
-  _Filter.skipped: 'Skipped',
-  _Filter.all: 'All questions',
-};
+enum _Filter { toCheck, ready, other, saved, skipped }
 
 /// One uploaded paper. AI first works out its details (the teacher fills in what it could not
 /// find), reads every page and looks for the answers; the teacher checks and saves. Once every
@@ -234,7 +261,8 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
   /// What AI is doing right now ("Reading page 2 of 4"), and why it last stopped.
   String? _working;
   String? _aiError;
-  String? _answerNote;
+  bool _bulk = false;
+  final Set<String> _openRows = {};
   String? _saved;
   bool _saving = false;
   bool _making = false;
@@ -384,6 +412,7 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
   Future<void> _run() async {
     if (_running || _paper == null) return;
     _running = true;
+    _bulk = true;
     setState(() => _aiError = null);
     try {
       // The paper's title is asked for alongside the reading and never waited for: a paper that AI could not name
@@ -397,10 +426,12 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
       await _load();
       // The paper is ready to review now. Questions the first two checks could not settle get a second
       // opinion from a stronger model while the tutor reads on.
+      _bulk = false;
       if (mounted) setState(() => _working = null);
       await _secondOpinions();
     } finally {
       _running = false;
+      _bulk = false;
       _busyUntil = null;
       if (mounted) setState(() => _working = null);
     }
@@ -435,7 +466,6 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
     } finally {
       if (mounted) setState(() => _asking = false);
     }
-    if (mounted) _summarise(filter: false);
   }
 
   /// Reads the pages that are not done yet, [_readWidth] at a time, and looks for answers to the
@@ -522,41 +552,10 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
     _summarise();
   }
 
-  /// Says what AI found, counted from the questions as they now are (answers marked in a call
-  /// that then had to wait still count). [filter] also points the list at what needs the tutor first.
-  void _summarise({bool filter = true}) {
-    final waiting = _drafts.where((d) => d['status'] == 'draft' && d['kind'] == 'mcq').toList();
-    final open = waiting.where((d) => d['correct_option'] == null).length;
-    final keyed = waiting.where((d) => d['answer_source'] == 'key').length;
-    final byAi = waiting.where((d) => d['answer_source'] == 'ai').length;
-    final notes = [
-      if (keyed > 0) '${f.count(keyed, 'answer')} from the paper\'s answer key',
-      if (byAi > 0) '${f.count(byAi, 'answer')} worked out by AI',
-    ];
-    // Questions AI could not read whole, or that no option fits: the teacher fixes those first.
-    final suspect = waiting.where((d) => d['correct_option'] == null && (d['ai_note'] == 'unclear' || d['ai_note'] == 'no_option')).length;
-    final repeats = _drafts.where((d) => d['status'] == 'discarded' && d['ai_note'] == 'duplicate').length;
-    // Questions the AI models were split on, or not sure of: a stronger model is asked about those, and what it
-    // cannot settle is left to the tutor, with what each chose on the card.
-    final pending = waiting.where((d) => d['correct_option'] == null && d['ai_votes'] != null).length;
-    final split = waiting.where((d) => d['correct_option'] == null && d['ai_votes'] == null && (d['ai_note'] == 'disagree' || d['ai_note'] == 'unsure')).length;
-    final more = [
-      if (suspect > 0) '${f.count(suspect, 'question')} could not be read whole or may be misprinted: check ${suspect == 1 ? 'it' : 'each'}, then ask for the answer.',
-      if (pending > 0) '${f.count(pending, 'question')} ${pending == 1 ? 'is' : 'are'} getting a second opinion from a stronger AI model.',
-      if (split > 0) '${f.count(split, 'question')} ${split == 1 ? 'is' : 'are'} left to you because the AI models were split or not sure. Each card says what they chose.',
-      if (repeats > 0) '${f.count(repeats, 'question')} repeated earlier ones, so AI skipped ${repeats == 1 ? 'it' : 'them'}.',
-    ];
-    setState(() {
-      _answerNote = [
-        waiting.isEmpty
-            ? 'AI found no multiple-choice questions on these pages.'
-            : notes.isEmpty
-                ? 'AI was not sure of any answer, so none are marked.${open > 0 ? ' Mark them yourself.' : ''}'
-                : '${notes.join(', ')}.${open > 0 ? ' Mark the other $open yourself.' : ''} Check them before saving.',
-        ...more,
-      ].join(' ');
-      if (filter) _filter = open > 0 ? _Filter.toCheck : _Filter.ready;
-    });
+  /// Points the list at what needs the tutor first, or at the ready questions when nothing does.
+  void _summarise() {
+    final open = _drafts.where((d) => d['status'] == 'draft' && d['kind'] == 'mcq' && d['correct_option'] == null).length;
+    setState(() => _filter = open > 0 ? _Filter.toCheck : _Filter.ready);
   }
 
   bool _isReady(Map<String, dynamic> d) =>
@@ -565,11 +564,9 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
   bool _matches(Map<String, dynamic> d) => switch (_filter) {
         _Filter.toCheck => d['status'] == 'draft' && d['kind'] == 'mcq' && !_isReady(d),
         _Filter.ready => _isReady(d),
-        _Filter.byAi => d['status'] == 'draft' && d['answer_source'] == 'ai',
         _Filter.other => d['status'] == 'draft' && d['kind'] == 'other',
         _Filter.saved => d['status'] == 'saved',
         _Filter.skipped => d['status'] == 'discarded',
-        _Filter.all => d['status'] != 'discarded',
       };
 
   Map<String, dynamic> _withChapter(Map<String, dynamic> d) {
@@ -711,7 +708,6 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
       final already = r['already_in_bank'] as int? ?? 0;
       _saved = 'Saved ${f.count(r['saved'] as int, 'question')}.'
           '${already > 0 ? ' ${f.count(already, 'question')} ${already == 1 ? 'was' : 'were'} saved before, so ${already == 1 ? 'it was' : 'they were'} skipped.' : ''}';
-      _answerNote = null;
       await _load();
       // Everything checked: offer to publish it straight away.
       if (r['still_to_check'] == 0) await _offerIfDone();
@@ -755,12 +751,9 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
       context,
       title: 'Publish it as a test?',
       builder: (ctx) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Fig(
-          'All ${f.count(n, 'question')} go into "${paperName(p)}", with ${_limitFor(n)} minutes to write it. '
-          'It goes to $who, who can start as soon as it is published. It closes ${f.when(defaultClosing())}. '
-          'Students see their marks after that, or once everyone has finished.',
-          style: bodyStyle.copyWith(color: muted),
-        ),
+        Fig('${f.count(n, 'question')} · ${_limitFor(n)} min · closes ${f.when(defaultClosing())}', style: labelStyle.copyWith(fontSize: 12.5), numColor: ink),
+        const SizedBox(height: 10),
+        Fig('Goes to $who. Students see their marks after it closes, or once everyone has finished.', style: bodyStyle.copyWith(color: muted)),
         if (students == 0) ...[
           const SizedBox(height: 12),
           InlineNotice('No student is in $group yet, so nobody would see it. Add students to the group first.', icon: Ph.warning),
@@ -835,11 +828,9 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
     final counts = {
       _Filter.toCheck: toCheck,
       _Filter.ready: ready,
-      _Filter.byAi: live.where((d) => d['status'] == 'draft' && d['answer_source'] == 'ai').length,
       _Filter.other: live.where((d) => d['status'] == 'draft' && d['kind'] == 'other').length,
       _Filter.saved: live.where((d) => d['status'] == 'saved').length,
       _Filter.skipped: _drafts.where((d) => d['status'] == 'discarded').length,
-      _Filter.all: live.length,
     };
     final unread = _pages.where((x) => x['ai_status'] != 'done').length;
 
@@ -856,6 +847,25 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
     );
   }
 
+  /// How far AI has got, for the reader card: pages first, then the answers.
+  ({int done, int total, String unit, String line}) _readerFacts(List<Map<String, dynamic>> live) {
+    final pages = _pages.length;
+    final pagesDone = _pages.where((x) => x['ai_status'] == 'done').length;
+    final mcq = live.where((d) => d['status'] == 'draft' && d['kind'] == 'mcq').toList();
+    if (pagesDone < pages) {
+      final marked = mcq.where((d) => d['correct_option'] != null).length;
+      return (
+        done: pagesDone,
+        total: pages,
+        unit: pages == 1 ? 'page read' : 'pages read',
+        line: mcq.isEmpty ? 'Reading the first page.' : '${f.count(mcq.length, 'question')} found so far, ${f.count(marked, 'answer')} worked out.',
+      );
+    }
+    final toAnswer = mcq.where((d) => d['needs_diagram'] != true).toList();
+    final answered = toAnswer.where((d) => d['correct_option'] != null || d['answer_checked'] == true).length;
+    return (done: answered, total: toAnswer.length, unit: 'answers worked out', line: '${f.count(mcq.length, 'question')} found.');
+  }
+
   Widget _reviewPanel(Map<String, dynamic> p,
       {required List<Map<String, dynamic>> live,
       required Map<_Filter, int> counts,
@@ -863,20 +873,53 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
       required int toCheck,
       required int unread,
       required bool asSet}) {
-    final shown = (_filter == _Filter.skipped ? _drafts : live).where(_matches).toList();
     final needsDetails = _missing.isNotEmpty;
+    final reading = _working != null && _bulk;
+    final shown = (_filter == _Filter.skipped ? _drafts : live).where(_matches).toList();
     final noAnswer = live.where((d) => d['status'] == 'draft' && d['kind'] == 'mcq' && d['correct_option'] == null).length;
     final unanswered = live.where((d) => d['status'] == 'draft' && d['kind'] == 'mcq' && d['correct_option'] == null && d['answer_checked'] != true).length;
     final named = p['exam_name'] != _unnamed;
+    // Questions still needing the tutor, page by page: the badges on the page strip.
+    final issues = <int, int>{};
+    for (final d in live) {
+      if (d['status'] == 'draft' && d['kind'] == 'mcq' && !_isReady(d)) {
+        final n = d['page_no'] as int;
+        issues[n] = (issues[n] ?? 0) + 1;
+      }
+    }
+    final tabs = [
+      (_Filter.toCheck, 'Needs you'),
+      (_Filter.ready, 'Ready'),
+      (_Filter.skipped, 'Skipped'),
+      if ((counts[_Filter.saved] ?? 0) > 0) (_Filter.saved, 'Saved'),
+      if ((counts[_Filter.other] ?? 0) > 0) (_Filter.other, 'Other'),
+    ];
+
+    Widget card(Map<String, dynamic> d) => _DraftCard(
+          d: d,
+          ready: _isReady(d),
+          onMark: d['status'] == 'draft' ? (o) => _mark(d, o) : null,
+          onChapter: d['status'] == 'draft' ? () => _chooseChapter(d) : null,
+          onEdit: d['status'] == 'draft' ? () => _edit(d) : null,
+          onDiagram: d['status'] == 'draft' ? () => _addDiagram(d) : null,
+          onDiscard: d['status'] == 'draft' ? () => _discard(d) : null,
+          onRestore: d['status'] == 'discarded' ? () => _restore(d) : null,
+          onConfirm: d['status'] == 'draft' && d['ai_note'] == 'unclear' ? () => _confirm(d) : null,
+          repeatOf: _repeatOf(d),
+        );
+
+    final facts = reading ? _readerFacts(live) : null;
     return PushedPanel(
+      onRefresh: reading ? null : _load,
       kicker: 'Question paper · ${paperGroup(p)}',
       title: !named ? (_working != null ? 'Reading' : 'New paper') : paperName(p),
       onBack: asSet ? () => setState(() => _review = false) : null,
       headerTrailing: needsDetails ? null : CircleBtn(icon: Ph.pencilSimple, label: 'Paper details', onTap: () => _editDetails(p)),
-      footer: needsDetails
+      footer: needsDetails || reading
           ? null
           : PrimaryButton(
               _saving ? 'Saving' : (ready == 0 ? 'Save ready questions' : 'Save ${f.count(ready, 'ready question')}'),
+              busy: _saving,
               onTap: ready > 0 && !_saving ? _save : null,
               disabledReason: _saving
                   ? null
@@ -889,46 +932,14 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
                               : (live.isEmpty ? 'Nothing to save yet' : 'Everything here is saved or skipped'),
             ),
       children: [
-        const SizedBox(height: 8),
-        if (!needsDetails)
-          _DetailsLine(
-            text: [
-              f.count(live.length, 'question'),
-              p['category'] ?? 'No category',
-              if (p['chapter'] != null) '${p['chapter']}',
-            ].join(' · '),
-            byAi: p['ai_details'] != null,
-            onEdit: () => _editDetails(p),
-          ),
-        const SizedBox(height: 14),
-        SizedBox(
-          height: 84,
-          child: ListView(scrollDirection: Axis.horizontal, clipBehavior: Clip.none, children: [
-            for (final (i, pg) in _pages.indexed) ...[
-              if (i > 0) const SizedBox(width: 10),
-              Pressable(
-                label: 'Open page ${pg['page_no']}',
-                onTap: pg['image_url'] == null
-                    ? null
-                    : () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => _PageView(url: '${pg['image_url']}', n: pg['page_no'] as int))),
-                child: Stack(children: [
-                  Container(
-                    width: 63,
-                    height: 84,
-                    decoration: surface(radius: 10, shadow: e1),
-                    clipBehavior: Clip.antiAlias,
-                    child: pg['image_url'] == null ? null : Image.network('${pg['image_url']}', fit: BoxFit.cover, errorBuilder: (_, _, _) => const SizedBox()),
-                  ),
-                  Positioned(right: 5, bottom: 5, child: TagChip('${pg['page_no']}')),
-                ]),
-              ),
-            ],
-          ]),
-        ),
-        const SizedBox(height: 18),
-        if (_working != null)
-          InlineNotice('$_workingText. This takes a few seconds.', tone: Tone.ai, icon: Ph.scan)
-        else if (needsDetails) ...[
+        const SizedBox(height: 22),
+        if (facts != null) ...[
+          Reveal(scope: this, id: 'reader', child: _AiProgress(done: facts.done, total: facts.total, unit: facts.unit, line: facts.line)),
+          if (facts.unit.startsWith('page') && _pages.length <= 8) ...[
+            const SizedBox(height: 14),
+            _PageRows(pages: _pages, drafts: _drafts),
+          ],
+        ] else if (needsDetails) ...[
           if (_aiError != null) ...[InlineNotice(_aiError!, tone: Tone.danger, icon: Ph.warning), const SizedBox(height: 12)],
           _MissingDetails(
             onSave: (body) async {
@@ -949,16 +960,14 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
             const SizedBox(height: 10),
             SecondaryButton('Read with AI', icon: Ph.scan, tint: aiAccentInk, onTap: _run),
           ])
-        else if (unanswered > 0)
+        else if (unanswered > 0 && !_asking && _working == null)
           Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             InlineNotice('AI has not looked for ${f.count(unanswered, 'answer')} yet.', tone: Tone.ai, icon: Ph.scan),
             const SizedBox(height: 10),
             SecondaryButton('Find answers with AI', icon: Ph.scan, tint: aiAccentInk, onTap: _run),
-          ])
-        else
-          InlineNotice(_answerNote ?? 'Read by AI. Check each question and its answer before saving.', tone: Tone.ai, icon: Ph.scan),
-        if (_asking && _working == null) ...[
-          const SizedBox(height: 10),
+          ]),
+        if (_working != null && !_bulk) InlineNotice('$_workingText.', tone: Tone.ai, icon: Ph.scan),
+        if (_asking && !reading) ...[
           InlineNotice(
             _secondPending == 1
                 ? 'A stronger AI model is taking a second look at 1 question. You can carry on meanwhile.'
@@ -971,55 +980,51 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
           const SizedBox(height: 10),
           InlineNotice(_saved!, tone: Tone.success, icon: Ph.checkCircle),
         ],
-        if (!needsDetails) ...[
-          const SizedBox(height: 16),
-          FilterBar(padding: EdgeInsets.zero, children: [
-            SelectPill(
-              label: _filterLabels[_filter]!,
-              count: counts[_filter],
-              active: _filter != _Filter.all,
-              onTap: () async {
-                final c = await showChoices<_Filter>(
-                  context,
-                  title: 'Show',
-                  options: [for (final x in _Filter.values) Choice(x, _filterLabels[x]!, count: counts[x])],
-                  selected: _filter,
-                );
-                if (c?.value != null) setState(() => _filter = c!.value!);
-              },
+        if (!needsDetails && !reading) ...[
+          if (_pages.isNotEmpty) ...[
+            const SizedBox(height: 18),
+            _PagesStrip(
+              pages: _pages,
+              issues: issues,
+              onOpen: (pg) => Navigator.of(context).push(MaterialPageRoute(builder: (_) => _PageView(url: '${pg['image_url']}', n: pg['page_no'] as int))),
             ),
-          ]),
+          ],
+          const SizedBox(height: 18),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            clipBehavior: Clip.none,
+            child: Row(children: [
+              for (final (i, (flt, name)) in tabs.indexed) ...[
+                if (i > 0) const SizedBox(width: 8),
+                SegChip(name, selected: _filter == flt, count: counts[flt], onTap: () => setState(() => _filter = flt)),
+              ],
+            ]),
+          ),
           const SizedBox(height: 14),
           if (shown.isEmpty)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 24),
               child: Text(
                 switch (_filter) {
-                  _Filter.toCheck => live.isEmpty ? 'Questions appear here once AI has read the pages.' : 'Nothing left to check.',
+                  _Filter.toCheck => live.isEmpty ? 'Questions appear here once AI has read the pages.' : 'Nothing needs you. Save the ready questions.',
                   _Filter.ready => 'Questions with their answer marked appear here.',
-                  _Filter.byAi => 'No answers from AI here.',
                   _Filter.other => 'No written-answer questions on this paper.',
                   _Filter.saved => 'Nothing saved yet.',
                   _Filter.skipped => 'No skipped questions.',
-                  _Filter.all => 'No questions yet.',
                 },
                 style: bodyStyle.copyWith(color: muted),
               ),
             ),
           for (final (i, d) in shown.indexed) ...[
             if (i > 0) const SizedBox(height: gapRow),
-            _DraftCard(
-              d: d,
-              ready: _isReady(d),
-              onMark: d['status'] == 'draft' ? (o) => _mark(d, o) : null,
-              onChapter: d['status'] == 'draft' ? () => _chooseChapter(d) : null,
-              onEdit: d['status'] == 'draft' ? () => _edit(d) : null,
-              onDiagram: d['status'] == 'draft' ? () => _addDiagram(d) : null,
-              onDiscard: d['status'] == 'draft' ? () => _discard(d) : null,
-              onRestore: d['status'] == 'discarded' ? () => _restore(d) : null,
-              onConfirm: d['status'] == 'draft' && d['ai_note'] == 'unclear' ? () => _confirm(d) : null,
-              repeatOf: _repeatOf(d),
-            ),
+            _filter == _Filter.ready
+                ? _ReadyRow(
+                    d: d,
+                    open: _openRows.contains('${d['id']}'),
+                    onTap: () => setState(() => _openRows.contains('${d['id']}') ? _openRows.remove('${d['id']}') : _openRows.add('${d['id']}')),
+                    expanded: card(d),
+                  )
+                : card(d),
           ],
         ],
       ],
@@ -1034,21 +1039,12 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
       kicker: 'Question paper · $group',
       title: paperName(p),
       headerTrailing: CircleBtn(icon: Ph.pencilSimple, label: 'Paper details', onTap: () => _editDetails(p)),
-      footer: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        if (_tests.isEmpty)
-          PrimaryButton(_making ? 'Making the test' : 'Publish as a test', leadingIcon: Ph.exam, onTap: _making ? null : () => _offerPublish(p))
-        else
-          SecondaryButton(_making ? 'Making the test' : 'Make another test from it', icon: Ph.exam, onTap: _making ? null : () => _offerPublish(p)),
-        const SizedBox(height: 8),
-        Fig('All ${f.count(n, 'question')} go into a test for $group.', style: labelStyle, textAlign: TextAlign.center),
-      ]),
+      footer: _tests.isEmpty
+          ? PrimaryButton('Publish as a test', leadingIcon: Ph.exam, busy: _making, onTap: _making ? null : () => _offerPublish(p))
+          : SecondaryButton(_making ? 'Making the test' : 'Make another test from it', icon: Ph.exam, onTap: _making ? null : () => _offerPublish(p)),
       children: [
-        const SizedBox(height: 8),
-        _DetailsLine(
-          text: [f.count(n, 'question'), p['category'] ?? 'No category', if (p['chapter'] != null) '${p['chapter']}'].join(' · '),
-          byAi: p['ai_details'] != null,
-          onEdit: () => _editDetails(p),
-        ),
+        const SizedBox(height: 12),
+        Fig(f.count(n, 'question'), style: labelStyle.copyWith(fontSize: 12.5), numColor: ink),
         if (_saved != null) ...[
           const SizedBox(height: 14),
           InlineNotice(_saved!, tone: Tone.success, icon: Ph.checkCircle),
@@ -1076,10 +1072,10 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
         ],
         const SizedBox(height: 8),
         Center(
-          child: TextAction('See the AI drafts, page by page', onTap: () {
+          child: TextAction('See the questions as AI read them', onTap: () {
             setState(() {
               _review = true;
-              _filter = _Filter.all;
+              _filter = _Filter.saved;
             });
           }),
         ),
@@ -1088,33 +1084,198 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
   }
 }
 
-/// A paper's details in one line, with a plain Edit button: what AI wrote is never final.
-class _DetailsLine extends StatelessWidget {
-  const _DetailsLine({required this.text, required this.byAi, required this.onEdit});
-  final String text;
-  final bool byAi;
-  final VoidCallback onEdit;
+/// The AI paper reader at work: how many pages are read (then how many answers are worked out), on the
+/// one place the accent colour is for.
+class _AiProgress extends StatelessWidget {
+  const _AiProgress({required this.done, required this.total, required this.unit, required this.line});
+  final int done;
+  final int total;
+  final String unit;
+  final String line;
 
   @override
-  Widget build(BuildContext context) => Row(children: [
-        if (byAi) ...[const TagChip('Found by AI', tone: Tone.ai), const SizedBox(width: 8)],
-        Expanded(child: Fig(text, style: labelStyle, maxLines: 2)),
-        const SizedBox(width: 10),
-        Pressable(
-          label: 'Edit the paper details',
-          onTap: onEdit,
-          child: Container(
-            height: 34,
-            padding: const EdgeInsets.symmetric(horizontal: 13),
-            decoration: BoxDecoration(color: fill, borderRadius: BorderRadius.circular(rPill)),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              Icon(Ph.pencilSimple, size: 15, color: ink),
-              const SizedBox(width: 6),
-              Text('Edit details', style: chipStyle.copyWith(color: ink)),
-            ]),
-          ),
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
+        decoration: BoxDecoration(color: aiAccentSoft, borderRadius: BorderRadius.circular(rHero)),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Kicker('AI paper reader', color: aiAccentInk),
+          const SizedBox(height: 12),
+          Row(crossAxisAlignment: CrossAxisAlignment.baseline, textBaseline: TextBaseline.alphabetic, children: [
+            Text('$done', style: numStyle(size: 40)),
+            const SizedBox(width: 9),
+            Flexible(child: Text(total > 0 ? 'of $total $unit' : unit, style: bodyStyle.copyWith(color: muted, fontWeight: FontWeight.w600, fontSize: 15))),
+          ]),
+          const SizedBox(height: 16),
+          Track(total > 0 ? done / total : 0, color: aiAccent, trackColor: aiAccent.withValues(alpha: isDark ? 0.22 : 0.14)),
+          const SizedBox(height: 12),
+          Fig(line, style: bodyStyle.copyWith(color: body), numColor: ink),
+        ]),
+      );
+}
+
+/// The pages while they are read: done, being read, waiting.
+class _PageRows extends StatelessWidget {
+  const _PageRows({required this.pages, required this.drafts});
+  final List<Map<String, dynamic>> pages;
+  final List<Map<String, dynamic>> drafts;
+
+  @override
+  Widget build(BuildContext context) => Surface(
+        shadow: e1,
+        child: Column(children: [
+          for (final (i, pg) in pages.indexed)
+            Container(
+              padding: const EdgeInsets.fromLTRB(17, 13, 17, 13),
+              decoration: i == 0 ? null : BoxDecoration(border: Border(top: BorderSide(color: hairline))),
+              child: Builder(builder: (context) {
+                final status = '${pg['ai_status']}';
+                final n = drafts.where((d) => d['page_no'] == pg['page_no']).length;
+                final ring = switch (status) {
+                  'done' => Container(
+                      width: 21,
+                      height: 21,
+                      decoration: BoxDecoration(color: success, shape: BoxShape.circle),
+                      child: const Icon(Ph.check, size: 13, color: Colors.white),
+                    ),
+                  'reading' => Breathe(
+                      child: Container(
+                        width: 21,
+                        height: 21,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: aiAccentInk, width: 1.8)),
+                        child: Container(width: 7, height: 7, decoration: BoxDecoration(color: aiAccentInk, shape: BoxShape.circle)),
+                      ),
+                    ),
+                  'failed' => Container(
+                      width: 21,
+                      height: 21,
+                      decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: danger, width: 1.8)),
+                      child: Icon(Ph.x, size: 12, color: danger),
+                    ),
+                  _ => Container(width: 21, height: 21, decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: ringIdle, width: 1.8))),
+                };
+                return Row(children: [
+                  ring,
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Fig('Page ${pg['page_no']}', style: rowTitleStyle.copyWith(color: status == 'done' || status == 'reading' ? ink : muted)),
+                      const SizedBox(height: 2),
+                      Fig(
+                        switch (status) {
+                          'done' => n == 0 ? 'No questions here' : f.count(n, 'question'),
+                          'reading' => 'Reading',
+                          'failed' => 'Could not be read',
+                          _ => 'Waiting',
+                        },
+                        style: labelStyle,
+                      ),
+                    ]),
+                  ),
+                ]);
+              }),
+            ),
+        ]),
+      );
+}
+
+/// The page photos in a row, each with a badge for the questions on it that still need the tutor.
+class _PagesStrip extends StatelessWidget {
+  const _PagesStrip({required this.pages, required this.issues, required this.onOpen});
+  final List<Map<String, dynamic>> pages;
+  final Map<int, int> issues;
+  final void Function(Map<String, dynamic> page) onOpen;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+        height: 92,
+        child: ListView(scrollDirection: Axis.horizontal, clipBehavior: Clip.none, padding: const EdgeInsets.only(top: 6, left: 4), children: [
+          for (final (i, pg) in pages.indexed) ...[
+            if (i > 0) const SizedBox(width: 12),
+            Pressable(
+              label: 'Open page ${pg['page_no']}',
+              onTap: pg['image_url'] == null ? null : () => onOpen(pg),
+              child: Stack(clipBehavior: Clip.none, children: [
+                Container(
+                  width: 62,
+                  height: 84,
+                  decoration: surface(radius: 10, shadow: e1),
+                  clipBehavior: Clip.antiAlias,
+                  child: pg['image_url'] == null ? null : Image.network('${pg['image_url']}', fit: BoxFit.cover, errorBuilder: (_, _, _) => const SizedBox()),
+                ),
+                Positioned(right: 5, bottom: 5, child: TagChip('${pg['page_no']}')),
+                if ((issues[pg['page_no'] as int] ?? 0) > 0)
+                  Positioned(
+                    left: -6,
+                    top: -6,
+                    child: Container(
+                      constraints: const BoxConstraints(minWidth: 20),
+                      height: 20,
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(color: warning, borderRadius: BorderRadius.circular(rPill)),
+                      child: Text('${issues[pg['page_no'] as int]}', style: numStyle(size: 10.5, color: Colors.white)),
+                    ),
+                  ),
+              ]),
+            ),
+          ],
+        ]),
+      );
+}
+
+/// A ready question in one quiet row (its number, the question, where the answer came from, the answer);
+/// a tap opens the whole card under it.
+class _ReadyRow extends StatelessWidget {
+  const _ReadyRow({required this.d, required this.open, required this.onTap, required this.expanded});
+  final Map<String, dynamic> d;
+  final bool open;
+  final VoidCallback onTap;
+  final Widget expanded;
+
+  @override
+  Widget build(BuildContext context) {
+    final number = '${d['number_label'] ?? ''}'.replaceAll(RegExp(r'[.)\s]+$'), '');
+    final source = d['answer_source'] as String?;
+    final correct = d['correct_option'] as int?;
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Pressable(
+        onTap: onTap,
+        label: 'Question $number',
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(17, 13, 15, 13),
+          decoration: surface(radius: rCard, shadow: e1),
+          child: Row(children: [
+            SizedBox(width: 24, child: Text(number.padLeft(2, '0'), style: numStyle(size: 12, weight: FontWeight.w600, color: faint))),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                MathText('${d['text']}', style: rowTitleStyle, maxLines: 2),
+                const SizedBox(height: 2),
+                Fig('${d['chapter'] ?? 'Page ${d['page_no']}'}', style: labelStyle, maxLines: 1),
+              ]),
+            ),
+            const SizedBox(width: 10),
+            if (source == 'ai') const TagChip('AI', tone: Tone.ai) else TagChip(source == 'key' ? 'Key' : 'You'),
+            const SizedBox(width: 8),
+            Container(
+              width: 28,
+              height: 28,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(color: fill, shape: BoxShape.circle),
+              child: Text(correct == null ? '' : 'ABCD'[correct], style: tagStyle.copyWith(fontSize: 12, color: ink)),
+            ),
+          ]),
         ),
-      ]);
+      ),
+      AnimatedSize( // motion: approved
+        duration: const Duration(milliseconds: 260),
+        curve: Curves.easeOutCubic,
+        alignment: Alignment.topCenter,
+        child: open ? Padding(padding: const EdgeInsets.only(top: gapRow), child: expanded) : const SizedBox(width: double.infinity),
+      ),
+    ]);
+  }
 }
 
 /// A paper's name, when AI could not find one: the teacher types it before AI carries on.
@@ -1164,13 +1325,12 @@ class _MissingDetailsState extends State<_MissingDetails> {
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Text('Name this paper', style: cardTitleStyle),
         const SizedBox(height: 6),
-        Fig('AI could not make out the name of the paper. Type one and it reads the questions.', style: bodyStyle.copyWith(color: muted)),
-        const FormLabel('Name', top: 18),
+        const SizedBox(height: 14),
         GroupedInputs(children: [
           BareField(controller: _name, placeholder: 'e.g. Half-yearly exam', capitalization: TextCapitalization.sentences),
         ]),
         const SizedBox(height: 18),
-        PrimaryButton(_busy ? 'Saving' : 'Carry on', onTap: gap == null && !_busy ? _save : null, disabledReason: _busy ? null : gap),
+        PrimaryButton('Carry on', busy: _busy, onTap: gap == null ? _save : null, disabledReason: _busy ? null : gap),
       ]),
     );
   }
@@ -1275,7 +1435,7 @@ class _PaperDetailsState extends State<_PaperDetails> {
     return PushedPanel(
       kicker: 'Question paper · ${paperGroup(widget.paper)}',
       title: 'Paper details',
-      footer: PrimaryButton(_busy ? 'Saving' : 'Save', onTap: gap == null && !_busy ? _save : null, disabledReason: _busy ? null : gap),
+      footer: PrimaryButton('Save', busy: _busy, onTap: gap == null ? _save : null, disabledReason: _busy ? null : gap),
       children: [
         const FormLabel('Name'),
         GroupedInputs(children: [
@@ -1288,6 +1448,8 @@ class _PaperDetailsState extends State<_PaperDetails> {
   }
 }
 
+/// One question as AI read it. A question that needs the tutor says why in one line and offers the likely
+/// answers as buttons; one that is ready is quiet.
 class _DraftCard extends StatelessWidget {
   const _DraftCard({
     required this.d,
@@ -1316,59 +1478,85 @@ class _DraftCard extends StatelessWidget {
   /// For a skipped repeat, the question it repeats ("Q 4 on page 1").
   final String? repeatOf;
 
+  static String _letter(int i) => 'ABCD'[i];
+
   /// The first two AI checks could not settle this one and a stronger model has yet to give its opinion.
   bool get _waiting => d['ai_votes'] != null && d['correct_option'] == null;
 
-  /// What AI noticed about this question, and whether the teacher needs to act on it.
-  (String, bool)? get _note => _waiting
-      ? ('The first two AI checks could not settle this one. A stronger model is taking a second look. You can mark it yourself meanwhile.', false)
-      : switch (d['ai_note']) {
-          'unclear' => ('Part of this could not be read on the page, so AI did not answer it. Check the question, then ask for the answer.', true),
-          'no_option' => ('Neither AI model found an option that fits, so it may be misprinted. Check it against the paper.', true),
-          'disagree' || 'unsure' || 'writer_differs' => (_splitNote, true),
-          'duplicate' => ('Same as ${repeatOf ?? 'an earlier question'}, so it was skipped.', false),
-          'in_bank' => ('You already have this question, so it was not saved again.', false),
-          _ => null,
-        };
+  bool get _needsFigure => d['needs_diagram'] == true && d['image_key'] == null;
 
-  /// The option each AI check chose for a question it could not settle: writer, solver, checker (0 to 3).
+  /// The option each check chose for a question it could not settle: writer, solver, checker, tiebreak (0 to 3).
   Map<String, int> get _picks => {
         for (final e in ((d['ai_picks'] as Map?) ?? const {}).entries)
           if (e.value is int && (e.value as int) >= 0 && (e.value as int) <= 3) '${e.key}': e.value as int,
       };
 
-  static String _letter(int i) => 'ABCD'[i];
-
-  /// The option at least two of the checking models chose, when there is one: offered as a suggestion, never marked for the tutor.
-  int? get _suggestion {
+  /// The options AI would put forward, the one most checks chose first.
+  List<int> get _candidates {
     final p = _picks;
     final votes = [p['solver'], p['checker'], p['tiebreak']].whereType<int>().toList();
+    final seen = <int>[];
     for (final v in votes) {
-      if (votes.where((x) => x == v).length >= 2) return v;
+      if (!seen.contains(v)) seen.add(v);
     }
-    return null;
+    final order = {for (final (i, v) in seen.indexed) v: i};
+    seen.sort((a, b) {
+      final byVotes = votes.where((x) => x == b).length.compareTo(votes.where((x) => x == a).length);
+      return byVotes != 0 ? byVotes : order[a]!.compareTo(order[b]!);
+    });
+    return seen;
   }
 
-  /// Why AI left this answer to the tutor, in plain words, with what the checks chose.
-  String get _splitNote {
-    const tail = ' Check it, then tap the right option.';
+  /// The label at the card's top right.
+  (String, Tone) get _tag {
+    final correct = d['correct_option'] as int?;
+    if (d['status'] == 'discarded') return ('Skipped', Tone.neutral);
+    if (d['status'] == 'saved') return ('Saved', Tone.success);
+    if (d['kind'] != 'mcq') return ('Not multiple choice', Tone.neutral);
+    if (correct == null) {
+      if (_needsFigure) return ('Needs a figure', Tone.warning);
+      if (_waiting) return ('Second look', Tone.ai);
+      return switch (d['ai_note']) {
+        'disagree' || 'unsure' => ('AI is split', Tone.warning),
+        'unclear' => ('Part unreadable', Tone.warning),
+        'no_option' => ('May be misprinted', Tone.warning),
+        _ => ('Mark the answer', Tone.warning),
+      };
+    }
+    if (_needsFigure) return ('Needs a figure', Tone.warning);
+    if (d['ai_note'] == 'writer_differs') return ('Check the answer', Tone.warning);
+    return ('Ready', Tone.success);
+  }
+
+  /// One line on why this question is here, and whether the tutor has to act on it.
+  (String, bool)? get _why {
+    if (d['status'] == 'saved') return null;
+    final correct = d['correct_option'] as int?;
     final p = _picks;
-    final w = p['writer'], s = p['solver'], c = p['checker'];
-    final marked = d['correct_option'];
-    if (d['ai_note'] == 'writer_differs' && marked is int && marked >= 0 && marked <= 3) {
-      return 'AI models agree on ${_letter(marked)}, but the question was written with ${w == null ? 'another option' : _letter(w)}. Check that ${_letter(marked)} is right.';
-    }
-    if (d['ai_note'] == 'unsure') {
-      final lean = s ?? c;
-      return lean == null ? 'AI could not settle this one.$tail' : 'AI was not sure enough to mark this one. It leans to ${_letter(lean)}.$tail';
-    }
-    if (s != null && s == c) {
-      return w == null ? 'The AI models are split on this one.$tail' : 'Two AI models chose ${_letter(s)}, but the question was written with ${_letter(w)}.$tail';
-    }
-    if (s != null && c != null) {
-      return 'The AI models do not agree: one chose ${_letter(s)}, the other ${_letter(c)}.${w == null ? '' : ' The question was written with ${_letter(w)}.'}$tail';
-    }
-    return 'The AI models are split on this one.$tail';
+    final w = p['writer'];
+    if (d['ai_note'] == 'duplicate') return ('Same as ${repeatOf ?? 'an earlier question'}, so it was skipped.', false);
+    if (d['ai_note'] == 'in_bank') return ('You already have this question, so it was not saved again.', false);
+    if (correct == null && _needsFigure) return ('AI cannot see figures. Add a photo of it, or skip the question.', true);
+    if (correct == null && _waiting) return ('A stronger AI model is taking a second look. You can mark it yourself meanwhile.', false);
+    return switch (d['ai_note']) {
+      'unclear' => ('Part of this could not be read, so AI did not answer it. Check it against the page.', true),
+      'no_option' => ('No option fits, so it may be misprinted. Check it against the page.', true),
+      'disagree' => ('The AI checks chose different answers.${w == null ? '' : ' The question was written with ${_letter(w)}.'}', true),
+      'unsure' => ('AI was not sure enough to mark this one.', true),
+      'writer_differs' when correct != null => ('AI marked ${_letter(correct)}, but the question was written with ${w == null ? 'another option' : _letter(w)}. Check that ${_letter(correct)} is right.', true),
+      _ => null,
+    };
+  }
+
+  /// The small labels on an option that a check chose ("AI 1", "Writer").
+  List<String> _chipsFor(int i) {
+    final p = _picks;
+    return [
+      if (p['solver'] == i) 'AI 1',
+      if (p['checker'] == i) 'AI 2',
+      if (p['tiebreak'] == i) 'AI 3',
+      if (p['writer'] == i) 'Writer',
+    ];
   }
 
   @override
@@ -1376,47 +1564,55 @@ class _DraftCard extends StatelessWidget {
     final options = (d['options'] as List?)?.cast<String>() ?? const [];
     final correct = d['correct_option'] as int?;
     final saved = d['status'] == 'saved';
-    final skipped = d['status'] == 'discarded';
     final mcq = d['kind'] == 'mcq';
-    final note = saved ? null : _note;
-    final needsDiagram = d['needs_diagram'] == true && d['image_key'] == null;
+    final why = _why;
     final number = '${d['number_label'] ?? ''}'.replaceAll(RegExp(r'[.)\s]+$'), '');
     final label = number.isEmpty ? 'Q' : 'Q $number';
     final source = d['answer_source'] as String?;
     final sure = d['ai_confidence'] is num ? ((d['ai_confidence'] as num) * 100).round() : null;
+    final (tagText, tagTone) = _tag;
+    final showChips = !saved && mcq && (correct == null || d['ai_note'] == 'writer_differs');
+    final draft = d['status'] == 'draft';
+
+    // The buttons that settle a question that needs the tutor.
+    final actions = <(String, bool, VoidCallback)>[];
+    if (draft && mcq && correct == null) {
+      if (_needsFigure) {
+        if (onDiagram != null) actions.add(('Add the figure', true, onDiagram!));
+        if (onDiscard != null) actions.add(('Skip', false, onDiscard!));
+      } else if (d['ai_note'] == 'unclear') {
+        if (onConfirm != null) actions.add(('Looks right', true, onConfirm!));
+        if (onEdit != null) actions.add(('Edit', false, onEdit!));
+      } else if (d['ai_note'] == 'no_option') {
+        if (onEdit != null) actions.add(('Edit question', true, onEdit!));
+        if (onDiscard != null) actions.add(('Skip', false, onDiscard!));
+      } else if (!_waiting && onMark != null) {
+        for (final (i, c) in _candidates.take(3).indexed) {
+          actions.add(('Use ${_letter(c)}', i == 0, () => onMark!(c)));
+        }
+      }
+    }
+
     return Surface(
-      padding: const EdgeInsets.fromLTRB(17, 14, 17, 12),
+      padding: const EdgeInsets.fromLTRB(17, 15, 17, 12),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
           Kicker('$label · page ${d['page_no']}'),
-          const SizedBox(width: 8),
-          if (!saved && !ready && !skipped) const TagChip('AI draft', tone: Tone.ai),
           const Spacer(),
-          if (skipped)
-            const TagChip('Skipped')
-          else if (saved)
-            const TagChip('Saved', tone: Tone.success)
-          else if (!mcq)
-            const TagChip('Not multiple choice')
-          else if (correct == null)
-            const TagChip('Mark the answer', tone: Tone.warning)
-          else if (needsDiagram)
-            const TagChip('Needs a diagram', tone: Tone.warning)
-          else
-            const TagChip('Ready', tone: Tone.success),
+          TagChip(tagText, tone: tagTone),
         ]),
-        const SizedBox(height: 10),
+        const SizedBox(height: 11),
         MathText('${d['text']}', style: optionStyle.copyWith(fontWeight: FontWeight.w600, fontSize: 15)),
         if (d['image_url'] != null) ...[
           const SizedBox(height: 10),
           ClipRRect(borderRadius: BorderRadius.circular(rSmall), child: Image.network('${d['image_url']}', height: 140, errorBuilder: (_, _, _) => const SizedBox())),
         ],
         if (mcq) ...[
-          const SizedBox(height: 6),
+          const SizedBox(height: 8),
           for (final (i, o) in options.indexed)
             Pressable(
               onTap: onMark == null ? null : () => onMark!(i),
-              label: 'Mark option ${'ABCD'[i]} as right${correct == i ? ', marked' : ''}',
+              label: 'Mark option ${_letter(i)} as right${correct == i ? ', marked' : ''}',
               child: AnimatedContainer( // motion: approved
                 duration: const Duration(milliseconds: 180),
                 curve: Curves.easeOutCubic,
@@ -1427,12 +1623,14 @@ class _DraftCard extends StatelessWidget {
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Row(children: [
-                  OptionMark(selected: correct == i, size: 22, color: success, onColor: Colors.white),
+                  OptionMark(selected: correct == i, size: 24, letter: _letter(i), color: success, onColor: Colors.white),
                   const SizedBox(width: 12),
                   Expanded(
                     child: MathText(o,
                         style: bodyStyle.copyWith(fontSize: 14.5, color: correct == i ? ink : body, fontWeight: correct == i ? FontWeight.w600 : FontWeight.w500)),
                   ),
+                  if (showChips)
+                    for (final c in _chipsFor(i)) ...[const SizedBox(width: 5), TagChip(c, tone: Tone.ai)],
                 ]),
               ),
             ),
@@ -1440,69 +1638,49 @@ class _DraftCard extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.fromLTRB(10, 6, 0, 0),
               child: Row(children: [
-                Icon(Ph.scan, size: 14, color: aiAccentInk),
+                Icon(source == 'ai' ? Ph.scan : Ph.check, size: 14, color: source == 'ai' ? aiAccentInk : muted),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Fig(
-                    source == 'key' ? 'From the paper\'s own answer key' : 'Worked out by AI${sure == null ? '' : ', $sure% sure'}. Check it.',
-                    style: labelStyle.copyWith(color: aiAccentInk),
+                    source == 'key' ? 'From the paper\'s answer key' : 'Worked out by AI${sure == null ? '' : ', $sure% sure'}',
+                    style: labelStyle.copyWith(color: source == 'ai' ? aiAccentInk : muted),
                   ),
                 ),
               ]),
             ),
         ],
-        if (note != null)
+        if (why != null)
           Padding(
-            padding: EdgeInsets.fromLTRB(mcq ? 10 : 0, 8, 0, 0),
+            padding: EdgeInsets.fromLTRB(mcq ? 10 : 0, 10, 0, 0),
             child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Padding(
                 padding: const EdgeInsets.only(top: 1),
-                child: Icon(note.$2 ? Ph.warning : Ph.copy, size: 14, color: note.$2 ? warning : muted),
+                child: Icon(why.$2 ? Ph.warning : Ph.info, size: 14, color: why.$2 ? warning : muted),
               ),
-              const SizedBox(width: 6),
-              Expanded(child: Fig(note.$1, style: labelStyle.copyWith(color: note.$2 ? warning : muted))),
+              const SizedBox(width: 7),
+              Expanded(child: Fig(why.$1, style: labelStyle.copyWith(color: why.$2 ? warning : muted))),
             ]),
           ),
-        if (note != null && onConfirm != null && correct == null)
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Padding(
-              padding: EdgeInsets.only(left: mcq ? 6 : 0),
-              child: TextAction('Looks right, find the answer', color: aiAccentInk, onTap: onConfirm),
-            ),
-          ),
-        if (note != null && mcq && correct == null && onMark != null && _suggestion != null && !_waiting)
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Padding(
-              padding: const EdgeInsets.only(left: 6),
-              child: TextAction('Use ${_letter(_suggestion!)}', color: aiAccentInk, onTap: () => onMark!(_suggestion!)),
-            ),
-          ),
-        const SizedBox(height: 8),
-        Container(height: 1, color: hairline),
+        if (actions.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Row(children: [
+            for (final (i, a) in actions.indexed) ...[
+              if (i > 0) const SizedBox(width: 8),
+              Expanded(child: _CardButton(label: a.$1, primary: a.$2, onTap: a.$3)),
+            ],
+          ]),
+        ],
         const SizedBox(height: 10),
+        Container(height: 1, color: hairline),
+        const SizedBox(height: 8),
         // The chapter takes what room is left and shortens itself, so a long chapter name never
         // pushes the edit and skip buttons off the card.
         Row(children: [
           Expanded(
             child: Row(children: [
-              // A question with no chapter shows nothing: chapters are optional and no longer asked for.
-              if (d['chapter'] != null)
-                Flexible(
-                  child: Pressable(
-                    onTap: onChapter,
-                    label: 'Change chapter',
-                    child: TagChip('${d['chapter']}'),
-                  ),
-                ),
-              if (d['chapter'] != null && d['ai_chapter_guess'] != null && !saved) ...[
-                const SizedBox(width: 8),
-                Text('guessed by AI', style: labelStyle.copyWith(color: faint), maxLines: 1),
-              ],
+              if (d['chapter'] != null) Flexible(child: Pressable(onTap: onChapter, label: 'Change chapter', child: TagChip('${d['chapter']}'))),
             ]),
           ),
-          if (onDiagram != null && needsDiagram) ...[const SizedBox(width: 8), TextAction('Add diagram', color: warning, onTap: onDiagram)],
           if (onEdit != null) ...[
             const SizedBox(width: 8),
             CircleBtn(icon: Ph.pencilSimple, size: 34, ground: fill, label: 'Edit question', onTap: onEdit),
@@ -1516,6 +1694,30 @@ class _DraftCard extends StatelessWidget {
       ]),
     );
   }
+}
+
+/// A button inside a card that settles a question: the likeliest answer in black, the others quiet.
+class _CardButton extends StatelessWidget {
+  const _CardButton({required this.label, required this.primary, required this.onTap});
+  final String label;
+  final bool primary;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Pressable(
+        label: label,
+        onTap: onTap,
+        child: Container(
+          height: 42,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: primary ? actionFill : fill,
+            borderRadius: BorderRadius.circular(13),
+            boxShadow: primary ? e2 : null,
+          ),
+          child: Text(label, style: buttonStyle.copyWith(fontSize: 13, color: primary ? actionInk : ink)),
+        ),
+      );
 }
 
 class _PageView extends StatelessWidget {

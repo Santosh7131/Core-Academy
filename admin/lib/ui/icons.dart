@@ -65,6 +65,12 @@ abstract final class Ph {
   static const crop = IconData(0xe1d4, fontFamily: _family);
   static const fileText = IconData(0xe23a, fontFamily: _family);
   static const arrowCircleUp = IconData(0xe030, fontFamily: _family);
+  static const dotsThreeVertical = IconData(0xe208, fontFamily: _family);
+  static const sparkle = IconData(0xe6a2, fontFamily: _family);
+  static const wifiSlash = IconData(0xe4f2, fontFamily: _family);
+  static const clockCountdown = IconData(0xed2c, fontFamily: _family);
+  static const caretLeft = IconData(0xe138, fontFamily: _family);
+  static const warningCircle = IconData(0xe4e2, fontFamily: _family);
   static const gauge = IconData(0xe628, fontFamily: _family);
   static const deviceMobile = IconData(0xe1e0, fontFamily: _family);
   static const hardDrives = IconData(0xe2a0, fontFamily: _family);

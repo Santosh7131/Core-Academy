@@ -19,6 +19,7 @@ class _TutorSignUpScreenState extends State<TutorSignUpScreen> {
   final _user = TextEditingController();
   final _pass = TextEditingController();
   bool _busy = false;
+  bool _show = false;
   String? _error;
 
   @override
@@ -63,10 +64,7 @@ class _TutorSignUpScreenState extends State<TutorSignUpScreen> {
         kicker: 'New tutor',
         title: 'Create your account',
         children: [
-          const SizedBox(height: 10),
-          Fig('Next you set up your tuition: the classes and subjects you teach, and how students join.',
-              style: bodyStyle.copyWith(color: muted)),
-          const SizedBox(height: 24),
+          const SizedBox(height: 26),
           GroupedInputs(children: [
             BareField(controller: _name, placeholder: 'Your name', capitalization: TextCapitalization.words, action: TextInputAction.next),
             BareField(
@@ -78,14 +76,24 @@ class _TutorSignUpScreenState extends State<TutorSignUpScreen> {
             BareField(
               controller: _pass,
               placeholder: 'Password, 8 or more characters',
-              obscure: true,
+              obscure: !_show,
               action: TextInputAction.done,
               onSubmitted: (_) => _submit(),
+              suffix: Pressable(
+                label: _show ? 'Hide password' : 'Show password',
+                onTap: () => setState(() => _show = !_show),
+                child: Padding(padding: const EdgeInsets.all(6), child: Icon(_show ? Ph.eyeSlash : Ph.eye, size: 20, color: muted)),
+              ),
             ),
           ]),
-          if (_error != null) ...[const SizedBox(height: 14), InlineNotice(_error!, icon: Ph.warning)],
+          AnimatedSize( // motion: approved
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.topCenter,
+            child: _error == null ? const SizedBox(width: double.infinity) : Padding(padding: const EdgeInsets.only(top: 14), child: InlineNotice(_error!, tone: Tone.danger, icon: Ph.warning)),
+          ),
           const SizedBox(height: 20),
-          PrimaryButton(_busy ? 'Creating' : 'Create account', onTap: _busy ? null : _submit),
+          PrimaryButton('Create account', busy: _busy, onTap: _submit),
         ],
       );
 }

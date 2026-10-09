@@ -52,7 +52,10 @@ final teacherRoutes = <RouteBase>[
   ),
   _page('/t/students/new', (s) => AddStudentScreen(classLevel: _int(s, 'class'), subjectId: s.uri.queryParameters['subject'])),
   _page('/t/students/:id', (s) => StudentDetailScreen(id: s.pathParameters['id']!)),
-  _page('/t/papers/new', (s) => UploadPaperScreen(classLevel: _int(s, 'class'), subjectId: s.uri.queryParameters['subject'])),
+  _page(
+    '/t/papers/new',
+    (s) => UploadPaperScreen(classLevel: _int(s, 'class'), subjectId: s.uri.queryParameters['subject'], subjectName: s.uri.queryParameters['name']),
+  ),
   _page('/t/papers/:id', (s) => PaperReviewScreen(id: s.pathParameters['id']!, autoRead: s.uri.queryParameters['read'] == '1')),
   // A question opens only from a test or a paper, to fix its answer.
   _page('/t/questions/:id', (s) => QuestionEditor(id: s.pathParameters['id']!)),

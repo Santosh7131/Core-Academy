@@ -59,14 +59,9 @@ class _ShareCodeScreenState extends State<ShareCodeScreen> {
         if (t == null && _error != null)
           ErrorState(message: _error!, onRetry: _load)
         else if (t == null)
-          const LoadingState()
+          const LoadingState(rows: 2)
         else ...[
-          Fig(
-            widget.first
-                ? 'Students who already have a login on the app type this code to ask to join. You choose their class and subjects when you let them in.'
-                : 'Students who already have a login on the app type this code to ask to join.',
-            style: bodyStyle.copyWith(color: muted),
-          ),
+          Fig('Students type this code in the app to ask to join.', style: bodyStyle.copyWith(color: muted)),
           const SizedBox(height: 20),
           Surface(
             shadow: e1,
@@ -91,8 +86,6 @@ class _ShareCodeScreenState extends State<ShareCodeScreen> {
             ),
           ]),
           if (_notice != null) ...[const SizedBox(height: 14), InlineNotice(_notice!, tone: Tone.success, icon: Ph.checkCircle)],
-          const SizedBox(height: 22),
-          Fig('A student with no login yet? Open a group, tap Add student, and give them the username and PIN.', style: bodyStyle.copyWith(color: muted)),
         ],
       ],
     );

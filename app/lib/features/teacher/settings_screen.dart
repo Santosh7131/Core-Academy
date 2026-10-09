@@ -211,6 +211,7 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     const rule = EdgeInsets.fromLTRB(0, 26, 0, 11);
 
     return PushedPanel(
+      onRefresh: _load,
       kicker: 'Tutor',
       title: 'Settings',
       children: [
@@ -228,7 +229,7 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
         const SectionRule('Students joining', padding: rule),
         RowTile(
           title: 'Join code',
-          meta: _tu['join_open'] == false ? 'Joining is closed' : 'Students type it to ask to join',
+          meta: _tu['join_open'] == false ? 'Joining is closed' : null,
           trailing: Text('${_tu['join_code_shown'] ?? ''}', style: numStyle(size: 16, weight: FontWeight.w700).copyWith(letterSpacing: 2)),
           chevron: true,
           onTap: () => context.push('/t/code'),
@@ -241,10 +242,11 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
           onTap: () => context.push('/t/requests'),
         ),
         const SizedBox(height: 12),
-        Wrap(spacing: 8, children: [
-          SegChip('Joining open', selected: _tu['join_open'] != false, onTap: () => _run(() => api.patch('/teacher/tuition', {'join_open': true}), 'Students can ask to join.').then((_) => _load())),
-          SegChip('Joining closed', selected: _tu['join_open'] == false, onTap: () => _run(() => api.patch('/teacher/tuition', {'join_open': false}), 'Nobody can ask to join now.').then((_) => _load())),
-        ]),
+        SegmentedToggle(
+          labels: const ['Joining open', 'Joining closed'],
+          index: _tu['join_open'] == false ? 1 : 0,
+          onChanged: (i) => _run(() => api.patch('/teacher/tuition', {'join_open': i == 0}), i == 0 ? 'Students can ask to join.' : 'Nobody can ask to join now.').then((_) => _load()),
+        ),
         if (_tu['role'] == 'owner') ...[
           const SizedBox(height: 12),
           SecondaryButton('New join code', icon: Ph.arrowsClockwise, onTap: _newCode),
@@ -276,10 +278,11 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
         const SectionRule('Theme', padding: rule),
         ListenableBuilder(
           listenable: session,
-          builder: (context, _) => Wrap(spacing: 8, children: [
-            for (final (t, label) in [(ThemeChoice.system, 'Same as phone'), (ThemeChoice.light, 'Light'), (ThemeChoice.dark, 'Dark')])
-              SegChip(label, selected: session.theme == t, onTap: () => session.setTheme(t)),
-          ]),
+          builder: (context, _) => SegmentedToggle(
+            labels: const ['Phone', 'Light', 'Dark'],
+            index: ThemeChoice.values.indexOf(session.theme),
+            onChanged: (i) => session.setTheme(ThemeChoice.values[i]),
+          ),
         ),
         const SectionRule('Password', padding: rule),
         GroupedInputs(children: [

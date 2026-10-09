@@ -16,7 +16,7 @@ const names = [
   'copy', 'shareNetwork', 'trash', 'gear', 'magnifyingGlass', 'clock', 'eye', 'eyeSlash', 'lock', 'key', 'notePencil',
   'checkCircle', 'prohibit', 'arrowCounterClockwise', 'dotsThree', 'info', 'calendar', 'chartBar', 'student',
   'chalkboardTeacher', 'downloadSimple', 'export', 'listChecks', 'squaresFour', 'sortAscending', 'funnel', 'crop',
-  'fileText', 'arrowCircleUp',
+  'fileText', 'arrowCircleUp', 'dotsThreeVertical', 'sparkle', 'wifiSlash', 'clockCountdown', 'caretLeft', 'warningCircle',
 ];
 
 // The developer's admin app (admin/).

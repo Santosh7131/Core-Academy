@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/api.dart';
 import '../../core/session.dart';
 import '../../theme.dart';
+import '../../ui/brand_mark.dart';
 import '../../ui/kit.dart';
-import '../../ui/tokens.dart';
 
+/// One screen for both kinds of login: a student's username and 4-digit PIN, a tutor's username and
+/// password. The phone's own keyboard does the typing.
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -16,30 +19,34 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   final _user = TextEditingController();
-  final _password = TextEditingController();
-  String _pin = '';
-  bool _teacher = false;
+  final _secret = TextEditingController();
+  bool _tutor = false;
   bool _busy = false;
+  bool _show = false;
   String? _error;
 
   @override
   void dispose() {
     _user.dispose();
-    _password.dispose();
+    _secret.dispose();
     super.dispose();
   }
 
-  Future<void> _submit(String secret) async {
+  Future<void> _submit() async {
+    if (_busy) return;
     FocusScope.of(context).unfocus();
-    if (_user.text.trim().isEmpty) {
-      setState(() {
-        _error = 'Type your username first.';
-        _pin = '';
-      });
-      return;
+    final name = _user.text.trim();
+    final secret = _secret.text;
+    String? problem;
+    if (name.isEmpty) {
+      problem = 'Type your username.';
+    } else if (secret.isEmpty) {
+      problem = _tutor ? 'Type your password.' : 'Type your PIN.';
+    } else if (!_tutor && secret.length != 4) {
+      problem = 'Your PIN has 4 digits.';
     }
-    if (secret.isEmpty) {
-      setState(() => _error = 'Type your password.');
+    if (problem != null) {
+      setState(() => _error = problem);
       return;
     }
     setState(() {
@@ -47,12 +54,12 @@ class _LoginScreenState extends State<LoginScreen> {
       _error = null;
     });
     try {
-      await session.login(_user.text, secret);
+      await session.login(name, secret);
     } on ApiException catch (e) {
       if (mounted) {
         setState(() {
           _error = e.message;
-          _pin = '';
+          _secret.clear();
         });
       }
     } finally {
@@ -60,180 +67,77 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  void _digit(String d) {
-    if (_busy || _pin.length >= 4) return;
+  void _choose(int i) {
+    if (_busy || (i == 1) == _tutor) return;
     setState(() {
-      _pin += d;
+      _tutor = i == 1;
       _error = null;
+      _secret.clear();
+      _show = false;
     });
-    if (_pin.length == 4) _submit(_pin);
   }
-
-  void _backspace() {
-    if (_busy || _pin.isEmpty) return;
-    setState(() => _pin = _pin.substring(0, _pin.length - 1));
-  }
-
-  void _toggle() => setState(() {
-        _teacher = !_teacher;
-        _error = null;
-        _pin = '';
-        _password.clear();
-      });
 
   @override
-  Widget build(BuildContext context) {
-    final status = _busy ? (_teacher ? 'Checking your password' : 'Checking your PIN') : _error;
-    return Scaffold(
-      body: SafeArea(
-        child: LayoutBuilder(
-          builder: (context, box) => SingleChildScrollView(
-            child: ConstrainedBox(
-              constraints: BoxConstraints(minHeight: box.maxHeight),
-              child: IntrinsicHeight(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: gutter),
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                    const SizedBox(height: 36),
-                    Kicker(session.tuitionName),
-                    const SizedBox(height: 8),
-                    Text(_teacher ? 'Tutor login' : 'Log in', style: displayStyle),
-                    const SizedBox(height: 10),
-                    Text(
-                      _teacher
-                          ? 'Log in with your username and password.'
-                          : 'Your teacher gives you a username and a 4-digit PIN.',
-                      style: bodyStyle.copyWith(color: muted),
+  Widget build(BuildContext context) => Scaffold(
+        body: SafeArea(
+          child: AutofillGroup(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(gutter, 28, gutter, 24),
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              children: staggered([
+                Row(children: [
+                  const BrandMark(size: 46),
+                  const SizedBox(width: 12),
+                  Expanded(child: Kicker(session.tuitionName)),
+                ]),
+                const SizedBox(height: 30),
+                Text('Welcome back', style: displayStyle),
+                const SizedBox(height: 26),
+                SegmentedToggle(labels: const ['Student', 'Tutor'], index: _tutor ? 1 : 0, onChanged: _choose),
+                const SizedBox(height: 16),
+                GroupedInputs(children: [
+                  BareField(
+                    controller: _user,
+                    placeholder: 'Username',
+                    keyboard: TextInputType.visiblePassword,
+                    action: TextInputAction.next,
+                    autofillHints: const [AutofillHints.username],
+                    onChanged: (_) => _error == null ? null : setState(() => _error = null),
+                  ),
+                  BareField(
+                    controller: _secret,
+                    placeholder: _tutor ? 'Password' : 'PIN, 4 digits',
+                    obscure: !_show,
+                    keyboard: _tutor ? TextInputType.visiblePassword : TextInputType.number,
+                    action: TextInputAction.done,
+                    autofillHints: const [AutofillHints.password],
+                    inputFormatters: _tutor ? null : [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(4)],
+                    onSubmitted: (_) => _submit(),
+                    onChanged: (_) => _error == null ? null : setState(() => _error = null),
+                    suffix: Pressable(
+                      label: _show ? 'Hide' : 'Show',
+                      onTap: () => setState(() => _show = !_show),
+                      child: Padding(padding: const EdgeInsets.all(6), child: Icon(_show ? Ph.eyeSlash : Ph.eye, size: 20, color: muted)),
                     ),
-                    const SizedBox(height: 26),
-                    GroupedInputs(children: [
-                      BareField(
-                        controller: _user,
-                        placeholder: 'Username',
-                        keyboard: TextInputType.visiblePassword,
-                        action: _teacher ? TextInputAction.next : TextInputAction.done,
-                        onSubmitted: (_) => _teacher ? null : FocusScope.of(context).unfocus(),
-                      ),
-                      if (_teacher)
-                        BareField(
-                          controller: _password,
-                          placeholder: 'Password',
-                          obscure: true,
-                          action: TextInputAction.done,
-                          onSubmitted: (_) => _submit(_password.text),
-                        ),
-                    ]),
-                    if (_teacher) ...[
-                      const SizedBox(height: 14),
-                      _Status(text: status, isError: !_busy && _error != null),
-                      const SizedBox(height: 14),
-                      PrimaryButton(_busy ? 'Logging in' : 'Log in', onTap: _busy ? null : () => _submit(_password.text)),
-                    ] else ...[
-                      const SizedBox(height: 30),
-                      _PinDots(filled: _pin.length, error: !_busy && _error != null),
-                      const SizedBox(height: 12),
-                      _Status(text: status, isError: !_busy && _error != null),
-                      const SizedBox(height: 18),
-                      _Keypad(onDigit: _digit, onBackspace: _backspace, enabled: !_busy),
-                    ],
-                    const Spacer(),
-                    const SizedBox(height: 16),
-                    Center(child: TextAction(_teacher ? 'I am a student' : 'I am a tutor', onTap: _toggle)),
-                    if (_teacher) Center(child: TextAction('New tutor? Create your tuition', onTap: () => context.push('/signup'))),
-                    const SizedBox(height: 8),
-                  ]),
+                  ),
+                ]),
+                AnimatedSize( // motion: approved
+                  duration: const Duration(milliseconds: 200),
+                  curve: Curves.easeOutCubic,
+                  alignment: Alignment.topCenter,
+                  child: _error == null
+                      ? const SizedBox(width: double.infinity, height: 16)
+                      : Padding(padding: const EdgeInsets.only(top: 14, bottom: 14), child: InlineNotice(_error!, tone: Tone.danger, icon: Ph.warning)),
                 ),
-              ),
+                PrimaryButton('Log in', busy: _busy, onTap: _submit),
+                const SizedBox(height: 18),
+                if (_tutor)
+                  Center(child: TextAction('New tutor? Create your tuition', onTap: () => context.push('/signup')))
+                else
+                  Center(child: Text('Your tutor gives you a username and PIN.', style: labelStyle)),
+              ], prefix: 'login', stepMs: 70),
             ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _Status extends StatelessWidget {
-  const _Status({required this.text, required this.isError});
-  final String? text;
-  final bool isError;
-
-  @override
-  Widget build(BuildContext context) => SizedBox(
-        height: 36,
-        child: Center(
-          child: Fig(
-            text ?? '',
-            style: labelStyle.copyWith(fontSize: 12.5, color: isError ? danger : muted),
-            textAlign: TextAlign.center,
-            maxLines: 2,
           ),
         ),
       );
-}
-
-class _PinDots extends StatelessWidget {
-  const _PinDots({required this.filled, required this.error});
-  final int filled;
-  final bool error;
-
-  @override
-  Widget build(BuildContext context) => Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-        for (var i = 0; i < 4; i++) ...[
-          if (i > 0) const SizedBox(width: 18),
-          Container(
-            width: 16,
-            height: 16,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: i < filled ? actionFill : null,
-              border: i < filled ? null : Border.all(color: error ? danger : ringIdle, width: 1.8),
-            ),
-          ),
-        ],
-      ]);
-}
-
-class _Keypad extends StatelessWidget {
-  const _Keypad({required this.onDigit, required this.onBackspace, required this.enabled});
-  final ValueChanged<String> onDigit;
-  final VoidCallback onBackspace;
-  final bool enabled;
-
-  @override
-  Widget build(BuildContext context) {
-    Widget key(String d) => Expanded(
-          child: Pressable(
-            onTap: enabled ? () => onDigit(d) : null,
-            label: d,
-            child: Container(
-              height: 58,
-              alignment: Alignment.center,
-              decoration: surface(radius: rSmall, shadow: e1),
-              child: Text(d, style: numStyle(size: 22, weight: FontWeight.w600, color: enabled ? ink : faint)),
-            ),
-          ),
-        );
-    Widget row(List<Widget> keys) => Row(children: [
-          for (final (i, k) in keys.indexed) ...[if (i > 0) const SizedBox(width: gapRow), k],
-        ]);
-    return Column(children: [
-      row([key('1'), key('2'), key('3')]),
-      const SizedBox(height: gapRow),
-      row([key('4'), key('5'), key('6')]),
-      const SizedBox(height: gapRow),
-      row([key('7'), key('8'), key('9')]),
-      const SizedBox(height: gapRow),
-      row([
-        const Expanded(child: SizedBox(height: 58)),
-        key('0'),
-        Expanded(
-          child: Pressable(
-            onTap: enabled ? onBackspace : null,
-            label: 'Delete',
-            child: SizedBox(height: 58, child: Icon(Ph.backspace, size: 24, color: muted)),
-          ),
-        ),
-      ]),
-    ]);
-  }
 }

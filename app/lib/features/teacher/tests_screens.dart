@@ -219,8 +219,9 @@ class _TestEditorState extends State<TestEditor> {
       title: isNew ? 'New test' : 'Test settings',
       footer: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         PrimaryButton(
-          _busy ? 'Saving' : (_published ? 'Save changes' : 'Post test'),
-          onTap: missing == null && !_busy ? () => _save(publish: true) : null,
+          _published ? 'Save changes' : 'Post test',
+          busy: _busy,
+          onTap: missing == null ? () => _save(publish: true) : null,
           disabledReason: _busy ? null : missing,
         ),
         if (!_published && missing == null && !_busy)
@@ -284,8 +285,7 @@ class _TestEditorState extends State<TestEditor> {
             '${[
               _opens == null ? 'Opens as soon as you post it' : 'Opens ${f.when(_opens!)}',
               if (_closes != null) 'closes ${f.when(_closes!)}',
-            ].join(', ')}. Students see their marks and the answers after it closes, or earlier once everyone has finished. '
-            'You can also show them yourself.',
+            ].join(', ')}. Marks show after it closes, or once everyone has finished.',
             style: labelStyle,
           ),
         ),
@@ -648,7 +648,7 @@ class _TestResultsScreenState extends State<TestResultsScreen> with WidgetsBindi
     final d = _d;
     if (d == null) {
       return PushedPanel(title: 'Results', children: [
-        if (_error != null) ErrorState(message: _error!, onRetry: _load) else const LoadingState(),
+        if (_error != null) ErrorState(message: _error!, onRetry: _load) else const LoadingState(rows: 3),
       ]);
     }
     final t = Map<String, dynamic>.from(d['test']);
@@ -661,6 +661,7 @@ class _TestResultsScreenState extends State<TestResultsScreen> with WidgetsBindi
     final kicker =[t['subject'] == null ? className(t['class_level']) : groupName(t['class_level'] as int, '${t['subject']}'), if (!published) 'unpublished' else if (closes != null) (closes.isAfter(DateTime.now()) ? 'closes ${f.when(closes)}' : 'closed ${f.when(closes)}')].join(' · ');
 
     return PushedPanel(
+      onRefresh: _load,
       kicker: kicker,
       title: '${t['title']}',
       headerTrailing: CircleBtn(icon: Ph.pencilSimple, label: 'Edit test', onTap: () async {
@@ -706,11 +707,6 @@ class _TestResultsScreenState extends State<TestResultsScreen> with WidgetsBindi
           ('Closes', closes == null ? 'No closing time' : f.when(closes)),
           ('Order', t['shuffle'] == true ? 'Shuffled for each student' : 'Same for everyone'),
         ]),
-        const SizedBox(height: 10),
-        SecondaryButton('Change settings', icon: Ph.pencilSimple, onTap: () async {
-          await context.push('/t/tests/${widget.id}/edit');
-          _load();
-        }),
         SectionRule('Students', count: students.length, padding: const EdgeInsets.fromLTRB(0, 26, 0, 11)),
         if (students.isEmpty) Text('No students are given this test.', style: bodyStyle.copyWith(color: muted)),
         for (final (i, s) in students.indexed) ...[

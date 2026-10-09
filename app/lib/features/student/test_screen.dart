@@ -30,8 +30,9 @@ class _Q {
   bool flagged;
 }
 
-/// Direction A, "Paper": the question owns the page, time is a quiet pill top right.
-/// No right/wrong feedback until submit; every choice is saved straight away.
+/// The question owns the page: where you are and the time sit on one slim bar at the top, the
+/// question and its options below, one button at the bottom. No right or wrong feedback until
+/// submit; every choice is saved straight away.
 class TestScreen extends StatefulWidget {
   const TestScreen({super.key, required this.testId});
   final String testId;
@@ -42,11 +43,11 @@ class TestScreen extends StatefulWidget {
 
 class _TestScreenState extends State<TestScreen> {
   String? _attemptId;
-  String _title = '';
   DateTime? _deadline;
   Duration _clockSkew = Duration.zero; // server time minus phone time
   List<_Q> _qs = [];
   int _i = 0;
+  int _dir = 1; // which way the last move went, for the slide between questions
   String? _error;
 
   Map<String, Map<String, dynamic>> _pending = {};
@@ -78,7 +79,6 @@ class _TestScreenState extends State<TestScreen> {
       final serverNow = DateTime.parse('${a['server_now']}');
       _clockSkew = serverNow.difference(DateTime.now().toUtc());
       _attemptId = a['id'] as String;
-      _title = '${a['title']}';
       _deadline = f.parseTime(a['deadline_at']);
       _qs = (r['questions'] as List).map((j) => _Q(j as Map<String, dynamic>)).toList();
       // Answers made offline are newer than what the server has.
@@ -200,8 +200,11 @@ class _TestScreenState extends State<TestScreen> {
   }
 
   void _go(int i) {
-    if (i < 0 || i >= _qs.length) return;
-    setState(() => _i = i);
+    if (i < 0 || i >= _qs.length || i == _i) return;
+    setState(() {
+      _dir = i > _i ? 1 : -1;
+      _i = i;
+    });
   }
 
   Future<void> _leave() async {
@@ -240,9 +243,12 @@ class _TestScreenState extends State<TestScreen> {
   }
 
   Future<void> _openMap() async {
+    final answered = _qs.where((q) => q.chosen != null).length;
+    final flagged = _qs.where((q) => q.flagged).length;
     final jump = await showCentredCard<int>(
       context,
       title: 'All questions',
+      subtitle: '$answered of ${_qs.length} answered${flagged > 0 ? ' · $flagged flagged' : ''}',
       builder: (ctx) => SingleChildScrollView(
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           Wrap(spacing: 8, runSpacing: 8, children: [
@@ -283,9 +289,9 @@ class _TestScreenState extends State<TestScreen> {
               child: Row(children: [CircleBtn(icon: Ph.x, label: 'Close', onTap: () => context.go('/s'))]),
             ),
             Expanded(
-              child: Center(
-                child: _error != null ? ErrorState(message: _error!, onRetry: _start) : const LoadingState(text: 'Opening your test'),
-              ),
+              child: _error != null
+                  ? Center(child: ErrorState(message: _error!, onRetry: _start))
+                  : const Padding(padding: EdgeInsets.fromLTRB(gutter, 36, gutter, 0), child: _TestSkeleton()),
             ),
           ]),
         ),
@@ -293,8 +299,6 @@ class _TestScreenState extends State<TestScreen> {
     }
 
     final q = _qs[_i];
-    final answered = _qs.where((x) => x.chosen != null).length;
-    final flagged = _qs.where((x) => x.flagged).length;
     final left = _left;
     final low = left != null && left.inMinutes < 5;
     final isLast = _i == _qs.length - 1;
@@ -311,22 +315,35 @@ class _TestScreenState extends State<TestScreen> {
               padding: const EdgeInsets.fromLTRB(gutter, 8, gutter, 0),
               child: Row(children: [
                 CircleBtn(icon: Ph.x, label: 'Leave test', onTap: _leave),
-                const Spacer(),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Pressable(
+                    label: 'Question ${_i + 1} of ${_qs.length}. All questions',
+                    onTap: _openMap,
+                    child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                      Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                        Text('${_i + 1}', style: numStyle(size: 13)),
+                        Text(' / ${_qs.length}', style: numStyle(size: 13, weight: FontWeight.w600, color: faint)),
+                        const SizedBox(width: 4),
+                        Icon(Ph.caretDown, size: 12, color: faint),
+                      ]),
+                      const SizedBox(height: 8),
+                      Track((_i + 1) / _qs.length, height: 5),
+                    ]),
+                  ),
+                ),
+                const SizedBox(width: 14),
                 if (left != null)
                   Container(
-                    height: 34,
+                    height: 36,
                     padding: const EdgeInsets.symmetric(horizontal: 14),
-                    decoration: low
-                        ? BoxDecoration(color: warningSoft, borderRadius: BorderRadius.circular(rPill))
-                        : surface(radius: rPill, shadow: e1),
+                    decoration: low ? BoxDecoration(color: warningSoft, borderRadius: BorderRadius.circular(rPill)) : surface(radius: rPill, shadow: e1),
                     child: Row(children: [
                       Icon(Ph.timer, size: 16, color: low ? warning : ink),
                       const SizedBox(width: 6),
                       Text(f.clock(left), style: numStyle(size: 14, color: low ? warning : ink)),
                     ]),
                   ),
-                const SizedBox(width: 10),
-                CircleBtn(icon: Ph.listNumbers, label: 'All questions', onTap: _openMap),
               ]),
             ),
             Expanded(
@@ -340,38 +357,51 @@ class _TestScreenState extends State<TestScreen> {
                 child: ListView(
                   padding: const EdgeInsets.fromLTRB(gutter, 0, gutter, 20),
                   children: [
-                    SectionRule(_title, padding: const EdgeInsets.fromLTRB(0, 22, 0, 14)),
-                    Row(crossAxisAlignment: CrossAxisAlignment.baseline, textBaseline: TextBaseline.alphabetic, children: [
-                      Text('Question ', style: displayStyle),
-                      Text(q.n.toString().padLeft(2, '0'), style: numStyle(size: 38, weight: FontWeight.w800)),
-                      Text('/${_qs.length}', style: numStyle(size: 20, weight: FontWeight.w600, color: faint)),
-                    ]),
-                    const SizedBox(height: 10),
-                    Fig('$answered answered · $flagged flagged · ${_qs.length - answered} to go', style: labelStyle, numColor: ink),
                     if (_offline) ...[
                       const SizedBox(height: 14),
-                      InlineNotice('No internet. Your answers are saved on this phone and will upload when you are back online.', icon: Ph.warning),
+                      InlineNotice('No internet. Your answers are saved on this phone and upload when you are back online.', icon: Ph.warning),
                     ],
                     if (_submitError != null) ...[
                       const SizedBox(height: 14),
                       InlineNotice(_submitError!, tone: Tone.danger, icon: Ph.warning),
                     ],
-                    const SizedBox(height: 26),
-                    MathText(q.text, style: questionStyle),
-                    if (q.imageUrl != null) ...[
-                      const SizedBox(height: 16),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(rSmall),
-                        child: Image.network(q.imageUrl!, fit: BoxFit.contain, errorBuilder: (_, _, _) => const SizedBox.shrink()),
+                    AnimatedSwitcher( // motion: approved
+                      duration: const Duration(milliseconds: 240),
+                      switchInCurve: Curves.easeOutCubic,
+                      switchOutCurve: Curves.easeInCubic,
+                      transitionBuilder: (child, anim) => FadeTransition(
+                        opacity: anim,
+                        child: SlideTransition(position: Tween(begin: Offset(0.05 * _dir, 0), end: Offset.zero).animate(anim), child: child),
                       ),
-                    ],
-                    const SizedBox(height: 22),
-                    for (final (i, o) in q.options.indexed) ...[
-                      if (i > 0) const SizedBox(height: gapRow),
-                      _OptionRow(letter: 'ABCD'[i], text: o, selected: q.chosen == i, onTap: () => _choose(i)),
-                    ],
-                    if (q.chosen != null)
-                      Align(alignment: Alignment.centerRight, child: TextAction('Clear my answer', onTap: _clear)),
+                      layoutBuilder: (current, previous) => Stack(alignment: Alignment.topCenter, children: [...previous, ?current]),
+                      child: KeyedSubtree(
+                        key: ValueKey(_i),
+                        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                          Padding(
+                            padding: const EdgeInsets.only(top: 28, bottom: 14),
+                            child: Row(children: [
+                              Kicker('Question ${q.n}'),
+                              const Spacer(),
+                              _FlagChip(on: q.flagged, onTap: _toggleFlag),
+                            ]),
+                          ),
+                          MathText(q.text, style: _questionBig),
+                          if (q.imageUrl != null) ...[
+                            const SizedBox(height: 16),
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(rSmall),
+                              child: Image.network(q.imageUrl!, fit: BoxFit.contain, errorBuilder: (_, _, _) => const SizedBox.shrink()),
+                            ),
+                          ],
+                          const SizedBox(height: 26),
+                          for (final (i, o) in q.options.indexed) ...[
+                            if (i > 0) const SizedBox(height: gapRow),
+                            _OptionRow(letter: 'ABCD'[i], text: o, selected: q.chosen == i, onTap: () => _choose(i)),
+                          ],
+                          if (q.chosen != null) Align(alignment: Alignment.centerRight, child: TextAction('Clear my answer', onTap: _clear)),
+                        ]),
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -381,20 +411,12 @@ class _TestScreenState extends State<TestScreen> {
               child: Row(children: [
                 CircleBtn(icon: Ph.arrowLeft, size: 52, label: 'Previous question', onTap: _i > 0 ? () => _go(_i - 1) : null, tint: _i > 0 ? null : faint),
                 const SizedBox(width: 10),
-                CircleBtn(
-                  icon: Ph.flag,
-                  size: 52,
-                  label: q.flagged ? 'Remove flag' : 'Flag for review',
-                  ground: q.flagged ? warningSoft : null,
-                  tint: q.flagged ? warning : null,
-                  onTap: _toggleFlag,
-                ),
-                const SizedBox(width: 10),
                 Expanded(
                   child: PrimaryButton(
                     _submitting ? 'Submitting' : (isLast ? 'Review and submit' : 'Next question'),
-                    icon: _submitting ? null : Ph.arrowRight,
-                    onTap: _submitting ? null : (isLast ? _openMap : () => _go(_i + 1)),
+                    icon: isLast ? null : Ph.arrowRight,
+                    busy: _submitting,
+                    onTap: isLast ? _openMap : () => _go(_i + 1),
                   ),
                 ),
               ]),
@@ -404,6 +426,56 @@ class _TestScreenState extends State<TestScreen> {
       ),
     );
   }
+}
+
+/// The question text: the biggest thing on the page.
+TextStyle get _questionBig => titleStyle.copyWith(fontSize: 22, fontWeight: FontWeight.w700, height: 1.32, letterSpacing: -0.75);
+
+class _TestSkeleton extends StatelessWidget {
+  const _TestSkeleton();
+
+  @override
+  Widget build(BuildContext context) => const SkeletonScope(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          SkeletonBox(width: 90, height: 10),
+          SizedBox(height: 20),
+          SkeletonBox(height: 20, radius: 6),
+          SizedBox(height: 10),
+          SkeletonBox(width: 220, height: 20, radius: 6),
+          SizedBox(height: 30),
+          SkeletonBox(height: 60, radius: rCard),
+          SizedBox(height: gapRow),
+          SkeletonBox(height: 60, radius: rCard),
+          SizedBox(height: gapRow),
+          SkeletonBox(height: 60, radius: rCard),
+          SizedBox(height: gapRow),
+          SkeletonBox(height: 60, radius: rCard),
+        ]),
+      );
+}
+
+class _FlagChip extends StatelessWidget {
+  const _FlagChip({required this.on, required this.onTap});
+  final bool on;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Pressable(
+        label: on ? 'Remove flag' : 'Flag for review',
+        onTap: onTap,
+        child: AnimatedContainer( // motion: approved
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          height: 32,
+          padding: const EdgeInsets.fromLTRB(11, 0, 13, 0),
+          decoration: BoxDecoration(color: on ? warningSoft : fill, borderRadius: BorderRadius.circular(rPill)),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(Ph.flag, size: 15, color: on ? warning : muted),
+            const SizedBox(width: 5),
+            Text(on ? 'Flagged' : 'Flag', style: chipStyle.copyWith(color: on ? warning : muted, fontWeight: FontWeight.w700)),
+          ]),
+        ),
+      );
 }
 
 class _OptionRow extends StatelessWidget {
@@ -421,20 +493,20 @@ class _OptionRow extends StatelessWidget {
         },
         label: 'Option $letter: ${plainMath(text)}${selected ? ', chosen' : ''}',
         child: AnimatedContainer( // motion: approved
-          duration: const Duration(milliseconds: 180),
+          duration: const Duration(milliseconds: 200),
           curve: Curves.easeOutCubic,
-          constraints: const BoxConstraints(minHeight: 58),
-          padding: const EdgeInsets.fromLTRB(17, 13, 17, 13),
+          constraints: const BoxConstraints(minHeight: 60),
+          padding: const EdgeInsets.fromLTRB(16, 13, 17, 13),
           decoration: BoxDecoration(
-            color: card,
+            color: selected ? actionFill : card,
             borderRadius: BorderRadius.circular(rCard),
-            border: isDark ? Border.all(color: selected ? faint : hairline) : null,
-            boxShadow: selected ? e2 : e1,
+            border: isDark ? Border.all(color: selected ? const Color(0xFF3A3A46) : hairline) : null,
+            boxShadow: selected ? e4 : e1,
           ),
           child: Row(children: [
-            OptionMark(letter: letter, selected: selected),
+            OptionMark(letter: letter, selected: selected, color: actionInk, onColor: actionFill),
             const SizedBox(width: 14),
-            Expanded(child: MathText(text, style: optionStyle, display: true)),
+            Expanded(child: MathText(text, style: optionStyle.copyWith(color: selected ? actionInk : ink), display: true)),
           ]),
         ),
       );

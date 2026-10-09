@@ -315,7 +315,7 @@ class _QuestionEditorState extends State<QuestionEditor> {
       kicker: widget.id == null ? 'New question' : (_usedIn > 0 ? 'Used in $_usedIn test${_usedIn == 1 ? '' : 's'}' : 'Question'),
       title: widget.id == null ? 'New question' : 'Edit question',
       headerTrailing: widget.id == null ? null : CircleBtn(icon: Ph.trash, label: 'Delete', tint: danger, onTap: _delete),
-      footer: PrimaryButton(_busy ? 'Saving' : 'Save question', onTap: missing == null && !_busy ? _save : null, disabledReason: _busy ? null : missing),
+      footer: PrimaryButton('Save question', busy: _busy, onTap: missing == null ? _save : null, disabledReason: _busy ? null : missing),
       children: [
         // Fixing a question in a test: its class, subject and chapter stay as they are.
         if (widget.id == null) ...[

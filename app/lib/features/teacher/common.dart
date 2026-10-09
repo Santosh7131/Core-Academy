@@ -309,8 +309,6 @@ Future<void> showLoginCard(BuildContext context, {required String name, required
           Text(pin, style: numStyle(size: 30, weight: FontWeight.w700).copyWith(letterSpacing: 6)),
         ]),
       ),
-      const SizedBox(height: 12),
-      Fig('Share it with the student or a parent. You can reset the PIN at any time.', style: bodyStyle.copyWith(color: muted)),
       const SizedBox(height: 18),
       Row(children: [
         Expanded(

@@ -47,6 +47,15 @@ String marks(num? v) {
 /// "1 paper", "7 papers".
 String count(num n, String one, [String? many]) => '$n ${n == 1 ? one : (many ?? '${one}s')}';
 
+/// How long is left until [t]: "3 h 10 min", "45 min", "2 days".
+String left(DateTime t) {
+  final d = t.difference(DateTime.now());
+  if (d.inMinutes < 1) return 'under a minute';
+  if (d.inMinutes < 60) return '${d.inMinutes} min';
+  if (d.inHours < 24) return '${d.inHours} h${d.inMinutes % 60 == 0 ? '' : ' ${d.inMinutes % 60} min'}';
+  return '${d.inDays} day${d.inDays == 1 ? '' : 's'}';
+}
+
 String percent(num? fraction) => fraction == null ? '-' : '${(fraction * 100).round()}%';
 
 String relative(DateTime t) {

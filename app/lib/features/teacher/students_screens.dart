@@ -125,8 +125,9 @@ class _AddStudentScreenState extends State<AddStudentScreen> {
       kicker: 'New student',
       title: 'Add student',
       footer: PrimaryButton(
-        _busy ? 'Creating login' : 'Create login',
-        onTap: missing == null && !_busy ? _create : null,
+        'Create login',
+        busy: _busy,
+        onTap: missing == null ? _create : null,
         disabledReason: _busy ? null : missing,
       ),
       children: [
@@ -169,8 +170,6 @@ class _AddStudentScreenState extends State<AddStudentScreen> {
             CircleBtn(icon: Ph.arrowsClockwise, label: 'New PIN', ground: fill, onTap: () => setState(() => _pin = _randomPin())),
           ]),
         ),
-        const SizedBox(height: 10),
-        Fig('After creating the login you can share the username and PIN on WhatsApp.', style: labelStyle),
       ],
     );
   }
@@ -310,12 +309,46 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> with WidgetsB
     }
   }
 
+  /// The student's actions, kept off the page: change subjects, reset the PIN, turn the login off, delete.
+  Future<void> _menu(Map<String, dynamic> s, int written) async {
+    final active = s['active'] == true;
+    final pick = await showCentredCard<String>(
+      context,
+      title: '${s['display_name']}',
+      subtitle: 'Login ${s['username']}',
+      builder: (ctx) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        _MenuRow(icon: Ph.pencilSimple, label: 'Change subjects', onTap: () => Navigator.of(ctx).pop('subjects')),
+        _MenuRow(icon: Ph.key, label: 'Reset PIN', onTap: () => Navigator.of(ctx).pop('pin')),
+        _MenuRow(
+          icon: active ? Ph.prohibit : Ph.checkCircle,
+          label: active ? 'Turn off login' : 'Turn on login',
+          onTap: () => Navigator.of(ctx).pop('active'),
+        ),
+        _MenuRow(icon: Ph.trash, label: 'Delete student', destructive: true, last: true, onTap: () => Navigator.of(ctx).pop('delete')),
+      ]),
+    );
+    if (!mounted) return;
+    switch (pick) {
+      case 'subjects':
+        await _editSubjects(s);
+      case 'pin':
+        await _resetPin(s);
+      case 'active':
+        await _toggleActive(s);
+      case 'delete':
+        await _delete(s, written);
+    }
+  }
+
+  bool _allChapters = false;
+  bool _allTests = false;
+
   @override
   Widget build(BuildContext context) {
     final d = _d;
     if (d == null) {
       return PushedPanel(title: 'Student', children: [
-        if (_error != null) ErrorState(message: _error!, onRetry: _load) else const LoadingState(),
+        if (_error != null) ErrorState(message: _error!, onRetry: _load) else const LoadingState(rows: 3),
       ]);
     }
     final s = Map<String, dynamic>.from(d['student']);
@@ -327,94 +360,146 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> with WidgetsB
         ? null
         : done.map((a) => (a['score'] as num) / max((a['max_score'] as num), 1)).reduce((x, y) => x + y) / done.length;
     final lastSeen = f.parseTime(s['last_seen_at']);
+    final subjects = subjectNames(s['subjects']);
+
+    // Weakest chapters first: that is where the tutor can help.
+    double ratio(Map<String, dynamic> c) => (c['correct'] as int) / max(c['total'] as int, 1);
+    final byWeakness = [...chapters]..sort((a, b) => ratio(a).compareTo(ratio(b)));
+    final chaptersShown = _allChapters ? byWeakness : byWeakness.take(3).toList();
+
+    // Written and missed tests in one list, newest first.
+    final items = <(DateTime, Widget)>[
+      for (final a in attempts)
+        (
+          f.parseTime(a['submitted_at'] ?? a['started_at']) ?? DateTime.now(),
+          RowTile(
+            title: '${a['title']}${(a['attempt_no'] as int) > 1 ? ' (retake)' : ''}',
+            meta: a['submitted_at'] == null
+                ? 'Writing now'
+                : 'Submitted ${f.when(f.parseTime(a['submitted_at'])!)}'
+                    ' · ${f.duration(f.parseTime(a['submitted_at'])!.difference(f.parseTime(a['started_at'])!).inSeconds)}',
+            trailing: a['submitted_at'] == null
+                ? const TagChip('Writing', tone: Tone.warning)
+                : Text('${f.marks(a['score'])}/${f.marks(a['max_score'])}', style: numStyle(size: 15)),
+            chevron: a['submitted_at'] != null,
+            onTap: a['submitted_at'] == null ? null : () => context.push('/t/attempts/${a['id']}'),
+          ),
+        ),
+      for (final m in missed)
+        (
+          f.parseTime(m['closes_at']) ?? DateTime.now(),
+          RowTile(title: '${m['title']}', meta: 'Closed ${f.when(f.parseTime(m['closes_at'])!)}', trailing: const TagChip('Missed', tone: Tone.danger)),
+        ),
+    ]..sort((a, b) => b.$1.compareTo(a.$1));
+    final testsShown = _allTests ? items : items.take(6).toList();
+
+    Widget toggle(String label, VoidCallback onTap) => Pressable(
+          label: label,
+          onTap: onTap,
+          child: Text(label, style: chipStyle.copyWith(color: muted, fontWeight: FontWeight.w600)),
+        );
 
     return PushedPanel(
-      kicker: [className(s['class_level']), if (s['active'] != true) 'login off'].join(' · '),
+      onRefresh: _load,
+      kicker: [className(s['class_level']), ...subjects, if (s['active'] != true) 'login off'].join(' · '),
       title: '${s['display_name']}',
+      headerTrailing: CircleBtn(icon: Ph.dotsThreeVertical, label: 'More', onTap: () => _menu(s, done.length)),
       children: [
         const SizedBox(height: 22),
-        MeasurementCard(
-          label: 'Average marks',
-          value: avg == null ? '-' : '${(avg * 100).round()}',
-          unit: avg == null ? null : '%',
-          fraction: avg,
-          note: '${done.length} tests written · ${missed.length} missed'
-              '${lastSeen == null ? '' : ' · last seen ${f.relative(lastSeen)}'}',
+        Reveal(
+          child: MeasurementCard(
+            label: 'Average marks',
+            value: avg == null ? '-' : '${(avg * 100).round()}',
+            countTo: avg == null ? null : (avg * 100).round(),
+            unit: avg == null ? null : '%',
+            fraction: avg,
+            note: '${f.count(done.length, 'test')} written · ${missed.length} missed'
+                '${lastSeen == null ? '' : ' · last seen ${f.relative(lastSeen)}'}',
+          ),
         ),
         if (chapters.isNotEmpty) ...[
-          const SectionRule('By chapter', padding: EdgeInsets.fromLTRB(0, 26, 0, 11)),
-          Surface(
-            shadow: e1,
-            padding: const EdgeInsets.fromLTRB(17, 6, 17, 6),
-            child: Column(children: [
-              for (final c in chapters)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 10),
-                  child: Row(children: [
-                    Expanded(flex: 5, child: Text('${c['chapter']}', style: rowTitleStyle, maxLines: 1, overflow: TextOverflow.ellipsis)),
-                    const SizedBox(width: 12),
-                    Expanded(flex: 4, child: Track((c['correct'] as int) / max(c['total'] as int, 1), height: 6)),
-                    const SizedBox(width: 12),
-                    SizedBox(
-                      width: 46,
-                      child: Text(f.percent((c['correct'] as int) / max(c['total'] as int, 1)), style: numStyle(size: 13), textAlign: TextAlign.right),
-                    ),
-                  ]),
-                ),
-            ]),
+          SectionRule(
+            _allChapters ? 'Chapters' : 'Weakest chapters',
+            padding: const EdgeInsets.fromLTRB(0, 26, 0, 11),
+            trailing: chapters.length > 3 ? toggle(_allChapters ? 'Show fewer' : 'All ${chapters.length}', () => setState(() => _allChapters = !_allChapters)) : null,
+          ),
+          AnimatedSize( // motion: approved
+            duration: const Duration(milliseconds: 260),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.topCenter,
+            child: Surface(
+              shadow: e1,
+              padding: const EdgeInsets.fromLTRB(17, 6, 17, 6),
+              child: Column(children: [
+                for (final c in chaptersShown)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    child: Row(children: [
+                      Expanded(flex: 5, child: Text('${c['chapter']}', style: rowTitleStyle, maxLines: 1, overflow: TextOverflow.ellipsis)),
+                      const SizedBox(width: 12),
+                      Expanded(flex: 4, child: Track(ratio(c), height: 6)),
+                      const SizedBox(width: 12),
+                      SizedBox(width: 46, child: Text(f.percent(ratio(c)), style: numStyle(size: 13), textAlign: TextAlign.right)),
+                    ]),
+                  ),
+              ]),
+            ),
           ),
         ],
-        SectionRule('Groups', count: subjectNames(s['subjects']).length, padding: const EdgeInsets.fromLTRB(0, 26, 0, 11)),
-        if (subjectNames(s['subjects']).isNotEmpty) ...[
-          Wrap(spacing: 8, runSpacing: 8, children: [
-            for (final n in subjectNames(s['subjects'])) TagChip(groupName(s['class_level'] as int, n)),
-          ]),
-          const SizedBox(height: 12),
-        ],
-        SecondaryButton('Change subjects', icon: Ph.pencilSimple, onTap: () => _editSubjects(s)),
-        SectionRule('Tests', count: attempts.length, padding: const EdgeInsets.fromLTRB(0, 26, 0, 11)),
-        if (attempts.isEmpty)
-          Text('No tests written yet.', style: bodyStyle.copyWith(color: muted))
+        SectionRule(
+          'Tests',
+          count: items.length,
+          padding: const EdgeInsets.fromLTRB(0, 26, 0, 11),
+          trailing: items.length > 6 ? toggle(_allTests ? 'Show fewer' : 'All ${items.length}', () => setState(() => _allTests = !_allTests)) : null,
+        ),
+        if (items.isEmpty)
+          Text('No tests yet.', style: bodyStyle.copyWith(color: muted))
         else
-          for (final (i, a) in attempts.indexed) ...[
-            if (i > 0) const SizedBox(height: gapRow),
-            RowTile(
-              title: '${a['title']}${(a['attempt_no'] as int) > 1 ? ' (retake)' : ''}',
-              meta: a['submitted_at'] == null
-                  ? 'Writing now'
-                  : 'Submitted ${f.when(f.parseTime(a['submitted_at'])!)}'
-                      ' · ${f.duration(f.parseTime(a['submitted_at'])!.difference(f.parseTime(a['started_at'])!).inSeconds)}',
-              trailing: a['submitted_at'] == null
-                  ? const TagChip('Writing', tone: Tone.warning)
-                  : Text('${f.marks(a['score'])}/${f.marks(a['max_score'])}', style: numStyle(size: 15)),
-              onTap: a['submitted_at'] == null ? null : () => context.push('/t/attempts/${a['id']}'),
-            ),
-          ],
-        if (missed.isNotEmpty) ...[
-          SectionRule('Missed', count: missed.length, alert: true, padding: const EdgeInsets.fromLTRB(0, 26, 0, 11)),
-          for (final (i, m) in missed.indexed) ...[
-            if (i > 0) const SizedBox(height: gapRow),
-            RowTile(title: '${m['title']}', meta: 'Closed ${f.when(f.parseTime(m['closes_at'])!)}'),
-          ],
-        ],
+          for (final (i, it) in testsShown.indexed) ...[if (i > 0) const SizedBox(height: gapRow), it.$2],
         const SectionRule('Login', padding: EdgeInsets.fromLTRB(0, 26, 0, 11)),
-        FactList([('Username', '${s['username']}')]),
-        const SizedBox(height: 12),
-        Row(children: [
-          Expanded(child: SecondaryButton('Reset PIN', icon: Ph.key, onTap: () => _resetPin(s))),
-          const SizedBox(width: 10),
-          Expanded(
-            child: SecondaryButton(
-              s['active'] == true ? 'Turn off login' : 'Turn on login',
-              icon: s['active'] == true ? Ph.prohibit : Ph.checkCircle,
-              tint: s['active'] == true ? danger : null,
-              onTap: () => _toggleActive(s),
+        Surface(
+          shadow: e1,
+          padding: const EdgeInsets.fromLTRB(17, 10, 8, 10),
+          child: Row(children: [
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('Username', style: labelStyle),
+                const SizedBox(height: 3),
+                Text('${s['username']}', style: numStyle(size: 15, weight: FontWeight.w600)),
+              ]),
             ),
-          ),
-        ]),
-        const SizedBox(height: 26),
-        Center(child: TextAction('Delete this student', color: danger, onTap: () => _delete(s, done.length))),
+            TextAction('Reset PIN', color: ink, onTap: () => _resetPin(s)),
+          ]),
+        ),
       ],
+    );
+  }
+}
+
+/// One action in the student's menu card.
+class _MenuRow extends StatelessWidget {
+  const _MenuRow({required this.icon, required this.label, required this.onTap, this.destructive = false, this.last = false});
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final bool destructive;
+  final bool last;
+
+  @override
+  Widget build(BuildContext context) {
+    final tint = destructive ? danger : ink;
+    return Pressable(
+      label: label,
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(4, 14, 4, 14),
+        decoration: last ? null : BoxDecoration(border: Border(bottom: BorderSide(color: hairline))),
+        child: Row(children: [
+          Icon(icon, size: 20, color: destructive ? danger : muted),
+          const SizedBox(width: 14),
+          Text(label, style: rowTitleStyle.copyWith(color: tint)),
+        ]),
+      ),
     );
   }
 }

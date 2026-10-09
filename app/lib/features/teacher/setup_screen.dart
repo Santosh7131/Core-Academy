@@ -180,17 +180,12 @@ class _SetupScreenState extends State<SetupScreen> {
           const Kicker('Set up'),
           const SizedBox(height: 6),
           Text('Your tuition', style: displayStyle),
-          const SizedBox(height: 10),
-          Fig('Students see this name. You can change it later in Settings.', style: bodyStyle.copyWith(color: muted)),
           const SizedBox(height: 22),
           GroupedInputs(children: [
             BareField(controller: _name, placeholder: 'Tuition name, e.g. Priya Maths Classes', capitalization: TextCapitalization.words),
           ]),
           SectionRule('What you teach', count: _groups.length, padding: const EdgeInsets.fromLTRB(0, 28, 0, 11)),
-          if (_groups.isEmpty)
-            Fig('Add the classes and subjects you teach. Each one becomes a group, where you add students and make tests.',
-                style: bodyStyle.copyWith(color: muted))
-          else
+          if (_groups.isNotEmpty)
             for (final (i, g) in _groups.indexed) ...[
               if (i > 0) const SizedBox(height: gapRow),
               RowTile(
@@ -203,8 +198,9 @@ class _SetupScreenState extends State<SetupScreen> {
           if (_error != null) ...[const SizedBox(height: 18), InlineNotice(_error!, icon: Ph.warning)],
           const SizedBox(height: 26),
           PrimaryButton(
-            _busy ? 'Creating' : 'Create my tuition',
-            onTap: !named || _busy ? null : _create,
+            'Create my tuition',
+            busy: _busy,
+            onTap: !named ? null : _create,
             disabledReason: named ? null : 'Type a name for your tuition.',
           ),
           const SizedBox(height: 10),

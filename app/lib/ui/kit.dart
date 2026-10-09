@@ -1,12 +1,15 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../theme.dart';
 import 'icons.dart';
+import 'motion.dart';
 import 'tokens.dart';
 
 export 'icons.dart';
+export 'motion.dart';
 
 // The component vocabulary from the guide's section 5, as widgets.
 // Motion stays subtle: a 130 ms press scale and a short fade for centred cards.
@@ -158,7 +161,7 @@ class CircleBtn extends StatelessWidget {
 }
 
 class PrimaryButton extends StatelessWidget {
-  const PrimaryButton(this.label, {super.key, this.onTap, this.icon, this.leadingIcon, this.disabledReason});
+  const PrimaryButton(this.label, {super.key, this.onTap, this.icon, this.leadingIcon, this.disabledReason, this.busy = false});
 
   final String label;
   final VoidCallback? onTap;
@@ -170,27 +173,33 @@ class PrimaryButton extends StatelessWidget {
   /// Shown under a disabled button; the guide never disables silently.
   final String? disabledReason;
 
+  /// Working on it: three moving dots follow the label and the button does not take taps.
+  final bool busy;
+
   @override
   Widget build(BuildContext context) {
-    final enabled = onTap != null;
-    final fg = enabled ? actionInk : faint;
+    final enabled = onTap != null && !busy;
+    final fg = enabled || busy ? actionInk : faint;
     final button = Pressable(
       onTap: onTap,
       label: label,
       enabled: enabled,
-      child: Container(
+      child: AnimatedContainer( // motion: approved
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOutCubic,
         height: 52,
         padding: const EdgeInsets.symmetric(horizontal: 18),
         decoration: BoxDecoration(
-          color: enabled ? actionFill : fill,
+          color: enabled || busy ? actionFill : fill,
           borderRadius: BorderRadius.circular(rSmall),
           boxShadow: enabled ? e4 : const [],
         ),
         alignment: Alignment.center,
         child: Row(mainAxisSize: MainAxisSize.min, children: [
-          if (leadingIcon != null) ...[Icon(leadingIcon, size: 19, color: fg), const SizedBox(width: 9)],
+          if (leadingIcon != null && !busy) ...[Icon(leadingIcon, size: 19, color: fg), const SizedBox(width: 9)],
           Flexible(child: Fig(label, style: buttonStyle.copyWith(color: fg), maxLines: 1)),
-          if (icon != null) ...[const SizedBox(width: 8), Icon(icon, size: 18, color: fg)],
+          if (busy) ...[const SizedBox(width: 10), LoadingDots(color: fg, size: 4.5)]
+          else if (icon != null) ...[const SizedBox(width: 8), Icon(icon, size: 18, color: fg)],
         ]),
       ),
     );
@@ -251,11 +260,14 @@ class TextAction extends StatelessWidget {
 
 /// Kicker, mono count, then a hairline to the edge. Alert turns it danger.
 class SectionRule extends StatelessWidget {
-  const SectionRule(this.label, {super.key, this.count, this.alert = false, this.padding = const EdgeInsets.fromLTRB(gutter, 22, gutter, 11)});
+  const SectionRule(this.label, {super.key, this.count, this.alert = false, this.trailing, this.padding = const EdgeInsets.fromLTRB(gutter, 22, gutter, 11)});
 
   final String label;
   final int? count;
   final bool alert;
+
+  /// A small action at the end of the rule, such as "All results".
+  final Widget? trailing;
   final EdgeInsets padding;
 
   @override
@@ -268,6 +280,7 @@ class SectionRule extends StatelessWidget {
         if (count != null) ...[const SizedBox(width: 10), Text('$count', style: numStyle(size: 11, color: c))],
         const SizedBox(width: 10),
         Expanded(child: Container(height: 1, color: hairline)),
+        if (trailing != null) ...[const SizedBox(width: 10), trailing!],
       ]),
     );
   }
@@ -302,6 +315,46 @@ class SegChip extends StatelessWidget {
           ],
         ]),
       ),
+    );
+  }
+}
+
+/// Two or three choices in one track, with a white thumb that slides under the chosen one.
+class SegmentedToggle extends StatelessWidget {
+  const SegmentedToggle({super.key, required this.labels, required this.index, required this.onChanged});
+  final List<String> labels;
+  final int index;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final n = labels.length;
+    return Container(
+      height: 48,
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(color: fill, borderRadius: BorderRadius.circular(rSmall + 2)),
+      child: Stack(children: [
+        AnimatedAlign( // motion: approved
+          alignment: Alignment(n < 2 ? 0 : -1 + 2 * index / (n - 1), 0),
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          child: FractionallySizedBox(
+            widthFactor: 1 / n,
+            heightFactor: 1,
+            child: Container(decoration: surface(radius: rSmall, shadow: e1, color: isDark ? cardHi : card)),
+          ),
+        ),
+        Row(children: [
+          for (final (i, l) in labels.indexed)
+            Expanded(
+              child: Pressable(
+                label: l,
+                onTap: () => onChanged(i),
+                child: Center(child: Text(l, style: chipStyle.copyWith(color: i == index ? ink : muted, fontWeight: FontWeight.w700))),
+              ),
+            ),
+        ]),
+      ]),
     );
   }
 }
@@ -397,33 +450,47 @@ class RowTile extends StatelessWidget {
 /// The near-black bar from the measurement card (guide section 5 and 7).
 Color get measureFill => ink;
 
+/// A bar that fills to [fraction] when it first shows and follows it when it changes.
 class Track extends StatelessWidget {
-  const Track(this.fraction, {super.key, this.height = 7});
+  const Track(this.fraction, {super.key, this.height = 7, this.color, this.trackColor});
   final double fraction;
   final double height;
+  final Color? color;
+  final Color? trackColor;
 
   @override
-  Widget build(BuildContext context) => ClipRRect(
-        borderRadius: BorderRadius.circular(5),
-        child: SizedBox(
-          height: height,
-          child: Stack(children: [
-            Positioned.fill(child: ColoredBox(color: fill)),
-            FractionallySizedBox(
-              widthFactor: fraction.clamp(0, 1).toDouble(),
-              child: Container(decoration: BoxDecoration(color: measureFill, borderRadius: BorderRadius.circular(5))),
+  Widget build(BuildContext context) {
+    final target = fraction.clamp(0, 1).toDouble();
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(5),
+      child: SizedBox(
+        height: height,
+        child: Stack(children: [
+          Positioned.fill(child: ColoredBox(color: trackColor ?? fill)),
+          TweenAnimationBuilder<double>( // motion: approved
+            tween: Tween(begin: reduceMotion(context) ? target : 0, end: target),
+            duration: const Duration(milliseconds: 750),
+            curve: Curves.easeOutCubic,
+            builder: (context, v, _) => FractionallySizedBox(
+              widthFactor: v,
+              child: Container(decoration: BoxDecoration(color: color ?? measureFill, borderRadius: BorderRadius.circular(5))),
             ),
-          ]),
-        ),
-      );
+          ),
+        ]),
+      ),
+    );
+  }
 }
 
 /// One per screen, maximum.
 class MeasurementCard extends StatelessWidget {
-  const MeasurementCard({super.key, required this.label, required this.value, this.unit, this.fraction, this.note, this.valueColor});
+  const MeasurementCard({super.key, required this.label, required this.value, this.unit, this.fraction, this.note, this.valueColor, this.countTo});
 
   final String label;
   final String value;
+
+  /// A whole number the figure counts up to when the card first shows (then [value] is not used).
+  final int? countTo;
   final String? unit;
   final double? fraction;
   final String? note;
@@ -437,7 +504,9 @@ class MeasurementCard extends StatelessWidget {
           Text(label, style: labelStyle),
           const SizedBox(height: 8),
           Row(crossAxisAlignment: CrossAxisAlignment.baseline, textBaseline: TextBaseline.alphabetic, children: [
-            Text(value, style: numStyle(size: 36, color: valueColor)),
+            countTo == null
+                ? Text(value, style: numStyle(size: 36, color: valueColor))
+                : CountUp(value: countTo!.toDouble(), builder: (context, v) => Text('${v.round()}', style: numStyle(size: 36, color: valueColor))),
             if (unit != null) ...[const SizedBox(width: 4), Text(unit!, style: numStyle(size: 14, weight: FontWeight.w600, color: muted))],
           ]),
           if (fraction != null) ...[const SizedBox(height: 13), Track(fraction!)],
@@ -552,15 +621,18 @@ class ErrorState extends StatelessWidget {
       );
 }
 
-/// Static, no spinner (no-motion rule).
+/// What a screen shows while its list loads: grey rows in the shape of the real ones, with a soft
+/// light moving across them. [inset] adds the side gutter for screens that do not have one.
 class LoadingState extends StatelessWidget {
-  const LoadingState({super.key, this.text = 'Loading'});
+  const LoadingState({super.key, this.text = 'Loading', this.rows = 4, this.inset = false});
   final String text;
+  final int rows;
+  final bool inset;
 
   @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 60),
-        child: Center(child: Text(text, style: bodyStyle.copyWith(color: muted))),
+  Widget build(BuildContext context) => Semantics(
+        label: text,
+        child: SkeletonRows(count: rows, padding: EdgeInsets.symmetric(horizontal: inset ? gutter : 0, vertical: 8)),
       );
 }
 
@@ -609,6 +681,9 @@ class BareField extends StatelessWidget {
     this.capitalization = TextCapitalization.none,
     this.onChanged,
     this.style,
+    this.inputFormatters,
+    this.autofillHints,
+    this.suffix,
   });
 
   final TextEditingController controller;
@@ -624,6 +699,11 @@ class BareField extends StatelessWidget {
   final FocusNode? focusNode;
   final TextCapitalization capitalization;
   final TextStyle? style;
+  final List<TextInputFormatter>? inputFormatters;
+  final Iterable<String>? autofillHints;
+
+  /// A small control at the end of the field, such as the show or hide eye of a password.
+  final Widget? suffix;
 
   @override
   Widget build(BuildContext context) => TextField(
@@ -635,6 +715,8 @@ class BareField extends StatelessWidget {
         textInputAction: action,
         onSubmitted: onSubmitted,
         onChanged: onChanged,
+        inputFormatters: inputFormatters,
+        autofillHints: autofillHints,
         maxLines: obscure ? 1 : maxLines,
         minLines: minLines,
         autocorrect: false,
@@ -648,6 +730,8 @@ class BareField extends StatelessWidget {
           hintText: placeholder,
           hintStyle: rowTitleStyle.copyWith(color: faint, fontWeight: FontWeight.w500, fontSize: 15),
           contentPadding: const EdgeInsets.fromLTRB(17, 16, 17, 16),
+          suffixIcon: suffix == null ? null : Padding(padding: const EdgeInsets.only(right: 10), child: suffix),
+          suffixIconConstraints: const BoxConstraints(minWidth: 0, minHeight: 0),
         ),
       );
 }
@@ -675,7 +759,7 @@ class NamedField extends StatelessWidget {
 /// A pushed screen (replaces bottom sheets for forms): back button alone on its row,
 /// 22 gap, kicker, one display line, scrolling content, optional sticky footer.
 class PushedPanel extends StatelessWidget {
-  const PushedPanel({super.key, this.kicker, required this.title, required this.children, this.footer, this.onBack, this.headerTrailing});
+  const PushedPanel({super.key, this.kicker, required this.title, required this.children, this.footer, this.onBack, this.headerTrailing, this.onRefresh});
 
   final String? kicker;
   final String title;
@@ -683,6 +767,22 @@ class PushedPanel extends StatelessWidget {
   final Widget? footer;
   final VoidCallback? onBack;
   final Widget? headerTrailing;
+
+  /// Pull down to load again. Without it the panel does not react to a pull.
+  final Future<void> Function()? onRefresh;
+
+  Widget _scrolling() {
+    final list = ListView(
+      physics: onRefresh == null ? null : const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(gutter, 22, gutter, 28),
+      children: [
+        if (kicker != null) ...[Kicker(kicker!), const SizedBox(height: 6)],
+        Fig(title, style: displayStyle),
+        ...children,
+      ],
+    );
+    return onRefresh == null ? list : PullToRefresh(onRefresh: onRefresh!, child: list);
+  }
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -696,16 +796,7 @@ class PushedPanel extends StatelessWidget {
                 ?headerTrailing,
               ]),
             ),
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(gutter, 22, gutter, 28),
-                children: [
-                  if (kicker != null) ...[Kicker(kicker!), const SizedBox(height: 6)],
-                  Fig(title, style: displayStyle),
-                  ...children,
-                ],
-              ),
-            ),
+            Expanded(child: _scrolling()),
             if (footer != null) Padding(padding: const EdgeInsets.fromLTRB(gutter, 10, gutter, 12), child: footer),
           ]),
         ),
@@ -969,55 +1060,6 @@ class WithFloatingAdd extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------- refreshing
-
-/// The refresh button: its arrows turn while a refresh runs, finishing the turn they are on.
-class RefreshButton extends StatefulWidget {
-  const RefreshButton({super.key, required this.onRefresh});
-  final Future<void> Function() onRefresh;
-
-  @override
-  State<RefreshButton> createState() => _RefreshButtonState();
-}
-
-class _RefreshButtonState extends State<RefreshButton> with SingleTickerProviderStateMixin {
-  late final AnimationController _spin = AnimationController(vsync: this, duration: const Duration(milliseconds: 800)); // motion: approved
-  bool _busy = false;
-
-  @override
-  void dispose() {
-    _spin.dispose();
-    super.dispose();
-  }
-
-  Future<void> _run() async {
-    if (_busy) return;
-    _busy = true;
-    _spin.repeat();
-    try {
-      // At least one full turn, so a quick refresh still shows that something happened.
-      await Future.wait([widget.onRefresh(), Future<void>.delayed(const Duration(milliseconds: 800))]);
-    } finally {
-      if (mounted) {
-        await _spin.forward();
-        if (mounted) _spin.value = 0;
-      }
-      _busy = false;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) => Pressable(
-        label: 'Refresh',
-        onTap: _run,
-        child: Container(
-          width: 40,
-          height: 40,
-          alignment: Alignment.center,
-          decoration: surface(radius: rPill, shadow: e1),
-          child: RotationTransition(turns: _spin, child: Icon(Ph.arrowsClockwise, size: 19, color: ink)),
-        ),
-      );
-}
 
 /// Pull down to refresh. The list inside needs AlwaysScrollableScrollPhysics so a short
 /// list can still be pulled.

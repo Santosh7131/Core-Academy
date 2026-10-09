@@ -11,7 +11,6 @@ import 'features/student/profile_screen.dart';
 import 'features/student/result_screen.dart';
 import 'features/student/results_screen.dart';
 import 'features/student/review_screen.dart';
-import 'features/student/test_intro_screen.dart';
 import 'features/student/test_screen.dart';
 import 'features/teacher/setup_screen.dart';
 import 'features/teacher/teacher_routes.dart';
@@ -25,7 +24,7 @@ GoRouter buildRouter() => GoRouter(
       refreshListenable: session,
       redirect: (context, state) {
         final loc = state.matchedLocation;
-        if (!session.restored) return loc == '/start' ? null : '/start';
+        if (!session.restored || !session.splashDone) return loc == '/start' ? null : '/start';
         if (!session.signedIn) return loc == '/login' || loc == '/signup' ? null : '/login';
         final teacher = session.isTeacher;
         final home = teacher ? '/t' : '/s';
@@ -45,7 +44,6 @@ GoRouter buildRouter() => GoRouter(
         page('/signup', (_) => const TutorSignUpScreen()),
         page('/setup', (_) => const SetupScreen()),
         page('/s', (_) => const StudentHome()),
-        page('/s/test/:id', (s) => TestIntroScreen(testId: s.pathParameters['id']!)),
         page('/s/write/:id', (s) => TestScreen(testId: s.pathParameters['id']!)),
         page('/s/result/:id', (s) => ResultScreen(attemptId: s.pathParameters['id']!, autoSubmitted: s.uri.queryParameters['auto'] == '1')),
         page('/s/review/:id', (s) => ReviewScreen(attemptId: s.pathParameters['id']!, start: int.tryParse(s.uri.queryParameters['n'] ?? '') ?? 1)),

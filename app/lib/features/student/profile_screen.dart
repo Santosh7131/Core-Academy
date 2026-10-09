@@ -60,10 +60,11 @@ class ProfileScreen extends StatelessWidget {
                 SecondaryButton('Join another tuition', icon: Ph.plus, onTap: () => context.push('/s/join')),
               ],
               const SectionRule('Theme', padding: EdgeInsets.fromLTRB(0, 26, 0, 12)),
-              Wrap(spacing: 8, children: [
-                for (final (t, label) in [(ThemeChoice.system, 'Same as phone'), (ThemeChoice.light, 'Light'), (ThemeChoice.dark, 'Dark')])
-                  SegChip(label, selected: session.theme == t, onTap: () => session.setTheme(t)),
-              ]),
+              SegmentedToggle(
+                labels: const ['Phone', 'Light', 'Dark'],
+                index: ThemeChoice.values.indexOf(session.theme),
+                onChanged: (i) => session.setTheme(ThemeChoice.values[i]),
+              ),
               const SectionRule('App', padding: EdgeInsets.fromLTRB(0, 26, 0, 12)),
               const AppVersionPanel(),
               const SizedBox(height: 34),

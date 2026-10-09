@@ -85,12 +85,10 @@ class _TutorHomeState extends State<TutorHome> with WidgetsBindingObserver, Auto
                   Text('Home', style: displayStyle),
                 ]),
               ),
-              RefreshButton(onRefresh: _load),
-              const SizedBox(width: 10),
               Pressable(
                 label: 'Settings',
                 onTap: () => context.push('/t/settings'),
-                child: AppAvatar(name: '${session.user?['display_name'] ?? ''}', seed: '${session.user?['id'] ?? ''}', size: 40),
+                child: AppAvatar(name: '${session.user?['display_name'] ?? ''}', seed: '${session.user?['id'] ?? ''}', size: 42),
               ),
             ]),
           ),
@@ -98,9 +96,9 @@ class _TutorHomeState extends State<TutorHome> with WidgetsBindingObserver, Auto
           if (d == null && _error != null)
             ErrorState(message: _error!, onRetry: _load)
           else if (d == null)
-            const LoadingState()
+            const LoadingState(inset: true, rows: 3)
           else
-            ..._body(d),
+            ...staggered(_body(d), scope: this, prefix: 'home', stepMs: 60),
           navClearance,
         ]),
       ),
@@ -158,7 +156,7 @@ class _TutorHomeState extends State<TutorHome> with WidgetsBindingObserver, Auto
         child: Fig(summary, style: bodyStyle.copyWith(color: muted)),
       ),
       if (groups.isEmpty)
-        const EmptyState(icon: Ph.users, title: 'No groups yet', body: 'Open Groups, add a group, then add your first student. Each class and subject is a group.')
+        const EmptyState(icon: Ph.users, title: 'No groups yet', body: 'Open Groups and add your first group.')
       else ...[
         if (busy.isEmpty)
           Padding(
@@ -166,7 +164,7 @@ class _TutorHomeState extends State<TutorHome> with WidgetsBindingObserver, Auto
             child: Surface(
               shadow: e1,
               padding: const EdgeInsets.fromLTRB(17, 16, 17, 16),
-              child: Fig('Nothing is live or posted. Open a group below to make a test.', style: bodyStyle.copyWith(color: muted)),
+              child: Fig('Nothing is live or posted.', style: bodyStyle.copyWith(color: muted)),
             ),
           )
         else
@@ -362,8 +360,7 @@ class _GroupsScreenState extends State<GroupsScreen> with WidgetsBindingObserver
     final ok = await showCentredCard<bool>(
       context,
       title: 'New group',
-      subtitle: 'A group is a class and a subject, like 10th Maths.',
-      builder: (ctx) => StatefulBuilder(
+            builder: (ctx) => StatefulBuilder(
         builder: (ctx, set) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           const FormLabel('Class', top: 4),
           ClassField(value: cls, onChanged: (c) => set(() => cls = c)),
@@ -413,10 +410,10 @@ class _GroupsScreenState extends State<GroupsScreen> with WidgetsBindingObserver
           if (groups == null && _error != null)
             ErrorState(message: _error!, onRetry: _load)
           else if (groups == null)
-            const LoadingState()
+            const LoadingState(inset: true, rows: 3)
           else ...[
             if (groups.isEmpty)
-              const EmptyState(icon: Ph.users, title: 'No groups yet', body: 'Tap New group, choose a class and a subject, then add the first student.')
+              const EmptyState(icon: Ph.users, title: 'No groups yet', body: 'Add a group, then add your first student.')
             else
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: gutter),
@@ -517,7 +514,7 @@ class _GroupScreenState extends State<GroupScreen> with WidgetsBindingObserver, 
         RowTile(
           leading: Icon(Ph.fileArrowUp, size: 22, color: ink),
           title: 'Upload a PDF or photos',
-          meta: 'AI reads the questions and finds the answers',
+          meta: 'AI reads the questions',
           chevron: true,
           onTap: () => Navigator.of(ctx).pop('upload'),
         ),
@@ -525,7 +522,7 @@ class _GroupScreenState extends State<GroupScreen> with WidgetsBindingObserver, 
         RowTile(
           leading: Icon(Ph.scan, size: 22, color: aiAccentInk),
           title: 'Describe it to AI',
-          meta: 'Say what you want and AI writes the questions',
+          meta: 'AI writes the questions',
           chevron: true,
           onTap: () => Navigator.of(ctx).pop('chat'),
         ),
@@ -574,15 +571,16 @@ class _GroupScreenState extends State<GroupScreen> with WidgetsBindingObserver, 
   Widget build(BuildContext context) {
     final d = _d;
     return PushedPanel(
+      onRefresh: _load,
       kicker: 'Group',
       title: _name,
       children: [
         if (d == null && _error != null)
           ErrorState(message: _error!, onRetry: _load)
         else if (d == null)
-          const LoadingState()
+          const LoadingState(rows: 3)
         else
-          ..._body(d),
+          ...staggered(_body(d), scope: this, prefix: 'group', stepMs: 50),
       ],
     );
   }
@@ -614,7 +612,7 @@ class _GroupScreenState extends State<GroupScreen> with WidgetsBindingObserver, 
           Center(child: TextAction(_allFinished ? 'Show fewer' : 'Show all ${finished.length} finished tests', onTap: () => setState(() => _allFinished = !_allFinished))),
       ],
       if (live.isEmpty && posted.isEmpty && finished.isEmpty && drafts.isEmpty)
-        Padding(padding: const EdgeInsets.only(top: 22), child: Fig('No tests yet. Tap Make a test to start.', style: bodyStyle.copyWith(color: muted))),
+        Padding(padding: const EdgeInsets.only(top: 22), child: Fig('No tests yet.', style: bodyStyle.copyWith(color: muted))),
       SectionRule('Students', count: students.length, padding: rule),
       if (students.isEmpty) Fig('No students in this group yet.', style: bodyStyle.copyWith(color: muted)),
       for (final (i, s) in students.indexed) ...[
@@ -757,33 +755,26 @@ class _ChatTestScreenState extends State<ChatTestScreen> {
         title: 'Describe your test',
         footer: PrimaryButton(
           _busy ? 'Writing the questions' : 'Write the questions',
-          leadingIcon: _busy ? null : Ph.scan,
-          onTap: _ready && !_busy ? _write : null,
+          leadingIcon: Ph.scan,
+          busy: _busy,
+          onTap: _ready ? _write : null,
           disabledReason: _busy || _ready ? null : (_text.text.trim().length < 5 ? 'Say what the test should cover.' : 'Type how many questions, from 1 to 1,000.'),
         ),
         children: [
-          const SizedBox(height: 14),
-          Fig(
-            'Say what the test should cover, as you would tell a colleague. For example: easy and medium questions on '
-            'quadratic equations, with a few word problems.',
-            style: bodyStyle.copyWith(color: muted),
-          ),
-          const FormLabel('Your request'),
+          const SizedBox(height: 22),
           GroupedInputs(children: [
             BareField(
               controller: _text,
-              placeholder: 'What should the test cover?',
+              placeholder: 'What should the test cover? For example: easy and medium questions on quadratic equations',
               maxLines: null,
               minLines: 4,
               capitalization: TextCapitalization.sentences,
             ),
           ]),
-          const FormLabel('How many questions'),
+          const SizedBox(height: gapRow),
           GroupedInputs(children: [
-            BareField(controller: _countText, placeholder: 'For example 15', keyboard: TextInputType.number),
+            BareField(controller: _countText, placeholder: 'How many questions', keyboard: TextInputType.number),
           ]),
-          const SizedBox(height: 8),
-          Fig('Any number. AI writes twenty at a time, so a hundred take about a minute.', style: labelStyle),
           if (_error != null) ...[const SizedBox(height: 16), InlineNotice(_error!, tone: Tone.danger, icon: Ph.warning)],
           if (_busy) ...[
             const SizedBox(height: 16),
@@ -797,12 +788,6 @@ class _ChatTestScreenState extends State<ChatTestScreen> {
               icon: Ph.scan,
             ),
           ],
-          const SizedBox(height: 16),
-          Fig(
-            'After writing, two other AI models solve every question on their own. If their answers differ from each other or '
-            'from the writer\'s, the question is left for you to mark.',
-            style: labelStyle,
-          ),
         ],
       );
 }
