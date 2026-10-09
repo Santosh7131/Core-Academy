@@ -1,8 +1,9 @@
 // Checks that questions in Hindi and Tamil go through the matching, repeat detection and number reading
 // the way English ones do. Run: node tools/text-test.mjs
-import { answerIndex, sameKey } from '../api/src/routes/papers.ts';
+import { answerIndex, sameKey, writerAnswer } from '../api/src/routes/papers.ts';
 import { asciiDigits, hasIndicText, hasNonLatinText, indicLabelIndex, namesIndicLanguage } from '../api/src/lib/text.ts';
 import { wrapBareMath } from '../api/src/lib/latex-json.ts';
+import { usernameBase } from '../api/src/lib/usernames.ts';
 
 let fail = 0;
 const eq = (name, got, want) => {
@@ -58,6 +59,31 @@ eq('english still different', sameKey('18 seats', ['a']) === sameKey('19 seats',
 eq('hindi option is not wrapped', wrapBareMath('x^2 का मान'), 'x^2 का मान');
 eq('tamil option is not wrapped', wrapBareMath('x^2 இன் மதிப்பு'), 'x^2 இன் மதிப்பு');
 eq('plain maths is still wrapped', wrapBareMath('x^2 + 1'), '$x^2 + 1$');
+
+// the test writer's own answer: the option's text, or a letter from an older habit
+const wopts = ['$3$', '$2$', '$1$', '$4$'];
+eq('writer: the text of the option', writerAnswer('$3$', wopts), 0);
+eq('writer: the text, with or without the maths marks', writerAnswer('2', wopts), 1);
+eq('writer: the number is the text, not a position', writerAnswer('4', wopts), 3);
+eq('writer: a letter', writerAnswer('C', wopts), 2);
+eq('writer: a lower case letter in brackets', writerAnswer('(b)', wopts), 1);
+eq('writer: text wins over a letter that is also an option', writerAnswer('B', ['A', 'B', 'C', 'D']), 1);
+eq('writer: two options the same text, so unclear', writerAnswer('2', ['2', '2', '3', '4']), null);
+eq('writer: no such option', writerAnswer('7', wopts), null);
+eq('writer: nothing', writerAnswer('', wopts), null);
+eq('writer: a hindi option copied', writerAnswer('सूर्य + उदय', ['सूर्य + उदय', 'सूर्या + उदय', 'सूर्य + दय', 'सूर्ये + उदय']), 0);
+eq('writer: formulas copied with their backslashes', writerAnswer('$\\frac{1}{2}$', ['$\\frac{1}{4}$', '$\\frac{1}{2}$', '$1$', '$2$']), 1);
+
+// suggested usernames
+eq('username: first name and last initial', usernameBase('Harini Venkatesh'), 'harini.v');
+eq('username: three names use the first and the last', usernameBase('Ravi Shankar Iyer'), 'ravi.i');
+eq('username: one name stays', usernameBase('Priya'), 'priya');
+eq('username: a title is not the first name', usernameBase('Dr. Ananya Sharma-Iyer'), 'ananya.s');
+eq('username: an initial in front is not the first name', usernameBase('K. Rajesh'), 'rajesh');
+eq('username: initial and title in front', usernameBase('Mrs S Latha Raman'), 'latha.r');
+eq('username: an initial at the end stays', usernameBase('Ravi K'), 'ravi.k');
+eq('username: an apostrophe goes', usernameBase("O'Brien Patrick"), 'obrien.p');
+eq('username: nothing to go on', usernameBase('!!!'), 'student');
 
 console.log(fail ? `${fail} FAILED` : 'all passed');
 process.exit(fail ? 1 : 0);

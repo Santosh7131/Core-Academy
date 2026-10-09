@@ -2,17 +2,23 @@ import { pool, type Db } from './db.ts';
 import { chat, parseJson, WRITE_MODELS } from './groq.ts';
 import { hasNonLatinText } from './text.ts';
 
+/** Words in front of a name that are not part of it. */
+const TITLES = new Set(['dr', 'mr', 'mrs', 'ms', 'miss', 'master', 'baby', 'shri', 'shree', 'sri', 'smt', 'kum', 'kumari', 'prof']);
+
 /**
  * What the app suggests for a student's login: "Harini Venkatesh" becomes "harini.v", a single
- * name stays as it is. Letters only, at most 20 so a number fits after it.
+ * name stays as it is. A title ("Dr.") or an initial in front ("K. Rajesh") is not the first name.
+ * Letters only, at most 20 so a number fits after it.
  */
 export function usernameBase(name: string): string {
-  const parts = name
+  const all = name
     .toLowerCase()
-    .replace(/[^a-z\s]/g, '')
-    .trim()
     .split(/\s+/)
+    .map((p) => p.replace(/[^a-z]/g, ''))
     .filter(Boolean);
+  // Drop what stands in front of the first name, as long as a name is left.
+  let parts = all;
+  while (parts.length > 1 && (TITLES.has(parts[0]) || parts[0].length === 1)) parts = parts.slice(1);
   const base = parts.length === 0 ? 'student' : parts.length === 1 ? parts[0] : `${parts[0]}.${parts[parts.length - 1][0]}`;
   return base.slice(0, 20);
 }

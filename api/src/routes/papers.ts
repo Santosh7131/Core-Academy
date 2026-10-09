@@ -170,9 +170,9 @@ ${already}
 ` : ''}
 
 Reply only as JSON:
-{${written.length ? '' : '"name":"<short test name>",'}"questions":[{"text":"<question>","options":["<a>","<b>","<c>","<d>"],"answer":"A"}]}
+{${written.length ? '' : '"name":"<short test name>",'}"questions":[{"text":"<question>","options":["<a>","<b>","<c>","<d>"],"answer":"<the correct option, copied exactly as it is written in options>"}]}
 Rules:
-- Exactly four options per question, and exactly one is correct. "answer" is its letter: A, B, C or D. Spread the right answers over all four letters.
+- Exactly four options per question, and exactly one is correct. "answer" is the text of that option, copied character for character from "options" (not a letter). Spread the right answers over all four positions.
 - Write all maths, formulas and chemical equations in LaTeX inside $...$, in the options as well as in the question, e.g. $\\frac{3}{4}$, $x^2$, $90^\\circ$, $H_2O$. This is JSON, so write every LaTeX backslash twice, as in "$\\\\frac{3}{4}$". Give each option's text without a letter label.
 - Follow the teacher's topic and difficulty. Match the ${study} syllabus.
 - Write the questions and the options in the language of the teacher's request: English, Hindi or Tamil, or the one the request asks for. Hindi and Tamil questions use the standard school-textbook terms, and every number is written with the digits 0 to 9. The JSON keys and the answer letters A to D stay as shown.
@@ -183,15 +183,15 @@ ${written.length ? '' : '- name: at most 40 characters, e.g. "Quadratic equation
     ],
   });
 
-  const items: { text: string; options: string[]; answer: number }[] = [];
+  const items: { text: string; options: string[]; answer: number | null }[] = [];
   for (const it of listIn(content, 'questions')) {
     const text = asciiDigits(clip(it?.text, 4000));
     const options = Array.isArray(it?.options)
       ? it.options.map((o: unknown) => wrapBareMath(asciiDigits(clip(typeof o === 'string' ? o : String(o ?? ''), 500))))
       : [];
-    const letter = String(it?.answer ?? '').trim().toUpperCase().charAt(0);
-    if (!text || options.length !== 4 || options.some((o: string) => !o) || !/^[A-D]$/.test(letter)) continue;
-    items.push({ text, options, answer: letter.charCodeAt(0) - 65 });
+    if (!text || options.length !== 4 || options.some((o: string) => !o)) continue;
+    // The writer's own answer is one opinion among three: a question whose answer cannot be told is still kept.
+    items.push({ text, options, answer: writerAnswer(it?.answer, options) });
     if (items.length >= asked) break;
   }
   if (!items.length) throw new HttpError(502, 'ai_unreadable', 'AI could not write that test. Try again, in different words.');
@@ -483,6 +483,22 @@ Rules:
 - answer_key is an answer key printed on this page, such as "Answers: 1. (b) 2. (c)" or "उत्तर: 1. (ख) 2. (ग)", in printed order; [] when there is none. A page may hold only an answer key.
 - Skip instructions, section headings and marks notes.
 - If the page has no questions, return "questions": [].`;
+}
+
+/**
+ * Which option the test writer says is right. It is asked to copy the option's text, which models do far
+ * more reliably than naming a letter; a bare letter is still understood. Null when it cannot be told (the
+ * text matches no option, or two the same), and the question then goes on without the writer's opinion.
+ */
+export function writerAnswer(raw: unknown, options: string[]): number | null {
+  const s = asciiDigits(String(raw ?? '')).trim();
+  if (!s) return null;
+  const norm = (x: string) => asciiDigits(x).toLowerCase().replace(/[\s$\\{}]/g, '');
+  const hits = options.map((o, i) => (norm(o) === norm(s) ? i : -1)).filter((i) => i >= 0);
+  if (hits.length === 1) return hits[0];
+  if (hits.length > 1) return null;
+  const letter = /^\(?([A-Da-d])\)?[.:]?$/.exec(s);
+  return letter ? letter[1].toUpperCase().charCodeAt(0) - 65 : null;
 }
 
 /**
