@@ -34,6 +34,18 @@ export function clientInfo(c: Context): ClientInfo {
   };
 }
 
+/**
+ * Whether this app can show "your marks come later". Apps before 1.4.0 would read marks that are not in
+ * the reply, so they keep seeing theirs straight away until they update. A caller that does not say which
+ * app it is (a script, or a build before 1.2.1) counts as old for the same reason.
+ */
+export function holdsResults(c: Context): boolean {
+  const v = clientInfo(c).appVersion;
+  if (!v) return false;
+  const [major, minor] = v.split('.').map(Number);
+  return major > 1 || (major === 1 && minor >= 4);
+}
+
 /** Notes that this account used this install, and what the install is running now. */
 export async function recordInstall(userId: string, ci: ClientInfo, db: Db = pool) {
   if (!ci.installId) return;

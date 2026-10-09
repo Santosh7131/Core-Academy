@@ -181,27 +181,33 @@ try {
   check('nor with a closing time that has passed',
     (await api('POST', `/teacher/tests/${pcl.body.id}/publish`, T, { published: true })).body?.error?.code === 'closing_passed');
 
+  // Only apps from 1.4.0 can show "marks come later": they say so in X-App. An app that does not keeps seeing its marks at once.
+  const NEWAPP = { 'x-app': 'core_academy/1.4.0+6' };
   const H = await mkTest('marks held', { closes_at: iso(86_400_000) }, true);
   const h1 = await api('POST', `/student/tests/${H}/start`, S1);
-  const hsub = await api('POST', `/student/attempts/${h1.body.attempt.id}/submit`, S1, { answers: [] });
+  const hsub = await api('POST', `/student/attempts/${h1.body.attempt.id}/submit`, S1, { answers: [] }, NEWAPP);
   check('a student who submits is told their marks come later', hsub.status === 200 && hsub.body?.waiting === true && !('review' in hsub.body), hsub.body);
-  const hres = await api('GET', `/student/attempts/${h1.body.attempt.id}/result`, S1);
+  const hres = await api('GET', `/student/attempts/${h1.body.attempt.id}/result`, S1, undefined, NEWAPP);
   check('and cannot read them early', hres.body?.waiting === true && !('review' in hres.body), hres.body);
-  const hhome = (await api('GET', '/student/home', S1)).body?.tests?.find((x: any) => x.id === H);
+  const hold = await api('GET', `/student/attempts/${h1.body.attempt.id}/result`, S1);
+  check('an app before 1.4.0 cannot wait for marks, so it still gets them', hold.body?.review?.length === 3 && !('waiting' in hold.body), hold.body);
+  const holdHome = (await api('GET', '/student/home', S1)).body?.tests?.find((x: any) => x.id === H);
+  check('and so does its home list', holdHome?.results_open === true && holdHome?.attempt?.max_score === 3, holdHome);
+  const hhome = (await api('GET', '/student/home', S1, undefined, NEWAPP)).body?.tests?.find((x: any) => x.id === H);
   check('the home list hides the marks', hhome?.results_open === false && hhome?.attempt?.score === null, hhome);
-  check('so does the results list', (await api('GET', '/student/results', S1)).body?.results?.find((x: any) => x.test_id === H)?.score === null);
+  check('so does the results list', (await api('GET', '/student/results', S1, undefined, NEWAPP)).body?.results?.find((x: any) => x.test_id === H)?.score === null);
   check('the tutor still sees the marks', (await api('GET', `/teacher/attempts/${h1.body.attempt.id}`, T)).body?.attempt?.max_score === 3);
   const h2 = await api('POST', `/student/tests/${H}/start`, S2);
-  const hsub2 = await api('POST', `/student/attempts/${h2.body.attempt.id}/submit`, S2, { answers: [] });
+  const hsub2 = await api('POST', `/student/attempts/${h2.body.attempt.id}/submit`, S2, { answers: [] }, NEWAPP);
   check('when the last student submits, everyone sees their marks',
-    hsub2.body?.attempt?.max_score === 3 && (await api('GET', `/student/attempts/${h1.body.attempt.id}/result`, S1)).body?.review?.length === 3, hsub2.body);
+    hsub2.body?.attempt?.max_score === 3 && (await api('GET', `/student/attempts/${h1.body.attempt.id}/result`, S1, undefined, NEWAPP)).body?.review?.length === 3, hsub2.body);
 
   const M = await mkTest('marks shown by the tutor', { closes_at: iso(86_400_000) }, true);
   const m1 = await api('POST', `/student/tests/${M}/start`, S1);
-  await api('POST', `/student/attempts/${m1.body.attempt.id}/submit`, S1, { answers: [] });
-  check('with a student still to write it, marks stay hidden', (await api('GET', `/student/attempts/${m1.body.attempt.id}/result`, S1)).body?.waiting === true);
+  await api('POST', `/student/attempts/${m1.body.attempt.id}/submit`, S1, { answers: [] }, NEWAPP);
+  check('with a student still to write it, marks stay hidden', (await api('GET', `/student/attempts/${m1.body.attempt.id}/result`, S1, undefined, NEWAPP)).body?.waiting === true);
   check('the tutor shows the marks', (await api('POST', `/teacher/tests/${M}/release-results`, T)).status === 200);
-  check('and the student sees them', (await api('GET', `/student/attempts/${m1.body.attempt.id}/result`, S1)).body?.review?.length === 3);
+  check('and the student sees them', (await api('GET', `/student/attempts/${m1.body.attempt.id}/result`, S1, undefined, NEWAPP)).body?.review?.length === 3);
   check('the results page says whether marks are open', (await api('GET', `/teacher/tests/${M}/results`, T)).body?.test?.results_open === true
     && (await api('GET', `/teacher/tests/${H}/results`, T)).body?.test?.results_open === true);
 

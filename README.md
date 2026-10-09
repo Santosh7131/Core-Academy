@@ -41,8 +41,10 @@ answers open for everyone when any of these happens first:
 - the tutor taps "Show marks to students now" on the test's page.
 
 The server decides (`results_released_at` on the test, set by the last two rules; the first
-is the clock), so an older app that asks for a result early is told to wait as well. Tests
-posted before this rule keep what they had: they were opened when the migration ran.
+is the clock). Apps from 1.4.0 on say which version they are in `X-App` and are shown "marks
+later". An older app cannot read that reply, so it keeps getting its marks straight away until
+the phone updates; a caller that sends no `X-App` counts as older. Tests posted before this
+rule keep what they had: they were opened when the migration ran.
 
 ## The tutor app
 
@@ -358,7 +360,7 @@ and the scripts that read it would then point at the live database.
 |---|---|
 | `npm run typecheck` | The API type-checks. |
 | `npm run test:latex` | The LaTeX repair for model replies and the bare-maths wrapping (29 cases). |
-| `npm run test:api` | 133 end-to-end checks of the marking rules, when results open (closing time, last student, tutor), groups, the home and group pages, tutors, logins, question papers (including ones uploaded before their details are known, printed answer keys that replace AI answers, questions the bank already has, two answer calls at once and question groups) and the admin app's API against the deployed dev API (add `-- --env .env.main` for the live one; the admin checks run only where the logins file has a developer login). It creates its own students, subject, tests and paper, gives its tests only to those students, then removes them all. |
+| `npm run test:api` | 135 end-to-end checks of the marking rules, when results open (closing time, last student, tutor, and which app versions wait), groups, the home and group pages, tutors, logins, question papers (including ones uploaded before their details are known, printed answer keys that replace AI answers, questions the bank already has, two answer calls at once and question groups) and the admin app's API against the deployed dev API (add `-- --env .env.main` for the live one; the admin checks run only where the logins file has a developer login). It creates its own students, subject, tests and paper, gives its tests only to those students, then removes them all. |
 | `node tools/notify-test.ts --log server.log` | 25 checks of the notifications against the API on your PC, run with `PUSH_DRY_RUN=1` so each notification is written to the log instead of sent. Dev only. |
 | `node tools/check-answers.ts` | Every sample question's marked answer is right, and no other option equals it. |
 | `node tools/ai-test.ts` | How accurately the AI reads the 2-page sample paper (render it first with `tools/make-sample-paper.ps1`). |

@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { requireUser, type AppEnv } from '../lib/auth.ts';
-import { ASSIGNED, releaseFinishedTests, RESULTS_OPEN, saveAnswers, startOrResume, studentResult, submitAttempt } from '../lib/attempts.ts';
+import { ASSIGNED, releaseFinishedTests, resultsOpenFor, saveAnswers, startOrResume, studentResult, submitAttempt } from '../lib/attempts.ts';
+import { holdsResults } from '../lib/client.ts';
 import { q, q1 } from '../lib/db.ts';
 import { uuid } from '../lib/http.ts';
 import { readBody } from './body.ts';
@@ -15,9 +16,10 @@ studentRoutes.get('/home', async (c) => {
   const me = c.get('user');
   await q('select finalize_expired_attempts()');
   await releaseFinishedTests();
+  const open = resultsOpenFor(holdsResults(c));
   const rows = await q(
     `select t.id, t.title, t.class_level, t.time_limit_min, t.opens_at, t.closes_at, now() as now,
-            ${RESULTS_OPEN} as results_open,
+            ${open} as results_open,
             (select count(*) from test_questions tq where tq.test_id = t.id) as question_count,
             (select coalesce(sum(qq.marks), 0) from test_questions tq join questions qq on qq.id = tq.question_id
               where tq.test_id = t.id) as max_marks,
@@ -74,22 +76,23 @@ studentRoutes.put('/attempts/:id/answers', async (c) => {
 
 studentRoutes.post('/attempts/:id/submit', async (c) => {
   const b = await readBody(c);
-  return c.json(await submitAttempt(c.get('user').id, uuid(c.req.param('id'), 'attempt id'), b.answers, b.auto === true));
+  return c.json(await submitAttempt(c.get('user').id, uuid(c.req.param('id'), 'attempt id'), b.answers, b.auto === true, holdsResults(c)));
 });
 
 studentRoutes.get('/attempts/:id/result', async (c) => {
-  return c.json(await studentResult(uuid(c.req.param('id'), 'attempt id'), c.get('user').id));
+  return c.json(await studentResult(uuid(c.req.param('id'), 'attempt id'), c.get('user').id, holdsResults(c)));
 });
 
 studentRoutes.get('/results', async (c) => {
   await releaseFinishedTests();
+  const open = resultsOpenFor(holdsResults(c));
   const rows = await q(
     `select a.id, a.test_id, t.title, t.closes_at, a.attempt_no, a.started_at, a.submitted_at, a.auto_submitted,
-            ${RESULTS_OPEN} as results_open,
-            case when ${RESULTS_OPEN} then a.score end as score, case when ${RESULTS_OPEN} then a.max_score end as max_score,
-            case when ${RESULTS_OPEN} then a.correct_count end as correct_count,
-            case when ${RESULTS_OPEN} then a.wrong_count end as wrong_count,
-            case when ${RESULTS_OPEN} then a.skipped_count end as skipped_count
+            ${open} as results_open,
+            case when ${open} then a.score end as score, case when ${open} then a.max_score end as max_score,
+            case when ${open} then a.correct_count end as correct_count,
+            case when ${open} then a.wrong_count end as wrong_count,
+            case when ${open} then a.skipped_count end as skipped_count
        from attempts a join tests t on t.id = a.test_id
       where a.student_id = $1 and a.submitted_at is not null
       order by a.submitted_at desc`,

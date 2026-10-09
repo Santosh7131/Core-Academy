@@ -39,6 +39,9 @@ export const ASSIGNED_CTE = `assigned as (
  */
 export const RESULTS_OPEN = `(t.results_released_at is not null or t.closes_at is null or t.closes_at <= now())`;
 
+/** The same condition for one app: one too old to wait for its marks (see holdsResults) always has them. */
+export const resultsOpenFor = (holds: boolean) => (holds ? RESULTS_OPEN : 'true');
+
 /**
  * Opens the marks of every published test whose assigned students have all submitted. Called
  * whenever someone looks at tests or submits one, so "the last student finished" takes effect at
@@ -252,7 +255,7 @@ export async function saveAnswers(studentId: string, attemptId: string, raw: unk
   return { saved: out.saved, server_now: out.server_now };
 }
 
-export async function submitAttempt(studentId: string, attemptId: string, raw: unknown, auto: boolean) {
+export async function submitAttempt(studentId: string, attemptId: string, raw: unknown, auto: boolean, holds = true) {
   const answers = parseAnswers(raw);
   await tx(async (c) => {
     const a = await lockAttempt(c, studentId, attemptId);
@@ -271,7 +274,7 @@ export async function submitAttempt(studentId: string, attemptId: string, raw: u
     );
     await c.query('select grade_attempt($1)', [a.id]);
   });
-  return studentResult(attemptId, studentId);
+  return studentResult(attemptId, studentId, holds);
 }
 
 /**
@@ -279,7 +282,7 @@ export async function submitAttempt(studentId: string, attemptId: string, raw: u
  * are open, until then only a note saying when (the closing time, or earlier once everyone has
  * finished or the tutor opens them).
  */
-export async function studentResult(attemptId: string, studentId: string) {
+export async function studentResult(attemptId: string, studentId: string, holds = true) {
   await releaseFinishedTests();
   const t = await q1<{ title: string; closes_at: Date | null; submitted_at: Date | null; open: boolean }>(
     `select t.title, t.closes_at, a.submitted_at, ${RESULTS_OPEN} as open
@@ -288,7 +291,7 @@ export async function studentResult(attemptId: string, studentId: string) {
   );
   if (!t) throw notFound('This attempt');
   if (!t.submitted_at) throw new HttpError(409, 'not_submitted', 'This test has not been submitted yet.');
-  if (!t.open) return { waiting: true, title: t.title, results_at: t.closes_at };
+  if (!t.open && holds) return { waiting: true, title: t.title, results_at: t.closes_at };
   return resultPayload(attemptId, { studentId });
 }
 
