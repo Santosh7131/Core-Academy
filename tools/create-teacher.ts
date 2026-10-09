@@ -20,11 +20,14 @@ try {
   if (existing) throw new Error(`Branch ${branch} already has a teacher ("${existing.username}"). Nothing changed.`);
   const password = randomBytes(9).toString('base64url');
   const { hash, salt } = await hashSecret(password);
-  await db.query(
+  const teacher = (await db.query(
     `insert into users (role, username, display_name, secret_hash, secret_salt)
-     values ('teacher', 'coreacademy', 'Core Academy', $1, $2)`,
+     values ('teacher', 'coreacademy', 'Core Academy', $1, $2) returning id`,
     [hash, salt],
-  );
+  )).rows[0];
+  // The first tuition (made by migration 012) gets its owner.
+  await db.query(`insert into memberships (tuition_id, user_id, role, status) values ('00000000-0000-4000-8000-0000000000a1', $1, 'owner', 'active')`, [teacher.id]);
+  await db.query(`update tuitions set created_by = $1 where id = '00000000-0000-4000-8000-0000000000a1' and created_by is null`, [teacher.id]);
   // Written before the commit, so a saved account always has its password on disk.
   mkdirSync('tools/out', { recursive: true });
   writeFileSync(

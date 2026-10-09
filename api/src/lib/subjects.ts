@@ -8,7 +8,11 @@ export function subjectIds(v: unknown): string[] {
   return [...new Set(v.map((x) => uuid(x, 'subject id')))];
 }
 
-/** A student's subjects as [{ id, name }], in subject order. Needs `u` for the student row. */
-export const STUDENT_SUBJECTS = `coalesce((
+/**
+ * A student's subjects in one tuition as [{ id, name }], in subject order. Needs `u` for the student
+ * row; `tuition` is the SQL that holds the tuition's id ('@T' inside tq()).
+ */
+export const studentSubjects = (tuition: string) => `coalesce((
   select json_agg(json_build_object('id', sj.id, 'name', sj.name) order by sj.sort_order, sj.name)
-    from student_subjects ss join subjects sj on sj.id = ss.subject_id where ss.student_id = u.id), '[]') as subjects`;
+    from student_subjects ss join subjects sj on sj.id = ss.subject_id
+   where ss.student_id = u.id and ss.tuition_id = ${tuition}), '[]') as subjects`;

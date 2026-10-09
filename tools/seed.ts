@@ -58,6 +58,8 @@ try {
        values ('teacher', 'coreacademy', 'Core Academy', $1, $2) returning id`,
       [hash, salt],
     ))[0].id;
+    // The first tuition (made by migration 012) gets its owner.
+    await q(`insert into memberships (tuition_id, user_id, role, status) values ('00000000-0000-4000-8000-0000000000a1', $1, 'owner', 'active')`, [teacherId]);
     logins.push(`Teacher: username coreacademy, password ${password} (change it in Settings)`);
     machine.teacher = { username: 'coreacademy', password };
   }
@@ -95,6 +97,10 @@ try {
        values ('student', $1, $2, $3, $4, $5, true) returning id`,
       [s.username, s.name, s.classLevel, hash, salt],
     ))[0].id;
+    await q(
+      `insert into memberships (tuition_id, user_id, role, status, class_level) values ('00000000-0000-4000-8000-0000000000a1', $1, 'student', 'active', $2)`,
+      [studentIds[s.username], s.classLevel],
+    );
     logins.push(`- Class ${s.classLevel}: ${s.name}: ${s.username}, ${pin}`);
     machine.students.push({ username: s.username, pin, class_level: s.classLevel });
   }

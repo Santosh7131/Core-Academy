@@ -40,6 +40,16 @@ const iso = (msFromNow: number) => new Date(Date.now() + msFromNow).toISOString(
 const created = { users: [] as string[], questions: [] as string[], tests: [] as string[], subjects: [] as string[], papers: [] as string[], tutors: [] as string[] };
 const tag = `apitest${randomInt(1000, 9999)}`;
 
+// Groups exist from the moment a student, question or test needs one. The ones this run makes in the first
+// tuition are removed at the end, so the dev data is left as it was found.
+const FIRST_TUITION = '00000000-0000-4000-8000-0000000000a1';
+const snapshot = new pg.Client({ connectionString: process.env.DATABASE_URL_UNPOOLED });
+await snapshot.connect();
+const groupsBefore = new Set(
+  (await snapshot.query('select class_level, subject_id from groups where tuition_id = $1', [FIRST_TUITION])).rows.map((g) => `${g.class_level}:${g.subject_id}`),
+);
+await snapshot.end();
+
 try {
   check('API is up', (await api('GET', '/')).status === 200);
 
@@ -551,6 +561,9 @@ try {
   await db.query('delete from app_installs where install_id like $1', [`${tag}-%`]);
   await db.query('delete from users where id = any($1::uuid[])', [[...created.users, ...created.tutors.filter(Boolean)]]);
   await db.query('delete from subjects where id = any($1::uuid[])', [created.subjects]);
+  const groupsNow = (await db.query('select id, class_level, subject_id from groups where tuition_id = $1', [FIRST_TUITION])).rows;
+  const extra = groupsNow.filter((g) => !groupsBefore.has(`${g.class_level}:${g.subject_id}`)).map((g) => g.id);
+  if (extra.length) await db.query('delete from groups where id = any($1::uuid[])', [extra]);
   await db.end();
   console.log(`\n${pass} passed, ${fail} failed (test data removed)`);
   process.exit(fail ? 1 : 0);

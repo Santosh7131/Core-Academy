@@ -1,13 +1,13 @@
 import { Hono } from 'hono';
-import type { AppEnv } from '../lib/auth.ts';
-import { pool, q, q1, tx, type Db } from '../lib/db.ts';
+import { tuitionOf, type AppEnv } from '../lib/auth.ts';
+import { pool, q, q1, tq, tq1, tx, type Db } from '../lib/db.ts';
 import { CHECK_MODELS, chat, parseJson, SOLVE_MODELS, VISION_MODELS, WRITE_MODELS } from '../lib/groq.ts';
 import { bad, HttpError, int, notFound, str, uuid, uuidOpt } from '../lib/http.ts';
 import { wrapBareMath } from '../lib/latex-json.ts';
 import { mustKeepOrder } from '../lib/questions.ts';
 import { asciiDigits, hasIndicText, indicLabelIndex, namesIndicLanguage } from '../lib/text.ts';
 import { deleteObjects, maybeViewUrl, readObject, uploadUrl, viewUrl } from '../lib/storage.ts';
-import { MATHS } from '../lib/subjects.ts';
+import { defaultSubject, ensureGroup, taughtSubject } from '../lib/tuition.ts';
 import { readBody } from './body.ts';
 
 // Mounted behind requireUser('teacher') in index.ts.
@@ -42,19 +42,22 @@ function missingOf(p: { exam_name: string | null; class_level: number | null; su
   ];
 }
 
-const CATEGORIES = `select category as name, count(*) as papers from papers where category is not null group by 1 order by 1`;
+const CATEGORIES = `select category as name, count(*) as papers from papers where tuition_id = @T and category is not null group by 1 order by 1`;
 
 paperRoutes.get('/papers', async (c) => {
-  const rows = await q(
+  const T = tuitionOf(c).id;
+  const rows = await tq(
+    T,
     `select p.id, p.class_level, p.exam_name, p.category, p.page_count, p.created_at,
             p.subject_id, (select name from subjects where id = p.subject_id) as subject,
             (select count(*) from paper_pages pp where pp.paper_id = p.id and pp.ai_status = 'done') as pages_read,
             (select count(*) from paper_drafts d where d.paper_id = p.id and d.status = 'draft' and d.kind = 'mcq') as to_check,
             (select count(*) from paper_drafts d where d.paper_id = p.id and d.status = 'saved') as saved
        from papers p
+      where p.tuition_id = @T
       order by p.created_at desc`,
   );
-  return c.json({ papers: rows, categories: await q(CATEGORIES) });
+  return c.json({ papers: rows, categories: await tq(T, CATEGORIES) });
 });
 
 /**
@@ -62,16 +65,18 @@ paperRoutes.get('/papers', async (c) => {
  * finds them afterwards. (The app before 1.3 sends the class, subject and name up front.)
  */
 paperRoutes.post('/papers', async (c) => {
+  const T = tuitionOf(c).id;
   const b = await readBody(c);
   const pages = int(b, 'pages', { min: 1, max: MAX_PAGES })!;
   const classLevel = int(b, 'class_level', { min: 6, max: 12, optional: true }) ?? null;
-  // An app that sends a class but no subject is older than subjects: its papers are Maths.
-  const subjectId = uuidOpt(b.subject_id, 'subject') ?? (classLevel != null ? MATHS : null);
+  // An app that sends a class but no subject is older than subjects: its papers are Maths (or the tuition's first subject).
+  const sent = uuidOpt(b.subject_id, 'subject');
+  const subjectId = sent ? (await taughtSubject(T, sent)).id : classLevel != null ? await defaultSubject(T) : null;
   const paper = await tx(async (cx) => {
     const p = await q1(
-      `insert into papers (class_level, exam_name, category, page_count, uploaded_by, subject_id)
-       values ($1, $2, $3, $4, $5, $6) returning id, class_level, exam_name, category, page_count, subject_id`,
-      [classLevel, str(b, 'exam_name', { max: 80, optional: true }) ?? UNNAMED, str(b, 'category', { max: 60, optional: true }) ?? null,
+      `insert into papers (tuition_id, class_level, exam_name, category, page_count, uploaded_by, subject_id)
+       values ($1, $2, $3, $4, $5, $6, $7) returning id, class_level, exam_name, category, page_count, subject_id`,
+      [T, classLevel, str(b, 'exam_name', { max: 80, optional: true }) ?? UNNAMED, str(b, 'category', { max: 60, optional: true }) ?? null,
         pages, c.get('user').id, subjectId],
       cx,
     );
@@ -106,14 +111,14 @@ const INDIC_WRITE_BATCH = 10;
  * paper), so adding to one checks its kind, class and subject but not who made it.
  */
 paperRoutes.post('/papers/chat', async (c) => {
+  const T = tuitionOf(c).id;
   const b = await readBody(c);
   const classLevel = int(b, 'class_level', { min: 6, max: 12 })!;
   const subjectId = uuid(b.subject_id, 'subject');
   const request = str(b, 'request', { max: 1500 })!;
   const count = int(b, 'count', { min: 1, max: WRITE_BATCH, optional: true }) ?? 15;
   const paperId = b.paper_id == null ? null : uuid(b.paper_id, 'paper id');
-  const subject = await q1('select name from subjects where id = $1', [subjectId]);
-  if (!subject) throw notFound('This subject');
+  const subject = await taughtSubject(T, subjectId);
   // A request in Hindi or Tamil (or asking for one) is written in that language, a few questions at a time.
   const indic = hasIndicText(request) || namesIndicLanguage(request);
   const asked = indic ? Math.min(count, INDIC_WRITE_BATCH) : count;
@@ -122,8 +127,10 @@ paperRoutes.post('/papers/chat', async (c) => {
   let written: { text: string; seq: number }[] = [];
   let paperName = '';
   if (paperId) {
-    const p = await q1<{ exam_name: string; class_level: number; subject_id: string; category: string | null; page_count: number }>(
-      'select exam_name, class_level, subject_id, category, page_count from papers where id = $1',
+    // Only a paper of this tuition: adding to another tuition's paper by its id is refused as not found.
+    const p = await tq1<{ exam_name: string; class_level: number; subject_id: string; category: string | null; page_count: number }>(
+      T,
+      'select exam_name, class_level, subject_id, category, page_count from papers where id = $1 and tuition_id = @T',
       [paperId],
     );
     if (!p) throw notFound('This paper');
@@ -138,6 +145,7 @@ paperRoutes.post('/papers/chat', async (c) => {
   const { content } = await chat({
     task: 'write_questions',
     userId: c.get('user').id,
+    tuitionId: T,
     models: WRITE_MODELS,
     json: true,
     maxTokens: indic ? 10000 : 8000,
@@ -198,9 +206,9 @@ ${written.length ? '' : '- name: at most 40 characters, e.g. "Quadratic equation
     const p = paperId
       ? { id: paperId }
       : await q1(
-          `insert into papers (class_level, exam_name, category, page_count, uploaded_by, subject_id)
-           values ($1, $2, 'Made with AI', 0, $3, $4) returning id`,
-          [classLevel, name, c.get('user').id, subjectId],
+          `insert into papers (tuition_id, class_level, exam_name, category, page_count, uploaded_by, subject_id)
+           values ($1, $2, $3, 'Made with AI', 0, $4, $5) returning id`,
+          [T, classLevel, name, c.get('user').id, subjectId],
           cx,
         );
     for (const [i, it] of items.entries()) {
@@ -216,8 +224,10 @@ ${written.length ? '' : '- name: at most 40 characters, e.g. "Quadratic equation
 });
 
 paperRoutes.post('/papers/:id/pages/:n/uploaded', async (c) => {
-  const r = await q1(
-    `update paper_pages set uploaded = true where paper_id = $1 and page_no = $2 returning page_no`,
+  const r = await tq1(
+    tuitionOf(c).id,
+    `update paper_pages pp set uploaded = true from papers p
+      where p.id = pp.paper_id and p.tuition_id = @T and pp.paper_id = $1 and pp.page_no = $2 returning pp.page_no`,
     [uuid(c.req.param('id'), 'paper id'), Number(c.req.param('n'))],
   );
   if (!r) throw notFound('This page');
@@ -228,8 +238,9 @@ const PAPER_COLS = `p.*, (select name from subjects where id = p.subject_id) as 
   (select name from chapters where id = p.chapter_id) as chapter`;
 
 paperRoutes.get('/papers/:id', async (c) => {
+  const T = tuitionOf(c).id;
   const id = uuid(c.req.param('id'), 'paper id');
-  const p = await q1(`select ${PAPER_COLS} from papers p where p.id = $1`, [id]);
+  const p = await tq1(T, `select ${PAPER_COLS} from papers p where p.id = $1 and p.tuition_id = @T`, [id]);
   if (!p) throw notFound('This paper');
   const pages = await q(
     'select page_no, object_key, uploaded, ai_status, ai_error, read_at, answer_key from paper_pages where paper_id = $1 order by page_no',
@@ -243,7 +254,7 @@ paperRoutes.get('/papers/:id', async (c) => {
   const chapters =
     p.class_level == null || p.subject_id == null
       ? []
-      : await q('select id, name from chapters where class_level = $1 and subject_id = $2 order by sort_order, name', [p.class_level, p.subject_id]);
+      : await tq(T, 'select id, name from chapters where tuition_id = @T and class_level = $1 and subject_id = $2 order by sort_order, name', [p.class_level, p.subject_id]);
   // The paper as a set: the questions saved from it, as they now are in the bank, in paper order.
   const questions = await q(
     `select qq.id, qq.text, qq.options, qq.correct_option, qq.image_key, ch.name as chapter, d.number_label
@@ -258,11 +269,12 @@ paperRoutes.get('/papers/:id', async (c) => {
     drafts: await Promise.all(drafts.map(async (d) => ({ ...d, image_url: await maybeViewUrl(d.image_key) }))),
     chapters,
     questions: await Promise.all(questions.map(async (x) => ({ ...x, image_url: await maybeViewUrl(x.image_key) }))),
-    categories: await q(CATEGORIES),
+    categories: await tq(T, CATEGORIES),
     // Tests made from this paper, newest first.
-    tests: await q(
+    tests: await tq(
+      T,
       `select id, title, status, opens_at, closes_at, (select count(*) from test_questions tq where tq.test_id = t.id) as question_count
-         from tests t where t.paper_id = $1 order by t.created_at desc`,
+         from tests t where t.paper_id = $1 and t.tuition_id = @T order by t.created_at desc`,
       [id],
     ),
   });
@@ -273,15 +285,19 @@ paperRoutes.get('/papers/:id', async (c) => {
  * saved, because saved questions use them. (The app before 1.3 sends only the name.)
  */
 paperRoutes.patch('/papers/:id', async (c) => {
+  const T = tuitionOf(c).id;
   const id = uuid(c.req.param('id'), 'paper id');
   const b = await readBody(c);
-  const cur = await q1(
-    `select p.*, (select count(*) from paper_drafts d where d.paper_id = p.id and d.status = 'saved') as saved from papers p where p.id = $1`,
+  const cur = await tq1(
+    T,
+    `select p.*, (select count(*) from paper_drafts d where d.paper_id = p.id and d.status = 'saved') as saved from papers p
+      where p.id = $1 and p.tuition_id = @T`,
     [id],
   );
   if (!cur) throw notFound('This paper');
   const classLevel = 'class_level' in b ? (int(b, 'class_level', { min: 6, max: 12, optional: true }) ?? null) : cur.class_level;
   const subjectId = 'subject_id' in b ? uuidOpt(b.subject_id, 'subject') : cur.subject_id;
+  if (subjectId && subjectId !== cur.subject_id) await taughtSubject(T, subjectId);
   const moved = classLevel !== cur.class_level || subjectId !== cur.subject_id;
   if (moved && cur.saved > 0) {
     throw new HttpError(409, 'has_questions', 'Questions from this paper are already saved, so its class and subject stay as they are.');
@@ -305,6 +321,7 @@ paperRoutes.patch('/papers/:id', async (c) => {
     // Chapters belong to a class and subject: drafts drop the old ones and are matched again.
     if (moved) await cx.query(`update paper_drafts set chapter_id = null where paper_id = $1 and status = 'draft'`, [id]);
     await fillChapters(id, cx);
+    if (classLevel != null && subjectId) await ensureGroup(T, classLevel, subjectId, cx);
     return row;
   });
   const row = await q1(`select ${PAPER_COLS} from papers p where p.id = $1`, [p.id]);
@@ -315,11 +332,15 @@ paperRoutes.patch('/papers/:id', async (c) => {
 
 type Found = { value: unknown; confidence: number };
 
-/** Every class, subject and chapter, for AI to place a paper among. */
-async function catalogue() {
-  const subjects = await q<{ id: string; name: string }>('select id, name from subjects order by sort_order, name');
-  const chapters = await q<{ id: string; class_level: number; subject_id: string; name: string }>(
-    'select id, class_level, subject_id, name from chapters order by class_level, subject_id, sort_order, name',
+/** Every class, subject and chapter of the tuition, for AI to place a paper among. */
+async function catalogue(T: string) {
+  const subjects = await tq<{ id: string; name: string }>(
+    T,
+    'select sj.id, sj.name from subjects sj join tuition_subjects ts on ts.subject_id = sj.id and ts.tuition_id = @T order by sj.sort_order, sj.name',
+  );
+  const chapters = await tq<{ id: string; class_level: number; subject_id: string; name: string }>(
+    T,
+    'select id, class_level, subject_id, name from chapters where tuition_id = @T order by class_level, subject_id, sort_order, name',
   );
   const lines: string[] = [];
   for (let cls = 6; cls <= 12; cls++) {
@@ -335,18 +356,20 @@ const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLow
 
 /** Reads the first page and fills in the details AI is sure of. Details already set stay. */
 paperRoutes.post('/papers/:id/detect', async (c) => {
+  const T = tuitionOf(c).id;
   const id = uuid(c.req.param('id'), 'paper id');
-  const p = await q1('select * from papers where id = $1', [id]);
+  const p = await tq1(T, 'select * from papers where id = $1 and tuition_id = @T', [id]);
   if (!p) throw notFound('This paper');
   const page = await q1('select * from paper_pages where paper_id = $1 and uploaded order by page_no limit 1', [id]);
   if (!page) throw new HttpError(409, 'not_uploaded', 'The pages have not finished uploading.');
-  const { subjects, chapters, lines } = await catalogue();
-  const categories = (await q<{ name: string }>(CATEGORIES)).map((r) => r.name);
+  const { subjects, chapters, lines } = await catalogue(T);
+  const categories = (await tq<{ name: string }>(T, CATEGORIES)).map((r) => r.name);
 
   const img = await readObject(page.object_key);
   const { content } = await chat({
     task: 'detect_paper',
     userId: c.get('user').id,
+    tuitionId: T,
     models: VISION_MODELS,
     json: true,
     maxTokens: 800,
@@ -512,11 +535,13 @@ async function skipRepeats(paperId: string, db: Db) {
 
 /** Reads one page with AI and replaces that page's unchecked drafts. */
 paperRoutes.post('/papers/:id/pages/:n/read', async (c) => {
+  const T = tuitionOf(c).id;
   const id = uuid(c.req.param('id'), 'paper id');
   const pageNo = Number(c.req.param('n'));
-  const page = await q1(
+  const page = await tq1(
+    T,
     `select pp.*, p.class_level, p.subject_id, p.chapter_id as paper_chapter, (select name from subjects where id = p.subject_id) as subject
-       from paper_pages pp join papers p on p.id = pp.paper_id where pp.paper_id = $1 and pp.page_no = $2`,
+       from paper_pages pp join papers p on p.id = pp.paper_id where pp.paper_id = $1 and pp.page_no = $2 and p.tuition_id = @T`,
     [id, pageNo],
   );
   if (!page) throw notFound('This page');
@@ -524,7 +549,7 @@ paperRoutes.post('/papers/:id/pages/:n/read', async (c) => {
   const chapters =
     page.class_level == null || page.subject_id == null
       ? []
-      : await q<{ id: string; name: string }>('select id, name from chapters where class_level = $1 and subject_id = $2', [page.class_level, page.subject_id]);
+      : await tq<{ id: string; name: string }>(T, 'select id, name from chapters where tuition_id = @T and class_level = $1 and subject_id = $2', [page.class_level, page.subject_id]);
 
   await pool.query(`update paper_pages set ai_status = 'reading', ai_error = null where id = $1`, [page.id]);
   let items: Extracted[];
@@ -535,6 +560,7 @@ paperRoutes.post('/papers/:id/pages/:n/read', async (c) => {
     const { content } = await chat({
       task: 'read_paper_page',
       userId: c.get('user').id,
+      tuitionId: T,
       models: VISION_MODELS,
       json: true,
       // A page takes about 400 tokens and a dense one a few thousand; Groq counts what is asked for.
@@ -649,7 +675,8 @@ async function fillChapters(paperId: string, db: Db = pool) {
   await db.query(
     `update paper_drafts d set chapter_id = coalesce(
         (select ch.id from chapters ch join papers p on p.id = d.paper_id
-          where ch.class_level = p.class_level and ch.subject_id = p.subject_id and lower(ch.name) = lower(d.ai_chapter_guess) limit 1),
+          where ch.class_level = p.class_level and ch.subject_id = p.subject_id and ch.tuition_id = p.tuition_id
+             and lower(ch.name) = lower(d.ai_chapter_guess) limit 1),
         (select chapter_id from papers where id = d.paper_id))
       where d.paper_id = $1 and d.status = 'draft' and d.chapter_id is null`,
     [paperId],
@@ -685,7 +712,7 @@ export function listIn(content: string, key: string): any[] {
  * tried in order: the next one is asked when one is busy, and also when one replies with nothing
  * usable. Throws only when every model failed outright (the caller gives the batch back).
  */
-async function solve(models: string[], userId: string, p: { class_level: number; subject: string | null }, batch: any[]) {
+async function solve(models: string[], userId: string, tuitionId: string, p: { class_level: number; subject: string | null }, batch: any[]) {
   const qs = batch.map((d, i) => ({
     id: `q${i + 1}`,
     question: d.text,
@@ -710,7 +737,7 @@ ${JSON.stringify(qs)}`,
   for (const model of models) {
     let content: string;
     try {
-      ({ content } = await chat({ task: 'answer_questions', userId, models: [model], json: true, maxTokens: 3000, reasoning: 'medium', messages }));
+      ({ content } = await chat({ task: 'answer_questions', userId, tuitionId, models: [model], json: true, maxTokens: 3000, reasoning: 'medium', messages }));
     } catch (e) {
       failure = e;
       continue;
@@ -743,8 +770,9 @@ const CLAIM_MINUTES = 3;
  * claimed yet.
  */
 paperRoutes.post('/papers/:id/answers', async (c) => {
+  const T = tuitionOf(c).id;
   const id = uuid(c.req.param('id'), 'paper id');
-  const p = await q1(`select ${PAPER_COLS} from papers p where p.id = $1`, [id]);
+  const p = await tq1(T, `select ${PAPER_COLS} from papers p where p.id = $1 and p.tuition_id = @T`, [id]);
   if (!p) throw notFound('This paper');
   if (p.class_level == null) throw new HttpError(409, 'needs_details', 'Choose the class of this paper first.');
   await skipRepeats(id, pool);
@@ -768,7 +796,7 @@ paperRoutes.post('/papers/:id/answers', async (c) => {
   if (batch.length) {
     try {
       const userId = c.get('user').id;
-      const [a, b] = await Promise.all([solve(SOLVE_MODELS, userId, p, batch), solve(CHECK_MODELS, userId, p, batch)]);
+      const [a, b] = await Promise.all([solve(SOLVE_MODELS, userId, T, p, batch), solve(CHECK_MODELS, userId, T, p, batch)]);
       await tx(async (cx) => {
         for (const [i, d] of batch.entries()) {
           const x = a.get(i);
@@ -809,7 +837,11 @@ paperRoutes.post('/papers/:id/answers', async (c) => {
 paperRoutes.patch('/drafts/:id', async (c) => {
   const id = uuid(c.req.param('id'), 'draft id');
   const b = await readBody(c);
-  const d = await q1('select * from paper_drafts where id = $1', [id]);
+  const d = await tq1(
+    tuitionOf(c).id,
+    'select d.* from paper_drafts d join papers p on p.id = d.paper_id where d.id = $1 and p.tuition_id = @T',
+    [id],
+  );
   if (!d) throw notFound('This question');
   if (d.status === 'saved') throw new HttpError(409, 'saved', 'This question is already in the question bank. Edit it there.');
 
@@ -854,8 +886,9 @@ paperRoutes.patch('/drafts/:id', async (c) => {
 
 /** Saves every checked multiple-choice draft into the question bank. */
 paperRoutes.post('/papers/:id/save', async (c) => {
+  const T = tuitionOf(c).id;
   const id = uuid(c.req.param('id'), 'paper id');
-  const paper = await q1('select * from papers where id = $1', [id]);
+  const paper = await tq1(T, 'select * from papers where id = $1 and tuition_id = @T', [id]);
   if (!paper) throw notFound('This paper');
   const missing = missingOf(paper);
   if (missing.includes('class_level') || missing.includes('subject_id')) {
@@ -871,8 +904,9 @@ paperRoutes.post('/papers/:id/save', async (c) => {
     );
     // A question the bank already has (the same paper uploaded twice, or two papers sharing
     // questions) is not saved again.
-    const bank = await q<{ text: string; options: string[] }>(
-      'select text, options from questions where class_level = $1 and subject_id = $2',
+    const bank = await tq<{ text: string; options: string[] }>(
+      T,
+      'select text, options from questions where tuition_id = @T and class_level = $1 and subject_id = $2',
       [paper.class_level, paper.subject_id],
       cx,
     );
@@ -887,10 +921,10 @@ paperRoutes.post('/papers/:id/save', async (c) => {
       }
       have.add(k);
       const qrow = await q1(
-        `insert into questions (class_level, chapter_id, text, options, correct_option, keep_option_order, image_key, source, paper_id, created_by,
-                                subject_id)
-         values ($1, $2, $3, $4, $5, $6, $7, 'paper', $8, $9, $10) returning id`,
-        [paper.class_level, d.chapter_id ?? paper.chapter_id, d.text, d.options, d.correct_option, mustKeepOrder(d.options), d.image_key, id,
+        `insert into questions (tuition_id, class_level, chapter_id, text, options, correct_option, keep_option_order, image_key, source, paper_id,
+                                created_by, subject_id)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, 'paper', $9, $10, $11) returning id`,
+        [T, paper.class_level, d.chapter_id ?? paper.chapter_id, d.text, d.options, d.correct_option, mustKeepOrder(d.options), d.image_key, id,
           c.get('user').id, paper.subject_id],
         cx,
       );
@@ -908,7 +942,9 @@ paperRoutes.post('/papers/:id/save', async (c) => {
 
 /** Deletes a paper, its pages and the questions saved from it. Questions a test uses stay in the bank. */
 paperRoutes.delete('/papers/:id', async (c) => {
+  const T = tuitionOf(c).id;
   const id = uuid(c.req.param('id'), 'paper id');
+  if (!(await tq1(T, 'select 1 as x from papers where id = $1 and tuition_id = @T', [id]))) throw notFound('This paper');
   const keys = await q<{ object_key: string }>(
     `select object_key from paper_pages where paper_id = $1
      union all select image_key from paper_drafts where paper_id = $1 and image_key is not null and question_id is null`,

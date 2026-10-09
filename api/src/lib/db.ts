@@ -18,6 +18,17 @@ export async function q1<T = any>(sql: string, params: unknown[] = [], db: Db = 
   return (await q<T>(sql, params, db))[0];
 }
 
+/**
+ * Queries for one tuition. Write `@T` where the tuition's id goes: it becomes the next parameter, so
+ * the other parameters keep their numbers and no query can forget to send it.
+ */
+export const tq = <T = any>(tuition: string, sql: string, params: unknown[] = [], db: Db = pool) =>
+  q<T>(sql.replaceAll('@T', `$${params.length + 1}`), [...params, tuition], db);
+
+export async function tq1<T = any>(tuition: string, sql: string, params: unknown[] = [], db: Db = pool): Promise<T | undefined> {
+  return (await tq<T>(tuition, sql, params, db))[0];
+}
+
 export async function tx<T>(fn: (c: pg.PoolClient) => Promise<T>): Promise<T> {
   const c = await pool.connect();
   try {

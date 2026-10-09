@@ -10,15 +10,16 @@ import { adminRoutes } from './routes/admin.ts';
 import { authRoutes } from './routes/auth.ts';
 import { notifyRoutes } from './routes/notify.ts';
 import { paperRoutes } from './routes/papers.ts';
-import { studentRoutes } from './routes/student.ts';
+import { studentOpenRoutes, studentRoutes } from './routes/student.ts';
 import { teacherRoutes } from './routes/teacher.ts';
+import { tuitionRoutes } from './routes/tuition.ts';
 
 const app = new Hono<AppEnv>();
 
 // The Android app does not need CORS; the web version planned for later will.
 app.use('*', cors({
   origin: '*',
-  allowHeaders: ['authorization', 'content-type', 'x-install-id', 'x-app', 'x-device', 'x-os'],
+  allowHeaders: ['authorization', 'content-type', 'x-install-id', 'x-app', 'x-device', 'x-os', 'x-tuition'],
   allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
 }));
 
@@ -36,12 +37,14 @@ app.get('/', (c) =>
   }));
 
 app.route('/auth', authRoutes);
+app.route('/student', studentOpenRoutes);
 app.route('/student', studentRoutes);
 app.route('/', notifyRoutes);
 
 const teacher = new Hono<AppEnv>();
 teacher.use('*', requireUser('teacher'));
 teacher.route('/', teacherRoutes);
+teacher.route('/', tuitionRoutes);
 teacher.route('/', paperRoutes);
 app.route('/teacher', teacher);
 

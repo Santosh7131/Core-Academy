@@ -1,5 +1,5 @@
-import { ASSIGNED_CTE } from './attempts.ts';
-import { q, q1, tx } from './db.ts';
+import { ASSIGNED_CTE, assignedCte } from './attempts.ts';
+import { q, q1, tq, tq1, tx } from './db.ts';
 import { pushConfigured, pushToUsers } from './push.ts';
 import { putObject, readObject } from './storage.ts';
 
@@ -114,39 +114,52 @@ async function remind(now: Date): Promise<Sent[]> {
   return out;
 }
 
-/** From 8 pm, once a day: what was written today and who missed a test that closed today. */
-async function summarise(): Promise<{ body: string; phones: number } | null> {
-  const day = await q1(
-    `insert into daily_summaries (day)
-     select (now() at time zone '${IST}')::date where (now() at time zone '${IST}')::time >= $1::time
-     on conflict do nothing returning day`,
+/**
+ * From 8 pm, once a day, for each tuition: what was written today and who missed a test that closed
+ * today, sent to that tuition's tutors. Each tuition is claimed once a day in daily_summaries.
+ */
+async function summarise(): Promise<{ tuitions: number; phones: number } | null> {
+  const due = await q<{ id: string }>(
+    `insert into daily_summaries (day, tuition_id)
+     select (now() at time zone '${IST}')::date, t.id from tuitions t
+      where (now() at time zone '${IST}')::time >= $1::time
+     on conflict do nothing returning tuition_id as id`,
     [SUMMARY_AT],
   );
-  if (!day) return null;
+  if (!due.length) return null;
   await q('select finalize_expired_attempts()');
-  const s = await q1<{ written: number; students: number; avg: number | null; missed: number }>(
-    `with ${ASSIGNED_CTE},
-          d as (select date_trunc('day', now() at time zone '${IST}') at time zone '${IST}' as d0)
-     select (select count(*) from attempts x, d where x.submitted_at >= d.d0) as written,
-            (select count(distinct x.student_id) from attempts x, d where x.submitted_at >= d.d0) as students,
-            (select avg(x.score / x.max_score) from attempts x, d where x.submitted_at >= d.d0 and x.max_score > 0) as avg,
-            (select count(distinct a.student_id) from assigned a join tests t on t.id = a.test_id, d
-              where t.closes_at >= d.d0 and t.closes_at <= now()
-                and not exists (select 1 from attempts x
-                                 where x.test_id = t.id and x.student_id = a.student_id and x.submitted_at is not null)) as missed`,
-  );
-  if (!s || (s.written === 0 && s.missed === 0)) return { body: 'Nothing to report.', phones: 0 };
-  const lines = [];
-  if (s.written > 0) {
-    const avg = s.avg === null ? '' : `, average ${Math.round(s.avg * 100)}%`;
-    lines.push(`${count(s.students, 'student')} wrote ${count(s.written, 'test')} today${avg}.`);
-  } else {
-    lines.push('No tests were written today.');
+  let phones = 0;
+  for (const { id } of due) {
+    const s = await tq1<{ written: number; students: number; avg: number | null; missed: number }>(
+      id,
+      `with ${assignedCte('@T')},
+            d as (select date_trunc('day', now() at time zone '${IST}') at time zone '${IST}' as d0)
+       select (select count(*) from attempts x join tests t on t.id = x.test_id, d where t.tuition_id = @T and x.submitted_at >= d.d0) as written,
+              (select count(distinct x.student_id) from attempts x join tests t on t.id = x.test_id, d where t.tuition_id = @T and x.submitted_at >= d.d0) as students,
+              (select avg(x.score / x.max_score) from attempts x join tests t on t.id = x.test_id, d
+                where t.tuition_id = @T and x.submitted_at >= d.d0 and x.max_score > 0) as avg,
+              (select count(distinct a.student_id) from assigned a join tests t on t.id = a.test_id, d
+                where t.closes_at >= d.d0 and t.closes_at <= now()
+                  and not exists (select 1 from attempts x
+                                   where x.test_id = t.id and x.student_id = a.student_id and x.submitted_at is not null)) as missed`,
+    );
+    if (!s || (s.written === 0 && s.missed === 0)) continue;
+    const lines = [];
+    if (s.written > 0) {
+      const avg = s.avg === null ? '' : `, average ${Math.round(s.avg * 100)}%`;
+      lines.push(`${count(s.students, 'student')} wrote ${count(s.written, 'test')} today${avg}.`);
+    } else {
+      lines.push('No tests were written today.');
+    }
+    if (s.missed > 0) lines.push(`${count(s.missed, 'student')} missed a test that closed today.`);
+    const tutors = await tq<{ id: string }>(
+      id,
+      `select m.user_id as id from memberships m join users u on u.id = m.user_id
+        where m.tuition_id = @T and m.role in ('owner', 'tutor') and m.status = 'active' and u.active`,
+    );
+    phones += await pushToUsers(tutors.map((t) => t.id), { title: "Today's tests", body: lines.join(' ') });
   }
-  if (s.missed > 0) lines.push(`${count(s.missed, 'student')} missed a test that closed today.`);
-  const body = lines.join(' ');
-  const teachers = await q<{ id: string }>(`select id from users where role = 'teacher' and active`);
-  return { body, phones: await pushToUsers(teachers.map((t) => t.id), { title: "Today's tests", body }) };
+  return { tuitions: due.length, phones };
 }
 
 // ---------------------------------------------------------------- schedule
@@ -164,7 +177,7 @@ async function planNext(): Promise<Date> {
            where status = 'published' and reminded_at is null and announced_at is not null
              and announced_at <= closes_at - interval '2 hours' and closes_at > now()),
          ((now() at time zone '${IST}')::date
-            + (select count(*)::int from daily_summaries where day = (now() at time zone '${IST}')::date)
+            + (select least(count(*), 1)::int from daily_summaries where day = (now() at time zone '${IST}')::date)
             + $2::time) at time zone '${IST}'
        ) as due`,
       [REMIND_MIN, SUMMARY_AT],

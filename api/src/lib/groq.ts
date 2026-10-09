@@ -43,6 +43,8 @@ export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: Cont
 export type ChatOptions = {
   task: string;
   userId: string | null;
+  /** The tuition the call is for, so its cost can be told per tuition. */
+  tuitionId?: string | null;
   models: string[];
   messages: ChatMessage[];
   json?: boolean;
@@ -61,14 +63,14 @@ function modelParams(model: string, reasoning: ChatOptions['reasoning']): Record
 }
 
 async function logUsage(row: {
-  userId: string | null; task: string; model: string; slot: number | null;
+  userId: string | null; tuitionId?: string | null; task: string; model: string; slot: number | null;
   prompt?: number; completion?: number; ok: boolean; error?: string; ms: number;
 }) {
   await pool
     .query(
-      `insert into ai_usage (user_id, task, model, key_slot, prompt_tokens, completion_tokens, ok, error, ms)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      [row.userId, row.task, row.model, row.slot, row.prompt ?? null, row.completion ?? null, row.ok, row.error ?? null, row.ms],
+      `insert into ai_usage (user_id, tuition_id, task, model, key_slot, prompt_tokens, completion_tokens, ok, error, ms)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [row.userId, row.tuitionId ?? null, row.task, row.model, row.slot, row.prompt ?? null, row.completion ?? null, row.ok, row.error ?? null, row.ms],
     )
     .catch(() => {});
 }
@@ -91,7 +93,7 @@ export async function chat(opts: ChatOptions): Promise<{ content: string; model:
         const started = Date.now();
         const r = await geminiChat(model, opts);
         await logUsage({
-          userId: opts.userId, task: opts.task, model, slot: null, ok: r.ok, error: r.ok ? undefined : r.error,
+          userId: opts.userId, tuitionId: opts.tuitionId, task: opts.task, model, slot: null, ok: r.ok, error: r.ok ? undefined : r.error,
           prompt: r.prompt, completion: r.completion, ms: Date.now() - started,
         });
         if (r.ok) return { content: r.content, model };
@@ -121,20 +123,20 @@ export async function chat(opts: ChatOptions): Promise<{ content: string; model:
           signal: AbortSignal.timeout(120_000),
         });
       } catch (e) {
-        await logUsage({ userId: opts.userId, task: opts.task, model, slot, ok: false, error: String(e), ms: Date.now() - started });
+        await logUsage({ userId: opts.userId, tuitionId: opts.tuitionId, task: opts.task, model, slot, ok: false, error: String(e), ms: Date.now() - started });
         continue;
       }
       const ms = Date.now() - started;
       if (res.ok) {
         const j: any = await res.json();
         await logUsage({
-          userId: opts.userId, task: opts.task, model, slot, ok: true, ms,
+          userId: opts.userId, tuitionId: opts.tuitionId, task: opts.task, model, slot, ok: true, ms,
           prompt: j.usage?.prompt_tokens, completion: j.usage?.completion_tokens,
         });
         return { content: j.choices?.[0]?.message?.content ?? '', model };
       }
       const body = (await res.text()).slice(0, 500);
-      await logUsage({ userId: opts.userId, task: opts.task, model, slot, ok: false, error: `${res.status} ${body}`, ms });
+      await logUsage({ userId: opts.userId, tuitionId: opts.tuitionId, task: opts.task, model, slot, ok: false, error: `${res.status} ${body}`, ms });
       if (res.status === 429 || res.status >= 500) {
         const ra = Number(res.headers.get('retry-after'));
         if (Number.isFinite(ra) && ra > 0) retryAfter = Math.min(retryAfter ?? ra, ra);
