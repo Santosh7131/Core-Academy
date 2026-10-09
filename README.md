@@ -1,9 +1,10 @@
 # Core Academy
 
 An Android app for a small maths tuition (CBSE, Classes 6–12). Students take timed
-multiple-choice tests on their phones, the app marks them, and the teacher sees every
-result. The teacher creates each student's login, builds tests from a question bank, and
-can photograph a school question paper so Groq AI types its questions out for her to check.
+multiple-choice tests on their phones, the app marks them, and the tutors see every
+result. A tutor creates each student's login and makes a test in one of three ways: upload a
+school question paper (photos or a PDF) that AI types out for them to check, describe the test
+to AI and let it write the questions, or take a ready-made chapter test.
 
 ## What's here
 
@@ -17,14 +18,50 @@ can photograph a school question paper so Groq AI types its questions out for he
 
 ## How marking stays fair
 
-- The right answers never leave the server until a student submits.
-- Each student gets their own order of questions and options.
+- The right answers never leave the server until a student has submitted and the test's
+  results are open (see "When students see their marks").
+- Each student gets their own order of questions and options, unless the tutor picks the same
+  order for everyone.
 - The deadline is the start time plus the time limit, capped at the test's closing time. The
   server enforces it with 30 seconds of grace, and an attempt that runs out submits itself.
 - One attempt per test, unless the teacher allows a retake.
 - Five wrong PINs lock a login for five minutes.
 - While a student is logged in, release builds block screenshots and screen recording
   (Android's FLAG_SECURE). The teacher's screens can still be captured.
+
+## When students see their marks
+
+Every test has a closing time. A tutor who posts a test without one gets the next 9 pm India
+time that is at least three hours away, and one who picks a time already past is told so. A
+student who submits sees "Submitted" and when the marks will show. The marks and the right
+answers open for everyone when any of these happens first:
+
+- the closing time passes,
+- every student the test was given to has submitted, or
+- the tutor taps "Show marks to students now" on the test's page.
+
+The server decides (`results_released_at` on the test, set by the last two rules; the first
+is the clock), so an older app that asks for a result early is told to wait as well. Tests
+posted before this rule keep what they had: they were opened when the migration ran.
+
+## The tutor app
+
+There are two tabs. Home lists every group that has something running: its live tests (open
+to students now) and posted tests (published, opening later), with how many students have
+submitted and how many are writing at this moment. Groups with nothing running are listed
+underneath in one short list. Groups lists them all.
+
+A group (a class and a subject, "10th Maths") has one page: a Make a test button, its tests
+(live, posted, drafts, finished) and its students with an Add student button. Class and subject
+come from the group, so nothing asks for them again. Make a test offers upload, describe it to
+AI, or a ready-made chapter test. The app has no page of questions: a wrong answer is fixed
+from the test's own page, which marks everyone's attempt again.
+
+A test's page leads with its marks notice and its settings (time limit, opens, closes, order),
+and folds the questions to two with a link to show the rest. Settings (the avatar on Home) holds
+the tuition's name, the tutors, the subjects, the theme and the password. Several tutors can
+share one tuition: they all see every group and test, and any tutor can add another or turn one off
+(not themselves) in Settings.
 
 ## Groups and subjects
 
@@ -89,9 +126,21 @@ guess would be a guess. The teacher checks the question and taps "Looks right, f
 PDF holding its pages twice) is skipped, and saving leaves out any question the bank already
 has. Skipped questions can be brought back.
 
-The Questions tab groups the bank by source: one row per paper category, other uploaded
-papers, questions typed by hand, and the ready-made library. Each opens with its own class,
-subject and chapter filters.
+## Describing a test to AI
+
+In a group, Make a test, Describe it to AI takes a few words ("easy and medium questions on
+quadratic equations, with two word problems") and a question count (3 to 40). The server asks
+Gemini 3.1 Flash-Lite, with gpt-oss-120b behind it (`GROQ_WRITE_MODELS`), for the questions
+as JSON: four options each and the writer's answer. The result opens in the same review screen
+as an uploaded paper. The writer's answer is only a proposal. The two solving models work every
+question out without seeing it, and an answer is marked only when both agree with each other
+and with the writer; otherwise the question is left for the tutor with a note. Ten questions
+take about five seconds to write and a few more to check.
+
+Models write LaTeX in JSON with one backslash (`\frac`), which JSON reads as a form feed plus
+"rac". Every model reply passes through `fixLatexEscapes` first (`api/src/lib/latex-json.ts`,
+checked by `node tools/latex-json-test.mjs`), and an option that is all maths but came without
+`$...$` gets them.
 
 Pages are read by Google's Gemini 3.5 Flash-Lite on its free tier (`GEMINI_API_KEY`), about 4
 seconds a page. Groq's vision model reads instead whenever Gemini is busy or refuses a page,
@@ -308,7 +357,8 @@ and the scripts that read it would then point at the live database.
 | Command | What it proves |
 |---|---|
 | `npm run typecheck` | The API type-checks. |
-| `npm run test:api` | 115 end-to-end checks of the marking rules, groups, logins, question papers (including ones uploaded before their details are known, printed answer keys that replace AI answers, questions the bank already has, two answer calls at once and question groups) and the admin app's API against the deployed dev API (add `-- --env .env.main` for the live one; the admin checks run only where the logins file has a developer login). It creates its own students, subject, tests and paper, gives its tests only to those students, then removes them all. |
+| `npm run test:latex` | The LaTeX repair for model replies and the bare-maths wrapping (29 cases). |
+| `npm run test:api` | 133 end-to-end checks of the marking rules, when results open (closing time, last student, tutor), groups, the home and group pages, tutors, logins, question papers (including ones uploaded before their details are known, printed answer keys that replace AI answers, questions the bank already has, two answer calls at once and question groups) and the admin app's API against the deployed dev API (add `-- --env .env.main` for the live one; the admin checks run only where the logins file has a developer login). It creates its own students, subject, tests and paper, gives its tests only to those students, then removes them all. |
 | `node tools/notify-test.ts --log server.log` | 25 checks of the notifications against the API on your PC, run with `PUSH_DRY_RUN=1` so each notification is written to the log instead of sent. Dev only. |
 | `node tools/check-answers.ts` | Every sample question's marked answer is right, and no other option equals it. |
 | `node tools/ai-test.ts` | How accurately the AI reads the 2-page sample paper (render it first with `tools/make-sample-paper.ps1`). |

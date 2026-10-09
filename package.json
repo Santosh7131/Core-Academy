@@ -7,6 +7,7 @@
     "migrate": "node tools/migrate.ts",
     "seed": "node tools/seed.ts",
     "test:api": "node tools/api-test.ts",
+    "test:latex": "node tools/latex-json-test.mjs",
     "deploy": "neon deploy"
   },
   "dependencies": {
