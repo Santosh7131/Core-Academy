@@ -97,6 +97,10 @@ const WRITE_BATCH = 25;
  * A call writes at most WRITE_BATCH questions. A longer test is several calls: the first makes the
  * paper, and each later one sends its `paper_id` and adds to it, told what is already there so it
  * writes something new. The test can be any length.
+ *
+ * Papers belong to the tuition, not to the tutor who made them: every paper route is open to every
+ * tutor (they share all groups, tests and papers, and any of them can already edit or delete a
+ * paper), so adding to one checks its kind, class and subject but not who made it.
  */
 paperRoutes.post('/papers/chat', async (c) => {
   const b = await readBody(c);
