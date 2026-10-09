@@ -55,6 +55,30 @@ class _ResultScreenState extends State<ResultScreen> {
         if (_error != null) ErrorState(message: _error!, onRetry: _load) else const LoadingState(),
       ]);
     }
+    // Submitted, but the marks are not open yet: they open when the test closes, once everyone has
+    // finished, or when the tutor shows them.
+    if (d['waiting'] == true) {
+      final at = f.parseTime(d['results_at']);
+      return PushedPanel(
+        onBack: _back,
+        kicker: 'Submitted',
+        title: '${d['title']}',
+        children: [
+          const SizedBox(height: 22),
+          InlineNotice(
+            at == null
+                ? 'Your test is submitted. Your marks show once everyone has finished.'
+                : 'Your test is submitted. Your marks and the right answers show after ${f.when(at)}, or earlier once everyone has finished.',
+            tone: Tone.success,
+            icon: Ph.checkCircle,
+          ),
+          const SizedBox(height: 18),
+          SecondaryButton('Check again', icon: Ph.arrowsClockwise, onTap: _load),
+          const SizedBox(height: 10),
+          PrimaryButton('Back to my tests', onTap: _back),
+        ],
+      );
+    }
     final a = d['attempt'] as Map<String, dynamic>;
     final review = (d['review'] as List).cast<Map<String, dynamic>>();
     final score = a['score'] as num? ?? 0;

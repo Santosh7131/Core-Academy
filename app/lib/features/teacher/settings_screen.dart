@@ -2,12 +2,12 @@ import 'package:flutter/material.dart';
 
 import '../../core/api.dart';
 import '../../core/changes.dart';
+import '../../core/format.dart' as f;
 import '../../core/session.dart';
 import '../../theme.dart';
 import '../../ui/kit.dart';
 import '../../ui/update_card.dart';
 import 'common.dart';
-import 'subjects.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -24,11 +24,9 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
   Future<void> refreshQuietly() => _load();
 
   Map<String, dynamic>? _s;
-  List<Map<String, dynamic>> _chapters = [];
   List<Map<String, dynamic>> _subjectRows = [];
-  List<Subject> _subjects = [];
-  int _chapterClass = 9;
-  String? _chapterSubject;
+  List<Map<String, dynamic>> _tutors = [];
+  String? _meId;
   String? _error;
   final _tuition = TextEditingController();
   final _name = TextEditingController();
@@ -55,32 +53,17 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     try {
       final s = await api.get('/teacher/settings');
       final subjects = await api.get('/teacher/subjects');
+      final tutors = await api.get('/teacher/tutors');
+      _tutors = (tutors['tutors'] as List).cast<Map<String, dynamic>>();
+      _meId = '${tutors['me']}';
       _s = Map<String, dynamic>.from(s);
       _subjectRows = (subjects['subjects'] as List).cast<Map<String, dynamic>>();
-      _subjects = [for (final r in _subjectRows) Subject.fromJson(r)];
-      if (!_subjects.any((x) => x.id == _chapterSubject)) {
-        _chapterSubject = _subjects.where((x) => x.isDefault).map((x) => x.id).firstOrNull ?? _subjects.firstOrNull?.id;
-      }
       _tuition.text = '${_s!['tuition_name']}';
       _name.text = '${_s!['me']['display_name']}';
-      await _loadChapters();
       if (mounted) setState(() => _error = null);
     } on ApiException catch (e) {
       if (mounted) setState(() => _error = e.message);
     }
-  }
-
-  /// "9th Science" for the chapter list being shown.
-  String? get _chapterGroup {
-    for (final x in _subjects) {
-      if (x.id == _chapterSubject) return groupName(_chapterClass, x.name);
-    }
-    return null;
-  }
-
-  Future<void> _loadChapters() async {
-    final r = await api.get('/teacher/chapters?class=$_chapterClass${_chapterSubject == null ? '' : '&subject=$_chapterSubject'}');
-    if (mounted) setState(() => _chapters = (r['chapters'] as List).cast<Map<String, dynamic>>());
   }
 
   Future<void> _run(Future<void> Function() action, String done) async {
@@ -107,7 +90,49 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     );
   }
 
-  Future<void> _editRow(String kind, Map<String, dynamic> row) async {
+  /// Another tutor of this tuition: they log in with a username and password, and see every group.
+  Future<void> _addTutor() async {
+    final name = TextEditingController();
+    final user = TextEditingController();
+    final pass = TextEditingController();
+    final ok = await showCentredCard<bool>(
+      context,
+      title: 'Add a tutor',
+      subtitle: 'They log in with these, and see every group and student.',
+      builder: (ctx) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        GroupedInputs(children: [
+          BareField(controller: name, placeholder: 'Name', capitalization: TextCapitalization.words),
+          BareField(controller: user, placeholder: 'Username, in lowercase letters'),
+          BareField(controller: pass, placeholder: 'Password, 8 or more characters', obscure: true),
+        ]),
+        const SizedBox(height: 16),
+        PrimaryButton('Add tutor', onTap: () => Navigator.of(ctx).pop(true)),
+      ]),
+    );
+    final body = {'display_name': name.text.trim(), 'username': user.text.trim().toLowerCase(), 'password': pass.text};
+    for (final c in [name, user, pass]) {
+      c.dispose();
+    }
+    if (ok != true) return;
+    await _run(() => api.post('/teacher/tutors', body), 'Tutor added. Give them the username and the password.');
+    _load();
+  }
+
+  Future<void> _toggleTutor(Map<String, dynamic> t) async {
+    final on = t['active'] == true;
+    final ok = await confirmCard(
+      context,
+      title: on ? 'Turn off ${t['display_name']}?' : 'Turn on ${t['display_name']}?',
+      body: on ? 'They are signed out and cannot log in until you turn them on again.' : 'They can log in again.',
+      confirm: on ? 'Turn off' : 'Turn on',
+      destructive: on,
+    );
+    if (!ok) return;
+    await _run(() => api.post('/teacher/tutors/${t['id']}/active', {'active': !on}), on ? 'Turned off.' : 'Turned on.');
+    _load();
+  }
+
+  Future<void> _editSubject(Map<String, dynamic> row) async {
     // Maths is the main subject: it can be renamed but never deleted.
     final canDelete = row['is_default'] != true;
     final choice = await showCentredCard<String>(
@@ -122,25 +147,21 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
       ]),
     );
     if (choice == 'rename') {
-      final name = await _ask('Rename', kind == 'subjects' ? 'Subject name' : 'Chapter name',
-          initial: '${row['name']}');
+      final name = await _ask('Rename', 'Subject name', initial: '${row['name']}');
       if (name != null && name.trim().isNotEmpty) {
-        await _run(() => api.patch('/teacher/$kind/${row['id']}', {'name': name.trim()}), 'Renamed.');
+        await _run(() => api.patch('/teacher/subjects/${row['id']}', {'name': name.trim()}), 'Renamed.');
         _load();
       }
     } else if (choice == 'delete' && mounted) {
       final ok = await confirmCard(
         context,
         title: 'Delete ${row['name']}?',
-        body: switch (kind) {
-          'subjects' => 'Students who take it are taken out of its groups. A subject with chapters, questions or tests cannot be deleted.',
-          _ => 'Questions in this chapter stay in the bank without a chapter.',
-        },
+        body: 'Students who take it are taken out of its groups. A subject that already has tests, papers or questions cannot be deleted.',
         confirm: 'Delete',
         destructive: true,
       );
       if (ok) {
-        await _run(() => api.delete('/teacher/$kind/${row['id']}'), 'Deleted.');
+        await _run(() => api.delete('/teacher/subjects/${row['id']}'), 'Deleted.');
         _load();
       }
     }
@@ -155,7 +176,6 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
       ]);
     }
     final sample = Map<String, dynamic>.from(s['sample']);
-    final ai = Map<String, dynamic>.from(s['ai']);
     final hasSample = sample.values.any((v) => (v as int) > 0);
     const rule = EdgeInsets.fromLTRB(0, 26, 0, 11);
 
@@ -174,14 +194,26 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
               await api.patch('/teacher/settings', {'tuition_name': _tuition.text.trim(), 'display_name': _name.text.trim()});
               await session.restore();
             }, 'Names saved.')),
+        SectionRule('Tutors', count: _tutors.length, padding: rule),
+        for (final (i, t) in _tutors.indexed) ...[
+          if (i > 0) const SizedBox(height: gapRow),
+          RowTile(
+            leading: AppAvatar(name: '${t['display_name']}', seed: '${t['id']}'),
+            title: '${t['display_name']}${t['id'] == _meId ? ' (you)' : ''}',
+            meta: '${t['username']}${t['active'] == true ? '' : ' · turned off'}',
+            trailing: t['id'] == _meId ? null : TextAction(t['active'] == true ? 'Turn off' : 'Turn on', onTap: () => _toggleTutor(t)),
+          ),
+        ],
+        const SizedBox(height: gapRow),
+        SecondaryButton('Add tutor', icon: Ph.userPlus, onTap: _addTutor),
         SectionRule('Subjects', count: _subjectRows.length, padding: rule),
         for (final (i, sj) in _subjectRows.indexed) ...[
           if (i > 0) const SizedBox(height: gapRow),
           RowTile(
             title: '${sj['name']}',
-            meta: '${sj['students']} students · ${sj['questions']} questions',
+            meta: f.count(int.tryParse('${sj['students']}') ?? 0, 'student'),
             chevron: true,
-            onTap: () => _editRow('subjects', sj),
+            onTap: () => _editSubject(sj),
           ),
         ],
         const SizedBox(height: gapRow),
@@ -190,34 +222,6 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
           if (name != null && name.trim().isNotEmpty) {
             await _run(() => api.post('/teacher/subjects', {'name': name.trim()}), 'Subject added.');
             _load();
-          }
-        }),
-        const SectionRule('Chapters', padding: rule),
-        FilterBar(padding: EdgeInsets.zero, children: [
-          ClassFilter(value: _chapterClass, allowAll: false, onChanged: (c) {
-            setState(() => _chapterClass = c ?? 9);
-            _loadChapters();
-          }),
-          if (_subjects.length > 1)
-            SubjectFilter(subjects: _subjects, value: _chapterSubject, allowAll: false, onChanged: (v) {
-              setState(() => _chapterSubject = v);
-              _loadChapters();
-            }),
-        ]),
-        const SizedBox(height: 10),
-        for (final (i, ch) in _chapters.indexed) ...[
-          if (i > 0) const SizedBox(height: gapRow),
-          RowTile(title: '${ch['name']}', meta: '${ch['questions']} questions', chevron: true, onTap: () => _editRow('chapters', ch)),
-        ],
-        const SizedBox(height: gapRow),
-        SecondaryButton('Add a ${_chapterGroup ?? 'Class $_chapterClass'} chapter', icon: Ph.plus, onTap: () async {
-          final name = await _ask('Add a chapter', 'Chapter name', action: 'Add');
-          if (name != null && name.trim().isNotEmpty) {
-            await _run(
-              () => api.post('/teacher/chapters', {'class_level': _chapterClass, 'subject_id': _chapterSubject, 'name': name.trim()}),
-              'Chapter added.',
-            );
-            _loadChapters();
           }
         }),
         const SectionRule('Theme', padding: rule),
@@ -241,8 +245,6 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
             }, 'Password changed.')),
         const SectionRule('App', padding: rule),
         const AppVersionPanel(),
-        const SectionRule('AI paper reader', padding: rule),
-        FactList([('Pages read today', '${ai['calls_today']}'), ('Failed today', '${ai['failed_today']}')]),
         // Only the dev branch has sample data; the live app never shows this section.
         if (hasSample) ...[
           const SectionRule('Sample data', padding: rule),

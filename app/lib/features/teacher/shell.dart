@@ -3,20 +3,16 @@ import 'package:go_router/go_router.dart';
 
 import '../../theme.dart';
 import '../../ui/kit.dart';
-import '../../ui/tokens.dart';
 
 /// Teacher tabs with a floating navigation surface (solid, no blur).
-/// Upload is the AI paper reader, the one tab allowed to carry the accent.
+/// Home and Groups: everything else (students, tests, uploads) is inside a group.
 class TeacherShell extends StatelessWidget {
   const TeacherShell({super.key, required this.shell});
   final StatefulNavigationShell shell;
 
   static const _items = [
     (Ph.house, 'Home'),
-    (Ph.users, 'Students'),
-    (Ph.scan, 'Upload'),
-    (Ph.books, 'Questions'),
-    (Ph.exam, 'Tests'),
+    (Ph.users, 'Groups'),
   ];
 
   @override
@@ -41,7 +37,7 @@ class TeacherShell extends StatelessWidget {
                     child: Pressable(
                       label: label,
                       onTap: () => shell.goBranch(i, initialLocation: i == shell.currentIndex),
-                      child: _NavItem(icon: icon, label: label, selected: i == shell.currentIndex, ai: i == 2),
+                      child: _NavItem(icon: icon, label: label, selected: i == shell.currentIndex),
                     ),
                   ),
               ]),
@@ -52,11 +48,10 @@ class TeacherShell extends StatelessWidget {
 }
 
 class _NavItem extends StatelessWidget {
-  const _NavItem({required this.icon, required this.label, required this.selected, required this.ai});
+  const _NavItem({required this.icon, required this.label, required this.selected});
   final IconData icon;
   final String label;
   final bool selected;
-  final bool ai;
 
   @override
   Widget build(BuildContext context) {
@@ -64,9 +59,9 @@ class _NavItem extends StatelessWidget {
     return SizedBox(
       height: 64,
       child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-        Icon(icon, size: 22, color: ai ? aiAccentInk : fg),
+        Icon(icon, size: 24, color: fg),
         const SizedBox(height: 3),
-        Text(label, style: tagStyle.copyWith(fontWeight: FontWeight.w600, color: ai && selected ? aiAccentInk : fg)),
+        Text(label, style: tagStyle.copyWith(fontSize: 12.5, fontWeight: FontWeight.w600, color: fg)),
       ]),
     );
   }

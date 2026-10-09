@@ -168,11 +168,16 @@ class _StudentHomeState extends State<StudentHome> with WidgetsBindingObserver, 
         section('Completed', done, (t) {
           final a = t['attempt'] as Map<String, dynamic>;
           final submitted = f.parseTime(a['submitted_at']);
+          // Marks stay hidden until the test closes, everyone has finished, or the tutor shows them.
+          final open = t['results_open'] != false;
+          final closes = f.parseTime(t['closes_at']);
           return RowTile(
             title: '${t['title']}',
-            meta: submitted == null ? null : 'Submitted ${f.when(submitted)}',
-            trailing: Text('${f.marks(a['score'])}/${f.marks(a['max_score'])}', style: numStyle(size: 15)),
-            onTap: () => _open('/s/result/${a['id']}'),
+            meta: !open
+                ? 'Submitted · marks ${closes == null ? 'soon' : 'after ${f.when(closes)}'}'
+                : (submitted == null ? null : 'Submitted ${f.when(submitted)}'),
+            trailing: open ? Text('${f.marks(a['score'])}/${f.marks(a['max_score'])}', style: numStyle(size: 15)) : const TagChip('Marks later'),
+            onTap: open ? () => _open('/s/result/${a['id']}') : null,
           );
         }),
       if (missed.isNotEmpty)

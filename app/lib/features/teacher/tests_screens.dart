@@ -43,132 +43,6 @@ String testMeta(Map<String, dynamic> t) {
   return parts.join(' · ');
 }
 
-// ---------------------------------------------------------------- list
-
-class TestsScreen extends StatefulWidget {
-  const TestsScreen({super.key});
-
-  @override
-  State<TestsScreen> createState() => _TestsScreenState();
-}
-
-class _TestsScreenState extends State<TestsScreen> with WidgetsBindingObserver, AutoRefresh<TestsScreen> {
-  @override
-  Set<Area> get refreshAreas => {Area.tests};
-
-  @override
-  Future<void> refreshQuietly() => _load();
-
-  @override
-  Duration? get pollEvery => const Duration(seconds: 60);
-
-  List<Map<String, dynamic>>? _rows;
-  List<Subject> _subjects = [];
-  String? _error;
-  String _filter = 'open';
-  int? _class;
-  String? _subject;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    markLoaded();
-    try {
-      final r = await api.get('/teacher/tests');
-      final subjects = _subjects.isEmpty ? await loadSubjects() : _subjects;
-      if (mounted) {
-        setState(() {
-          _rows = (r['tests'] as List).cast<Map<String, dynamic>>();
-          _subjects = subjects;
-          _error = null;
-        });
-      }
-    } on ApiException catch (e) {
-      if (mounted) setState(() => _error = e.message);
-    }
-  }
-
-  Future<void> _open(String path) async {
-    await context.push(path);
-    _load();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    // The class and subject chips narrow the list; the status chips count within them.
-    final all = _rows
-        ?.where((t) => (_class == null || t['class_level'] == _class) && (_subject == null || t['subject_id'] == _subject))
-        .toList();
-    final counts = <String, int>{};
-    for (final t in all ?? const <Map<String, dynamic>>[]) {
-      counts.update(testState(t), (n) => n + 1, ifAbsent: () => 1);
-    }
-    final rows = all?.where((t) => _filter == 'all' || testState(t) == _filter).toList();
-    const statuses = [('open', 'Open'), ('upcoming', 'Coming up'), ('closed', 'Closed'), ('draft', 'Drafts'), ('all', 'All tests')];
-    final statusLabel = statuses.firstWhere((s) => s.$1 == _filter).$2;
-    return SafeArea(
-      bottom: false,
-      child: WithFloatingAdd(
-        add: FloatingAdd('New test', onTap: () => _open('/t/tests/new')),
-        child: PullToRefresh(
-          onRefresh: _load,
-          child: ListView(padding: EdgeInsets.zero, physics: const AlwaysScrollableScrollPhysics(), children: [
-            TabHeader(kicker: all == null ? 'Tests' : f.count(all.length, 'test'), title: 'Tests'),
-            const SizedBox(height: 18),
-            FilterBar(children: [
-              SelectPill(
-                label: statusLabel,
-                count: all == null ? null : (_filter == 'all' ? all.length : counts[_filter] ?? 0),
-                active: _filter != 'all',
-                onTap: () async {
-                  final c = await showChoices<String>(
-                    context,
-                    title: 'Show',
-                    options: [for (final (k, label) in statuses) Choice(k, label, count: k == 'all' ? all?.length : counts[k] ?? 0)],
-                    selected: _filter,
-                  );
-                  if (c?.value != null) setState(() => _filter = c!.value!);
-                },
-              ),
-              ClassFilter(value: _class, onChanged: (c) => setState(() => _class = c)),
-              if (_subjects.length > 1) SubjectFilter(subjects: _subjects, value: _subject, onChanged: (v) => setState(() => _subject = v)),
-            ]),
-            const SizedBox(height: 16),
-            if (all == null && _error != null)
-              ErrorState(message: _error!, onRetry: _load)
-            else if (all == null)
-              const LoadingState()
-            else if (rows!.isEmpty)
-              const EmptyState(icon: Ph.exam, title: 'No tests here', body: 'Build a test from your question bank and choose when it opens.')
-            else
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: gutter),
-                child: Column(children: [
-                  for (final (i, t) in rows.indexed) ...[
-                    if (i > 0) const SizedBox(height: gapRow),
-                    RowTile(
-                      title: '${t['title']}',
-                      meta: testMeta(t),
-                      trailing: t['status'] == 'published'
-                          ? Text('${t['submitted']}/${t['assigned']}', style: numStyle(size: 15))
-                          : const TagChip('Draft'),
-                      onTap: () => _open(t['status'] == 'published' ? '/t/tests/${t['id']}' : '/t/tests/${t['id']}/edit'),
-                    ),
-                  ],
-                ]),
-              ),
-            fabClearance,
-          ]),
-        ),
-      ),
-    );
-  }
-}
-
 // ---------------------------------------------------------------- editor
 
 class TestEditor extends StatefulWidget {
@@ -189,6 +63,7 @@ class _TestEditorState extends State<TestEditor> {
   DateTime? _opens;
   DateTime? _closes;
   bool _shuffle = true;
+  bool _allQuestions = false;
 
   /// Who writes it: 'group' (the class's students who take the subject) or 'students' (some of them).
   String _audience = 'group';
@@ -204,6 +79,8 @@ class _TestEditorState extends State<TestEditor> {
     super.initState();
     _title.addListener(() => setState(() {}));
     _loadSubjects();
+    // Every test closes: a new one starts with a closing time.
+    if (widget.id == null) _closes = defaultClosing();
     if (widget.id != null) _load();
   }
 
@@ -251,6 +128,8 @@ class _TestEditorState extends State<TestEditor> {
       _limit = t['time_limit_min'] as int?;
       _opens = f.parseTime(t['opens_at']);
       _closes = f.parseTime(t['closes_at']);
+      _published = t['status'] == 'published';
+      if (_closes == null && !_published) _closes = defaultClosing();
       _shuffle = t['shuffle'] == true;
       // A whole-class test from before groups now goes to its group.
       _audience = t['assign_group'] == true || t['assign_all'] == true ? 'group' : 'students';
@@ -287,7 +166,8 @@ class _TestEditorState extends State<TestEditor> {
     if (_class == null) return 'Choose a class.';
     if (_subjectId == null) return 'Choose a subject.';
     if (_questions.isEmpty) return 'Choose at least one question.';
-    if (_opens != null && _closes != null && !_closes!.isAfter(_opens!)) return 'The closing time must be after the opening time.';
+    if (_closes == null) return 'Choose when the test closes.';
+    if (_opens != null && !_closes!.isAfter(_opens!)) return 'The closing time must be after the opening time.';
     if (_audience == 'students' && !_group.any((s) => _studentIds.contains(s['id']))) return 'Choose at least one student.';
     return null;
   }
@@ -324,12 +204,17 @@ class _TestEditorState extends State<TestEditor> {
     if (_loading) return const PushedPanel(title: 'Test', children: [LoadingState()]);
     final missing = _missing;
     final locked = _attempts > 0;
+    final isNew = widget.id == null;
+    // The settings come first; the questions are folded at the bottom, two at a time.
+    final shown = _allQuestions ? _questions : _questions.take(2).toList();
     return PushedPanel(
-      kicker: widget.id == null ? 'New test' : (_published ? 'Published' : 'Draft'),
-      title: widget.id == null ? 'New test' : 'Edit test',
+      kicker: isNew
+          ? 'New test'
+          : '${_class != null && _subjectName != null ? '${groupName(_class!, _subjectName!)} · ' : ''}${_published ? 'Posted' : 'Draft'}',
+      title: isNew ? 'New test' : 'Test settings',
       footer: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         PrimaryButton(
-          _busy ? 'Saving' : (_published ? 'Save changes' : 'Publish test'),
+          _busy ? 'Saving' : (_published ? 'Save changes' : 'Post test'),
           onTap: missing == null && !_busy ? () => _save(publish: true) : null,
           disabledReason: _busy ? null : missing,
         ),
@@ -341,53 +226,32 @@ class _TestEditorState extends State<TestEditor> {
         GroupedInputs(children: [
           BareField(controller: _title, placeholder: 'Test name, e.g. Unit test 3', capitalization: TextCapitalization.sentences),
         ]),
-        const FormLabel('Class'),
-        ClassField(
-          value: _class,
-          enabled: !locked,
-          onChanged: (c) {
-            setState(() {
-              if (c != _class) {
-                _questions = [];
-                _studentIds = {};
-              }
-              _class = c;
-            });
-            _loadStudents();
-          },
-        ),
-        const FormLabel('Subject'),
-        SubjectField(
-          subjects: _subjects,
-          value: _subjectId,
-          enabled: !locked,
-          onChanged: (v) => setState(() {
-            if (v != _subjectId) _questions = [];
-            _subjectId = v;
-          }),
-        ),
-        FormLabel(_questions.isEmpty ? 'Questions' : 'Questions · ${_questions.length} chosen'),
-        if (locked)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: InlineNotice('Students have started this test, so its questions cannot change.', tone: Tone.neutral, icon: Ph.lock),
+        if (isNew) ...[
+          const FormLabel('Class'),
+          ClassField(
+            value: _class,
+            enabled: !locked,
+            onChanged: (c) {
+              setState(() {
+                if (c != _class) {
+                  _questions = [];
+                  _studentIds = {};
+                }
+                _class = c;
+              });
+              _loadStudents();
+            },
           ),
-        for (final (i, q) in _questions.indexed) ...[
-          if (i > 0) const SizedBox(height: 8),
-          RowTile(
-            leading: Text((i + 1).toString().padLeft(2, '0'), style: numStyle(size: 13, color: muted)),
-            titleWidget: MathText('${q['text']}', style: rowTitleStyle, maxLines: 2),
-            meta: q['chapter'] == null ? null : '${q['chapter']}',
+          const FormLabel('Subject'),
+          SubjectField(
+            subjects: _subjects,
+            value: _subjectId,
+            enabled: !locked,
+            onChanged: (v) => setState(() {
+              if (v != _subjectId) _questions = [];
+              _subjectId = v;
+            }),
           ),
-        ],
-        if (!locked) ...[
-          if (_questions.isNotEmpty) const SizedBox(height: 10),
-          SecondaryButton(
-            _questions.isEmpty ? 'Choose questions' : 'Change questions',
-            icon: Ph.listChecks,
-            onTap: _class == null || _subjectId == null ? null : _pickQuestions,
-          ),
-          if (_class == null) Padding(padding: const EdgeInsets.only(top: 8), child: Text('Choose a class first.', style: labelStyle)),
         ],
         const FormLabel('Time limit'),
         SelectField(
@@ -408,18 +272,18 @@ class _TestEditorState extends State<TestEditor> {
         const FormLabel('Opens'),
         DayTimeChooser(value: _opens, noneLabel: 'Now', onChanged: (v) => setState(() => _opens = v)),
         const FormLabel('Closes'),
-        DayTimeChooser(value: _closes, noneLabel: 'No closing time', onChanged: (v) => setState(() => _closes = v)),
-        if (_opens != null || _closes != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 10),
-            child: Fig(
-              [
-                _opens == null ? 'Opens as soon as you publish' : 'Opens ${f.when(_opens!)}',
-                _closes == null ? 'stays open' : 'closes ${f.when(_closes!)}',
-              ].join(', '),
-              style: labelStyle,
-            ),
+        DayTimeChooser(value: _closes, onChanged: (v) => setState(() => _closes = v)),
+        Padding(
+          padding: const EdgeInsets.only(top: 10),
+          child: Fig(
+            '${[
+              _opens == null ? 'Opens as soon as you post it' : 'Opens ${f.when(_opens!)}',
+              if (_closes != null) 'closes ${f.when(_closes!)}',
+            ].join(', ')}. Students see their marks and the answers after it closes, or earlier once everyone has finished. '
+            'You can also show them yourself.',
+            style: labelStyle,
           ),
+        ),
         const FormLabel('Order'),
         ChipRow(padding: EdgeInsets.zero, children: [
           SegChip('Shuffle for each student', selected: _shuffle, onTap: () => setState(() => _shuffle = true)),
@@ -438,7 +302,7 @@ class _TestEditorState extends State<TestEditor> {
         if (_audience == 'group' && _class != null && _subjectName != null && _groupSize == 0) ...[
           const SizedBox(height: 10),
           InlineNotice(
-            'No Class $_class student takes $_subjectName yet, so nobody will see this test. Add $_subjectName to students in Students.',
+            'No Class $_class student takes $_subjectName yet, so nobody will see this test. Add students to the group first.',
             icon: Ph.warning,
           ),
         ],
@@ -461,6 +325,36 @@ class _TestEditorState extends State<TestEditor> {
                 }),
               ),
             ],
+        ],
+        FormLabel(_questions.isEmpty ? 'Questions' : 'Questions · ${_questions.length}', top: 30),
+        if (locked)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: InlineNotice('Students have started this test, so its questions cannot change.', tone: Tone.neutral, icon: Ph.lock),
+          ),
+        for (final (i, q) in shown.indexed) ...[
+          if (i > 0) const SizedBox(height: 8),
+          RowTile(
+            leading: Text((i + 1).toString().padLeft(2, '0'), style: numStyle(size: 13, color: muted)),
+            titleWidget: MathText('${q['text']}', style: rowTitleStyle, maxLines: 2),
+            meta: q['chapter'] == null ? null : '${q['chapter']}',
+          ),
+        ],
+        if (_questions.length > 2)
+          Center(
+            child: TextAction(
+              _allQuestions ? 'Show fewer questions' : 'Show all ${_questions.length} questions',
+              onTap: () => setState(() => _allQuestions = !_allQuestions),
+            ),
+          ),
+        if (!locked) ...[
+          if (_questions.isNotEmpty) const SizedBox(height: 10),
+          SecondaryButton(
+            _questions.isEmpty ? 'Choose questions' : 'Change questions',
+            icon: Ph.listChecks,
+            onTap: _class == null || _subjectId == null ? null : _pickQuestions,
+          ),
+          if (_class == null) Padding(padding: const EdgeInsets.only(top: 8), child: Text('Choose a class first.', style: labelStyle)),
         ],
         if (widget.id != null) ...[
           const SizedBox(height: 30),
@@ -485,7 +379,7 @@ class _TestEditorState extends State<TestEditor> {
     if (!ok) return;
     try {
       await api.delete('/teacher/tests/${widget.id}${_attempts > 0 ? '?with_results=1' : ''}');
-      if (mounted) context.go('/t/tests');
+      if (mounted) context.go('/t');
     } on ApiException catch (e) {
       if (mounted) showProblem(context, e);
     }
@@ -631,11 +525,29 @@ class _TestResultsScreenState extends State<TestResultsScreen> with WidgetsBindi
 
   Map<String, dynamic>? _d;
   String? _error;
+  bool _allQuestions = false;
 
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  /// Shows the marks and the right answers to the students now, ahead of the closing time.
+  Future<void> _release() async {
+    final ok = await confirmCard(
+      context,
+      title: 'Show marks to students now?',
+      body: 'Every student who has submitted will see their marks and the right answers straight away.',
+      confirm: 'Show marks',
+    );
+    if (!ok) return;
+    try {
+      await api.post('/teacher/tests/${widget.id}/release-results');
+      _load();
+    } on ApiException catch (e) {
+      if (mounted) showProblem(context, e);
+    }
   }
 
   Future<void> _load() async {
@@ -738,7 +650,8 @@ class _TestResultsScreenState extends State<TestResultsScreen> with WidgetsBindi
     final questions = (d['questions'] as List).cast<Map<String, dynamic>>();
     final published = t['status'] == 'published';
     final closes = f.parseTime(t['closes_at']);
-    final kicker = [t['subject'] == null ? 'Class ${t['class_level']}' : groupName(t['class_level'] as int, '${t['subject']}'), if (!published) 'unpublished' else if (closes != null) (closes.isAfter(DateTime.now()) ? 'closes ${f.when(closes)}' : 'closed ${f.when(closes)}')].join(' · ');
+    final opens = f.parseTime(t['opens_at']);
+    final kicker =[t['subject'] == null ? 'Class ${t['class_level']}' : groupName(t['class_level'] as int, '${t['subject']}'), if (!published) 'unpublished' else if (closes != null) (closes.isAfter(DateTime.now()) ? 'closes ${f.when(closes)}' : 'closed ${f.when(closes)}')].join(' · ');
 
     return PushedPanel(
       kicker: kicker,
@@ -763,6 +676,34 @@ class _TestResultsScreenState extends State<TestResultsScreen> with WidgetsBindi
             StatSmall((sum['missed'] as int) > 0 ? 'Missed' : 'Writing now', '${(sum['missed'] as int) > 0 ? sum['missed'] : sum['writing']}'),
           ],
         ),
+        if (published) ...[
+          const SizedBox(height: 16),
+          if (t['results_open'] == true)
+            InlineNotice('Students can see their marks and the right answers.', tone: Tone.success, icon: Ph.eye)
+          else ...[
+            InlineNotice(
+              closes == null
+                  ? 'Students see their marks once everyone has finished.'
+                  : 'Students see their marks after ${f.when(closes)}, or earlier once everyone has finished.',
+              tone: Tone.neutral,
+              icon: Ph.lock,
+            ),
+            const SizedBox(height: 10),
+            SecondaryButton('Show marks to students now', icon: Ph.eye, onTap: _release),
+          ],
+        ],
+        SectionRule('Settings', padding: const EdgeInsets.fromLTRB(0, 26, 0, 11)),
+        FactList([
+          ('Time limit', t['time_limit_min'] == null ? 'No limit' : '${t['time_limit_min']} min'),
+          ('Opens', opens == null ? 'As soon as it was posted' : f.when(opens)),
+          ('Closes', closes == null ? 'No closing time' : f.when(closes)),
+          ('Order', t['shuffle'] == true ? 'Shuffled for each student' : 'Same for everyone'),
+        ]),
+        const SizedBox(height: 10),
+        SecondaryButton('Change settings', icon: Ph.pencilSimple, onTap: () async {
+          await context.push('/t/tests/${widget.id}/edit');
+          _load();
+        }),
         SectionRule('Students', count: students.length, padding: const EdgeInsets.fromLTRB(0, 26, 0, 11)),
         if (students.isEmpty) Text('No students are given this test.', style: bodyStyle.copyWith(color: muted)),
         for (final (i, s) in students.indexed) ...[
@@ -786,19 +727,35 @@ class _TestResultsScreenState extends State<TestResultsScreen> with WidgetsBindi
             onTap: () => _studentActions(s),
           ),
         ],
+        // The questions come last, two at a time. Tapping one opens it, to fix its answer: every
+        // student who has written the test is marked again.
         SectionRule('Questions', count: questions.length, padding: const EdgeInsets.fromLTRB(0, 26, 0, 11)),
-        for (final (i, q) in questions.indexed) ...[
+        for (final (i, q) in (_allQuestions ? questions : questions.take(2).toList()).indexed) ...[
           if (i > 0) const SizedBox(height: gapRow),
-          _QuestionStatRow(q: q),
+          _QuestionStatRow(
+            q: q,
+            onTap: () async {
+              await context.push('/t/questions/${q['id']}');
+              _load();
+            },
+          ),
         ],
+        if (questions.length > 2)
+          Center(
+            child: TextAction(
+              _allQuestions ? 'Show fewer questions' : 'Show all ${questions.length} questions',
+              onTap: () => setState(() => _allQuestions = !_allQuestions),
+            ),
+          ),
       ],
     );
   }
 }
 
 class _QuestionStatRow extends StatelessWidget {
-  const _QuestionStatRow({required this.q});
+  const _QuestionStatRow({required this.q, this.onTap});
   final Map<String, dynamic> q;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -816,6 +773,7 @@ class _QuestionStatRow extends StatelessWidget {
               '${(q['skipped'] as int) > 0 ? ' · ${q['skipped']} skipped' : ''}',
       metaColor: hard ? danger : null,
       trailing: Text(pct == null ? '-' : f.percent(pct), style: numStyle(size: 15, color: hard ? danger : ink)),
+      onTap: onTap,
     );
   }
 }

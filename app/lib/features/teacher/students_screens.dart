@@ -11,147 +11,13 @@ import '../../ui/kit.dart';
 import 'common.dart';
 import 'subjects.dart';
 
-// ---------------------------------------------------------------- list
-
-class StudentsScreen extends StatefulWidget {
-  const StudentsScreen({super.key});
-
-  @override
-  State<StudentsScreen> createState() => _StudentsScreenState();
-}
-
-class _StudentsScreenState extends State<StudentsScreen> with WidgetsBindingObserver, AutoRefresh<StudentsScreen> {
-  @override
-  Set<Area> get refreshAreas => {Area.students, Area.tests};
-
-  @override
-  Future<void> refreshQuietly() => _load();
-
-  List<Map<String, dynamic>>? _rows;
-  List<Subject> _subjects = [];
-  String? _error;
-  int? _class;
-  String? _subject;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    markLoaded();
-    try {
-      final r = await api.get('/teacher/students');
-      final subjects = await loadSubjects();
-      if (mounted) {
-        setState(() {
-          _rows = (r['students'] as List).cast<Map<String, dynamic>>();
-          _subjects = subjects;
-          if (!subjects.any((x) => x.id == _subject)) _subject = null;
-          _error = null;
-        });
-      }
-    } on ApiException catch (e) {
-      if (mounted) setState(() => _error = e.message);
-    }
-  }
-
-  Future<void> _open(String path) async {
-    await context.push(path);
-    _load();
-  }
-
-  static bool _studies(Map<String, dynamic> s, String subjectId) =>
-      (s['subjects'] as List? ?? const []).any((x) => (x as Map)['id'] == subjectId);
-
-  @override
-  Widget build(BuildContext context) {
-    final all = _rows;
-    final inClass = all?.where((s) => _class == null || s['class_level'] == _class).toList();
-    final rows = inClass?.where((s) => _subject == null || _studies(s, _subject!)).toList();
-    final active = all?.where((s) => s['active'] == true).length ?? 0;
-    String? subjectName;
-    for (final x in _subjects) {
-      if (x.id == _subject) subjectName = x.name;
-    }
-    // A class and a subject together are a group, e.g. "9th Science".
-    final group = _class != null && subjectName != null ? groupName(_class!, subjectName) : null;
-    return SafeArea(
-      bottom: false,
-      child: WithFloatingAdd(
-        add: FloatingAdd('Add student', icon: Ph.userPlus, onTap: () => _open('/t/students/new')),
-        child: PullToRefresh(
-          onRefresh: _load,
-          child: ListView(padding: EdgeInsets.zero, physics: const AlwaysScrollableScrollPhysics(), children: [
-            TabHeader(
-              kicker: all == null ? 'Students' : (group != null ? '$group · ${rows!.length}' : '$active active'),
-              title: 'Students',
-            ),
-            const SizedBox(height: 18),
-            FilterBar(children: [
-              ClassFilter(value: _class, onChanged: (c) => setState(() => _class = c)),
-              if (_subjects.length > 1)
-                SubjectFilter(
-                  subjects: _subjects,
-                  value: _subject,
-                  counts: inClass == null ? null : {for (final x in _subjects) x.id: inClass.where((s) => _studies(s, x.id)).length},
-                  onChanged: (v) => setState(() => _subject = v),
-                ),
-            ]),
-            const SizedBox(height: 16),
-            if (all == null && _error != null)
-              ErrorState(message: _error!, onRetry: _load)
-            else if (all == null)
-              const LoadingState()
-            else if (rows!.isEmpty)
-              EmptyState(
-                icon: Ph.users,
-                title: all.isEmpty
-                    ? 'No students yet'
-                    : group != null
-                        ? 'No students in $group'
-                        : _class != null
-                            ? 'No students in Class $_class'
-                            : 'No students take $subjectName',
-                body: group != null
-                    ? 'Open a Class $_class student and add $subjectName to put them in this group.'
-                    : 'Add a student to create their username and PIN.',
-              )
-            else
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: gutter),
-                child: Column(children: [
-                  for (final (i, s) in rows.indexed) ...[
-                    if (i > 0) const SizedBox(height: gapRow),
-                    RowTile(
-                      leading: AppAvatar(name: '${s['display_name']}', seed: '${s['id']}'),
-                      title: '${s['display_name']}',
-                      meta: [
-                        'Class ${s['class_level']}',
-                        if (subjectNames(s['subjects']).isNotEmpty) subjectNames(s['subjects']).join(', '),
-                        if (s['active'] != true) 'login off',
-                      ].join(' · '),
-                      trailing: s['avg_pct'] == null
-                          ? Text('-', style: numStyle(size: 15, color: faint))
-                          : Text(f.percent(s['avg_pct'] as num), style: numStyle(size: 15, color: s['active'] == true ? ink : faint)),
-                      onTap: () => _open('/t/students/${s['id']}'),
-                    ),
-                  ],
-                ]),
-              ),
-            fabClearance,
-          ]),
-        ),
-      ),
-    );
-  }
-}
-
 // ---------------------------------------------------------------- add
 
 class AddStudentScreen extends StatefulWidget {
-  const AddStudentScreen({super.key});
+  /// From a group's page: its class and subject are already chosen.
+  const AddStudentScreen({super.key, this.classLevel, this.subjectId});
+  final int? classLevel;
+  final String? subjectId;
 
   @override
   State<AddStudentScreen> createState() => _AddStudentScreenState();
@@ -172,6 +38,7 @@ class _AddStudentScreenState extends State<AddStudentScreen> {
   @override
   void initState() {
     super.initState();
+    _class = widget.classLevel;
     _loadSubjects();
   }
 
@@ -181,8 +48,8 @@ class _AddStudentScreenState extends State<AddStudentScreen> {
       if (mounted) {
         setState(() {
           _subjects = subjects;
-          // Most students take maths.
-          _subjectIds = {for (final x in subjects) if (x.isDefault) x.id};
+          // The group's subject; otherwise most students take maths.
+          _subjectIds = widget.subjectId != null ? {widget.subjectId!} : {for (final x in subjects) if (x.isDefault) x.id};
         });
       }
     } on ApiException catch (e) {

@@ -10,6 +10,15 @@ import '../../ui/kit.dart';
 
 const classLevels = [6, 7, 8, 9, 10, 11, 12];
 
+/// Every test has a closing time (students see their marks after it), so a new one starts with
+/// the next 9:00 pm that is at least three hours away.
+DateTime defaultClosing() {
+  final now = DateTime.now();
+  var t = DateTime(now.year, now.month, now.day, 21);
+  if (t.difference(now) < const Duration(hours: 3)) t = t.add(const Duration(days: 1));
+  return t;
+}
+
 /// Header for a teacher tab: kicker, one display line, trailing actions.
 class TabHeader extends StatelessWidget {
   const TabHeader({super.key, required this.kicker, required this.title, this.actions = const []});

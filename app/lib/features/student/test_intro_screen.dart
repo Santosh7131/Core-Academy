@@ -96,7 +96,12 @@ class _TestIntroScreenState extends State<TestIntroScreen> {
           ]),
         ),
         const SectionRule('Before you start', padding: EdgeInsets.fromLTRB(0, 26, 0, 14)),
-        rule(Ph.eyeSlash, 'You will see right and wrong answers only after you submit.'),
+        rule(
+          Ph.eyeSlash,
+          closes == null
+              ? 'You will see your marks and the right answers as soon as you submit.'
+              : 'Your marks and the right answers show after ${f.when(closes)}, or earlier once everyone has finished.',
+        ),
         rule(Ph.check, 'Every answer is saved as you choose it, even if the app closes.'),
         if (timed) rule(Ph.timer, 'When the time runs out, the test is submitted for you.'),
         rule(Ph.flag, 'Flag a question to come back to it before you submit.'),

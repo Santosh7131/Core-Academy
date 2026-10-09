@@ -4,13 +4,13 @@ import 'package:go_router/go_router.dart';
 import '../student/profile_screen.dart';
 import '../student/result_screen.dart';
 import '../student/review_screen.dart';
+import 'group_screens.dart';
 import 'papers_screens.dart';
 import 'questions_screens.dart';
 import 'settings_screen.dart';
 import 'shell.dart';
 import 'students_screens.dart';
 import 'tests_screens.dart';
-import 'today_screen.dart';
 
 /// A tab's own screen. Switching tabs swaps instantly, as a tab bar should.
 GoRoute _tab(String path, Widget Function(GoRouterState s) build) =>
@@ -20,24 +20,47 @@ GoRoute _tab(String path, Widget Function(GoRouterState s) build) =>
 GoRoute _page(String path, Widget Function(GoRouterState s) build) =>
     GoRoute(path: path, pageBuilder: (c, s) => MaterialPage(key: s.pageKey, child: build(s)));
 
-/// Five tabs inside the shell; every form and detail screen is pushed full-screen above it.
+int? _int(GoRouterState s, String key) => int.tryParse(s.uri.queryParameters[key] ?? '');
+
+/// Two tabs inside the shell, Home and Groups; everything else is pushed full-screen above it.
+/// Students, tests, uploads and test questions all live inside a group.
 final teacherRoutes = <RouteBase>[
   StatefulShellRoute.indexedStack(
     builder: (context, state, shell) => TeacherShell(shell: shell),
     branches: [
-      StatefulShellBranch(routes: [_tab('/t', (_) => const TodayScreen())]),
-      StatefulShellBranch(routes: [_tab('/t/students', (_) => const StudentsScreen())]),
-      StatefulShellBranch(routes: [_tab('/t/papers', (_) => const PapersScreen())]),
-      StatefulShellBranch(routes: [_tab('/t/questions', (_) => const QuestionsScreen())]),
-      StatefulShellBranch(routes: [_tab('/t/tests', (_) => const TestsScreen())]),
+      StatefulShellBranch(routes: [_tab('/t', (_) => const TutorHome())]),
+      StatefulShellBranch(routes: [_tab('/t/groups', (_) => const GroupsScreen())]),
     ],
   ),
-  _page('/t/students/new', (_) => const AddStudentScreen()),
+  _page(
+    '/t/groups/:cls/:subject',
+    (s) => GroupScreen(
+      classLevel: int.parse(s.pathParameters['cls']!),
+      subjectId: s.pathParameters['subject']!,
+      subjectName: s.uri.queryParameters['name'] ?? 'Group',
+    ),
+  ),
+  _page(
+    '/t/groups/:cls/:subject/chat',
+    (s) => ChatTestScreen(
+      classLevel: int.parse(s.pathParameters['cls']!),
+      subjectId: s.pathParameters['subject']!,
+      subjectName: s.uri.queryParameters['name'] ?? '',
+    ),
+  ),
+  _page(
+    '/t/groups/:cls/:subject/ready',
+    (s) => ReadyTestsScreen(
+      classLevel: int.parse(s.pathParameters['cls']!),
+      subjectId: s.pathParameters['subject']!,
+      subjectName: s.uri.queryParameters['name'] ?? '',
+    ),
+  ),
+  _page('/t/students/new', (s) => AddStudentScreen(classLevel: _int(s, 'class'), subjectId: s.uri.queryParameters['subject'])),
   _page('/t/students/:id', (s) => StudentDetailScreen(id: s.pathParameters['id']!)),
-  _page('/t/papers/new', (_) => const UploadPaperScreen()),
+  _page('/t/papers/new', (s) => UploadPaperScreen(classLevel: _int(s, 'class'), subjectId: s.uri.queryParameters['subject'])),
   _page('/t/papers/:id', (s) => PaperReviewScreen(id: s.pathParameters['id']!, autoRead: s.uri.queryParameters['read'] == '1')),
-  _page('/t/questions/new', (_) => const QuestionEditor()),
-  _page('/t/questions/in/:group', (s) => QuestionListScreen(group: s.pathParameters['group']!, title: s.uri.queryParameters['title'] ?? 'Questions')),
+  // A question opens only from a test or a paper, to fix its answer.
   _page('/t/questions/:id', (s) => QuestionEditor(id: s.pathParameters['id']!)),
   _page('/t/tests/new', (_) => const TestEditor()),
   _page('/t/tests/:id/edit', (s) => TestEditor(id: s.pathParameters['id']!)),

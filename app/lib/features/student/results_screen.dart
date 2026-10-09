@@ -58,12 +58,18 @@ class _ResultsScreenState extends State<ResultsScreen> with WidgetsBindingObserv
         else
           for (final (i, r) in rows.indexed) ...[
             if (i > 0) const SizedBox(height: gapRow),
-            RowTile(
-              title: '${r['title']}${(r['attempt_no'] as int) > 1 ? ' (retake)' : ''}',
-              meta: 'Submitted ${f.when(f.parseTime(r['submitted_at'])!)}',
-              trailing: Text('${f.marks(r['score'])}/${f.marks(r['max_score'])}', style: numStyle(size: 15)),
-              onTap: () => context.push('/s/result/${r['id']}'),
-            ),
+            Builder(builder: (context) {
+              final open = r['results_open'] != false;
+              final closes = f.parseTime(r['closes_at']);
+              return RowTile(
+                title: '${r['title']}${(r['attempt_no'] as int) > 1 ? ' (retake)' : ''}',
+                meta: open
+                    ? 'Submitted ${f.when(f.parseTime(r['submitted_at'])!)}'
+                    : 'Submitted · marks ${closes == null ? 'soon' : 'after ${f.when(closes)}'}',
+                trailing: open ? Text('${f.marks(r['score'])}/${f.marks(r['max_score'])}', style: numStyle(size: 15)) : const TagChip('Marks later'),
+                onTap: open ? () => context.push('/s/result/${r['id']}') : null,
+              );
+            }),
           ],
       ],
     );
