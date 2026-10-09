@@ -8,6 +8,7 @@
     "seed": "node tools/seed.ts",
     "test:api": "node tools/api-test.ts",
     "test:latex": "node tools/latex-json-test.mjs",
+    "test:text": "node tools/text-test.mjs",
     "deploy": "neon deploy"
   },
   "dependencies": {

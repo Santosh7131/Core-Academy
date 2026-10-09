@@ -65,5 +65,7 @@ export function wrapBareMath(s: string): string {
   if (s.includes('$')) return s;
   if (!/\\[A-Za-z]+|[\^_]\{?[A-Za-z0-9]/.test(s)) return s;
   if (/[A-Za-z]{4,}/.test(s.replace(/\\[A-Za-z]+/g, ' '))) return s;
+  // Words in Hindi, Tamil or another Indian script are text, not maths: wrapping them would draw them as formulas.
+  if (/[ऀ-෿]/.test(s)) return s;
   return `$${s}$`;
 }

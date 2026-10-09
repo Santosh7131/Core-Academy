@@ -11,7 +11,7 @@ import { afterTestChange } from '../lib/notify.ts';
 import { mustKeepOrder } from '../lib/questions.ts';
 import { deleteObjects, maybeViewUrl, uploadUrl } from '../lib/storage.ts';
 import { MATHS, STUDENT_SUBJECTS, subjectIds } from '../lib/subjects.ts';
-import { freeUsername, usernameBase } from '../lib/usernames.ts';
+import { freeUsername, latinName, usernameBase } from '../lib/usernames.ts';
 import { readBody } from './body.ts';
 
 // Mounted behind requireUser('teacher') in index.ts.
@@ -131,7 +131,8 @@ async function setStudentSubjects(cx: any, studentId: string, ids: string[]) {
 
 /** The login to suggest for a student of this name, free right now: two called Harini Venkatesh get harini.v and harini.v.2. */
 teacherRoutes.get('/username-suggestion', async (c) => {
-  return c.json({ username: await freeUsername((c.req.query('name') ?? '').slice(0, 60)) });
+  const name = await latinName((c.req.query('name') ?? '').slice(0, 60), c.get('user').id);
+  return c.json({ username: await freeUsername(name) });
 });
 
 teacherRoutes.post('/students', async (c) => {
@@ -142,10 +143,12 @@ teacherRoutes.post('/students', async (c) => {
   // The username the app suggests from the name ("harini.v", or "harini.v.2"), when it is taken, becomes the
   // next free one, so nobody has to think of a login for a second student with the same name. Any other
   // username that is taken is refused, so the tutor can pick another.
-  const base = usernameBase(displayName);
+  // A name typed in Tamil or Hindi is spelled out in English letters first, as the suggestion was.
+  const latin = await latinName(displayName, c.get('user').id);
+  const base = usernameBase(latin);
   const suggested = requested.startsWith(base) && /^(\.\d+)?$/.test(requested.slice(base.length));
   let username = requested;
-  if (suggested && (await q1('select 1 as x from users where username = $1', [requested]))) username = await freeUsername(displayName);
+  if (suggested && (await q1('select 1 as x from users where username = $1', [requested]))) username = await freeUsername(latin);
   // The app before subjects sends none: its students study maths.
   const subjects = 'subject_ids' in b ? subjectIds(b.subject_ids) : [MATHS];
   const pin = b.pin === undefined || b.pin === null || b.pin === '' ? newPin() : checkPin(b.pin);
@@ -168,7 +171,7 @@ teacherRoutes.post('/students', async (c) => {
       if (e.code === '23505') {
         // Someone took it between the check and the insert: try the next free one.
         if (suggested && attempt < 3) {
-          username = await freeUsername(displayName, pool, [username]);
+          username = await freeUsername(latin, pool, [username]);
           continue;
         }
         throw new HttpError(409, 'username_taken', `The username ${username} is already taken.`);

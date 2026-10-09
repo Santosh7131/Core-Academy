@@ -178,6 +178,27 @@ Models write LaTeX in JSON with one backslash (`\frac`), which JSON reads as a f
 checked by `node tools/latex-json-test.mjs`), and an option that is all maths but came without
 `$...$` gets them.
 
+## Hindi, Tamil and other languages
+
+The screens are English; the questions are in whatever language the tutor works in. A paper
+printed in Hindi or Tamil is read, its answer key matched ((क)(ख)(ग)(घ), (अ)(ब)(स)(द), (அ)(ஆ)(இ)(ஈ),
+Hindi and Tamil digits), and its answers worked out like an English one, and a test described in
+Hindi or Tamil, or with "in Tamil" in the request, is written in that language. The prompts say so,
+and three things that would have broken on non-English text are fixed (`api/src/lib/text.ts`,
+checked by `npm run test:text`): the repeat detector kept only a to z and 0 to 9, which made every
+Hindi or Tamil question without digits a repeat of the first one and skipped it, the printed
+answer was matched by English labels only, and an option that looked like bare maths was wrapped
+in `$...$` even when it held Hindi or Tamil words. A name typed in Tamil or Hindi gets its username
+from an English spelling of the name, which AI writes.
+
+Measured on 16 verified Class 10 Maths questions (plain text), translated to Hindi and Tamil by
+Gemini, printed as four-page papers and sent through the real pipeline (`tools/out/lang/`, not in
+git): details found on every paper (class 10, Maths, a name), all 16 questions and options read on
+every paper, and the printed key matched 16 of 16 in all three languages. Without a key AI marked
+16 of 16 right in English and 15 of 16 right in Hindi and in Tamil, with none wrong; the other
+question was left for the tutor. Tamil letters that look alike (ண and ன) were misread once in
+four Tamil runs, so a tutor still checks the questions, as with English.
+
 ## Screens stay current
 
 Every change made in the app tells the screens showing that data to load again, and a tab

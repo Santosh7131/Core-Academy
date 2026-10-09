@@ -1,4 +1,6 @@
 import { pool, type Db } from './db.ts';
+import { chat, parseJson, WRITE_MODELS } from './groq.ts';
+import { hasNonLatinText } from './text.ts';
 
 /**
  * What the app suggests for a student's login: "Harini Venkatesh" becomes "harini.v", a single
@@ -28,5 +30,36 @@ export async function freeUsername(name: string, db: Db = pool, skip: string[] =
   for (let n = 2; ; n++) {
     const candidate = `${base}.${n}`;
     if (candidate.length >= 3 && !taken.has(candidate)) return candidate;
+  }
+}
+
+/**
+ * A student's name in English letters, for a username. A name typed in Tamil or Hindi is written the
+ * way it is usually spelled in English (ஹரிணி வெங்கடேஷ் becomes Harini Venkatesh); one that is already
+ * in English letters, or that AI cannot spell out, is returned as it is.
+ */
+export async function latinName(name: string, userId: string | null): Promise<string> {
+  if (name.replace(/[^A-Za-z]/g, '').length >= 3 || !hasNonLatinText(name)) return name;
+  try {
+    const { content } = await chat({
+      task: 'spell_name',
+      userId,
+      models: WRITE_MODELS,
+      json: true,
+      maxTokens: 200,
+      temperature: 0,
+      messages: [
+        { role: 'system', content: 'You write Indian names in English letters.' },
+        {
+          role: 'user',
+          content: `Write this name in English letters, the way it is usually spelled in English: ${JSON.stringify(name)}.
+Reply only as JSON: {"name":"<the name in English letters>"}. Examples: "ஹரிணி வெங்கடேஷ்" is "Harini Venkatesh", "राजेश शर्मा" is "Rajesh Sharma".`,
+        },
+      ],
+    });
+    const out = String(parseJson<{ name?: unknown }>(content)?.name ?? '').trim();
+    return /[A-Za-z]{2,}/.test(out) ? out.slice(0, 60) : name;
+  } catch {
+    return name;
   }
 }

@@ -5,6 +5,7 @@ import { CHECK_MODELS, chat, parseJson, SOLVE_MODELS, VISION_MODELS, WRITE_MODEL
 import { bad, HttpError, int, notFound, str, uuid, uuidOpt } from '../lib/http.ts';
 import { wrapBareMath } from '../lib/latex-json.ts';
 import { mustKeepOrder } from '../lib/questions.ts';
+import { asciiDigits, hasIndicText, indicLabelIndex, namesIndicLanguage } from '../lib/text.ts';
 import { deleteObjects, maybeViewUrl, readObject, uploadUrl, viewUrl } from '../lib/storage.ts';
 import { MATHS } from '../lib/subjects.ts';
 import { readBody } from './body.ts';
@@ -87,6 +88,8 @@ paperRoutes.post('/papers', async (c) => {
 
 /** One reply holds about this many questions, so a longer test is written in several calls. */
 const WRITE_BATCH = 25;
+/** Hindi and Tamil take several times the tokens of English for the same question, so a call writes fewer. */
+const INDIC_WRITE_BATCH = 10;
 
 /**
  * The chat: the tutor says what test they want and AI writes it. The questions become the drafts
@@ -111,6 +114,9 @@ paperRoutes.post('/papers/chat', async (c) => {
   const paperId = b.paper_id == null ? null : uuid(b.paper_id, 'paper id');
   const subject = await q1('select name from subjects where id = $1', [subjectId]);
   if (!subject) throw notFound('This subject');
+  // A request in Hindi or Tamil (or asking for one) is written in that language, a few questions at a time.
+  const indic = hasIndicText(request) || namesIndicLanguage(request);
+  const asked = indic ? Math.min(count, INDIC_WRITE_BATCH) : count;
 
   // The questions the paper already has, so a later call does not write them again.
   let written: { text: string; seq: number }[] = [];
@@ -134,20 +140,20 @@ paperRoutes.post('/papers/chat', async (c) => {
     userId: c.get('user').id,
     models: WRITE_MODELS,
     json: true,
-    maxTokens: 8000,
+    maxTokens: indic ? 10000 : 8000,
     temperature: 0.7,
     reasoning: 'low',
     messages: [
       { role: 'system', content: 'You write multiple-choice questions for a CBSE tuition teacher in India. You are exact about maths and science.' },
       {
         role: 'user',
-        content: `Write exactly ${count} multiple-choice questions for Class ${classLevel} CBSE ${subject.name}, as the teacher asks below. The request may name a number of questions for the whole test: ignore that, this reply is ${count}.
+        content: `Write exactly ${asked} multiple-choice questions for Class ${classLevel} CBSE ${subject.name}, as the teacher asks below. The request may name a number of questions for the whole test: ignore that, this reply is ${asked}.
 Teacher's request:
 """
 ${request}
 """
 ${written.length ? `
-The test already has ${written.length} questions, listed below. Write ${count} new ones on new ground within the request: not the same question, and not one of these reworded.
+The test already has ${written.length} questions, listed below. Write ${asked} new ones on new ground within the request: not the same question, and not one of these reworded.
 ${already}
 ` : ''}
 
@@ -157,6 +163,7 @@ Rules:
 - Exactly four options per question, and exactly one is correct. "answer" is its letter: A, B, C or D. Spread the right answers over all four letters.
 - Write all maths, formulas and chemical equations in LaTeX inside $...$, in the options as well as in the question, e.g. $\\frac{3}{4}$, $x^2$, $90^\\circ$, $H_2O$. This is JSON, so write every LaTeX backslash twice, as in "$\\\\frac{3}{4}$". Give each option's text without a letter label.
 - Follow the teacher's topic and difficulty. Match the Class ${classLevel} CBSE syllabus.
+- Write the questions and the options in the language of the teacher's request: English, Hindi or Tamil, or the one the request asks for. Hindi and Tamil questions use the standard school-textbook terms, and every number is written with the digits 0 to 9. The JSON keys and the answer letters A to D stay as shown.
 - Every question must be answerable from its text alone: no figures, graphs or diagrams, and no "all of the above" or "none of the above".
 - Wrong options are plausible mistakes. Do not repeat a question.
 ${written.length ? '' : '- name: at most 40 characters, e.g. "Quadratic equations, set 1".'}`,
@@ -166,14 +173,14 @@ ${written.length ? '' : '- name: at most 40 characters, e.g. "Quadratic equation
 
   const items: { text: string; options: string[]; answer: number }[] = [];
   for (const it of listIn(content, 'questions')) {
-    const text = clip(it?.text, 4000);
+    const text = asciiDigits(clip(it?.text, 4000));
     const options = Array.isArray(it?.options)
-      ? it.options.map((o: unknown) => wrapBareMath(clip(typeof o === 'string' ? o : String(o ?? ''), 500)))
+      ? it.options.map((o: unknown) => wrapBareMath(asciiDigits(clip(typeof o === 'string' ? o : String(o ?? ''), 500))))
       : [];
     const letter = String(it?.answer ?? '').trim().toUpperCase().charAt(0);
     if (!text || options.length !== 4 || options.some((o: string) => !o) || !/^[A-D]$/.test(letter)) continue;
     items.push({ text, options, answer: letter.charCodeAt(0) - 65 });
-    if (items.length >= count) break;
+    if (items.length >= asked) break;
   }
   if (!items.length) throw new HttpError(502, 'ai_unreadable', 'AI could not write that test. Try again, in different words.');
   let name = paperName;
@@ -357,6 +364,7 @@ Report its details as JSON:
 Rules:
 - exam_name: a short name from the title printed on this page, leaving out the board, class, subject and year, which have their own fields: a printed "Half Yearly Examination 2025 Mathematics" becomes "Half-yearly exam". If no title is printed, name it in a few words from its questions, e.g. "Life processes worksheet". These examples only show the form; never copy one. At most 40 characters.
 - class_level and subject: as printed; otherwise only if the questions make them certain.
+- The paper may be in English, Hindi or Tamil. Give subject, class_level and chapter in the English forms listed here, matching by meaning: गणित and கணிதம் are Maths; विज्ञान and அறிவியல் are Science. exam_name follows the title in the language it is printed.
 - subject must be one of: ${subjects.map((s) => JSON.stringify(s.name)).join(', ')}. Physics, Chemistry and Biology are Science; Mathematics is Maths.
 - printed_subject: the subject as printed, even when it is not in that list (e.g. "Social Science"); "" when none is printed.
 - category: where the questions come from, e.g. "NCERT Exemplar", "NCERT textbook", "CBSE sample paper", "Previous year paper", "School test", "Worksheet". Reuse one of these names when it fits: ${categories.length ? categories.map((x) => JSON.stringify(x)).join(', ') : '(none yet)'}.
@@ -434,40 +442,51 @@ Transcribe every question printed on this page, in order, and any answer key pri
  "answer_key":[{"number":"<question number>","answer":"<the option as printed, e.g. b>"}]}
 Rules:
 - Copy the wording exactly. Write all maths, formulas and chemical equations in LaTeX inside $...$, e.g. $\\frac{3}{4}$, $x^2$, $\\sqrt{2}$, $90^\\circ$, $H_2O$.
+- "text" is the question itself, without its number or label: leave out "1.", "Q1", "Question 1", "प्रश्न 1" and "வினா 1" (the number goes in "number").
+- The paper may be in English, Hindi or Tamil, or mix them (maths terms in English inside Hindi or Tamil sentences). Transcribe each line in the language and script it is printed in: never translate, transliterate or correct it. Write every number with the digits 0 to 9, even when the page prints Hindi or Tamil digits (१२ and ௧௨ are 12).
 - Some pages cannot be read in places: smudged, cut off, or printed as boxes such as ${BOX} (a PDF can show every subscript that way). Each box stands for exactly one missing character, so "t${BOX}${BOX}${BOX}" had three, such as "n+1". Restore a box only when the question's own formula or wording forces it: "t${BOX} = 3n - 4" can only be $t_n = 3n - 4$, and "t${BOX} = 7 and t${BOX}${BOX}${BOX} = 2t${BOX}" is $t_1 = 7$ and $t_{n+1} = 2t_n$. Never pick a number, letter or sign that nothing forces: "t${BOX} - t${BOX}" stays "$t_${BOX} - t_${BOX}$", because nothing says which terms. Set "unclear": true for every question where you filled anything in or kept a ${BOX}.
-- "mcq" only when exactly four options are printed. Give the option text without its (a)/(A)/(i) label, in printed order. Otherwise use "other" with "options": [].
+- "mcq" only when exactly four options are printed. Give the option text without its label, in printed order: the label may be (a)/(A)/(i)/(1) or, in Hindi and Tamil papers, (क)(ख)(ग)(घ), (अ)(ब)(स)(द), (அ)(ஆ)(இ)(ஈ). Otherwise use "other" with "options": [].
 - needs_diagram is true when the question depends on a figure, graph or diagram.
 - chapter_guess must be one of: ${chapters.length ? chapters.map((n) => JSON.stringify(n)).join(', ') : '(none listed, so name the chapter or topic in a few words)'}; use "" if unsure.
-- Do not solve anything. printed_answer is only an answer the page itself gives for that question: "Ans: (b)", a ticked or circled option, or the answer written under it. Otherwise "".
-- answer_key is an answer key printed on this page, such as "Answers: 1. (b) 2. (c)", in printed order; [] when there is none. A page may hold only an answer key.
+- Do not solve anything. printed_answer is only an answer the page itself gives for that question: "Ans: (b)", "उत्तर: (ख)", "விடை: ஆ", a ticked or circled option, or the answer written under it. Otherwise "". Give it as printed, e.g. b, 2, ख or ஆ.
+- answer_key is an answer key printed on this page, such as "Answers: 1. (b) 2. (c)" or "उत्तर: 1. (ख) 2. (ग)", in printed order; [] when there is none. A page may hold only an answer key.
 - Skip instructions, section headings and marks notes.
 - If the page has no questions, return "questions": [].`;
 }
 
-/** The option an answer means: a letter, a number, i to iv, or the option's own text. */
+/**
+ * The option an answer means: a letter, a number, i to iv, a Hindi or Tamil label ((ख), (ஆ)), or the
+ * option's own text. Hindi and Tamil digits count as 0 to 9.
+ */
 export function answerIndex(raw: unknown, options: string[]): number | null {
   if (typeof raw !== 'string' && typeof raw !== 'number') return null;
-  let s = String(raw).trim().toLowerCase();
+  let s = asciiDigits(String(raw)).trim().toLowerCase();
   if (!s) return null;
-  s = s.replace(/^(ans(wer)?|option|opt)\s*[:.\-]?\s*/, '').replace(/^[([{]\s*|\s*[)\]}.]+$/g, '').trim();
+  s = s
+    .replace(/^(ans(wer)?|option|opt|सही उत्तर|उत्तर|विकल्प|சரியான விடை|விடை|பதில்)\s*[:.\-]?\s*/, '')
+    .replace(/^[([{]\s*|\s*[)\]}.]+$/g, '')
+    .trim();
   if (/^[a-d]$/.test(s)) return s.charCodeAt(0) - 97;
   if (/^[1-4]$/.test(s)) return Number(s) - 1;
   const roman = ['i', 'ii', 'iii', 'iv'].indexOf(s);
   if (roman >= 0) return roman;
-  const norm = (x: string) => x.toLowerCase().replace(/[\s$\\{}]/g, '');
+  const label = indicLabelIndex(s);
+  if (label != null) return label;
+  const norm = (x: string) => asciiDigits(x).toLowerCase().replace(/[\s$\\{}]/g, '');
   const hits = options.map((o, i) => (norm(o) === norm(s) ? i : -1)).filter((i) => i >= 0);
   return hits.length === 1 ? hits[0] : null;
 }
 
-/** "Q 12.", "12)" and "(12)" are all question 12. */
-const numberKey = (v: unknown) => String(v ?? '').toLowerCase().replace(/^q(uestion)?\s*/, '').replace(/[^0-9a-z]/g, '').replace(/^0+(?=\d)/, '');
+/** "Q 12.", "12)", "(12)", "प्र. 12" and "வினா ௧௨" are all question 12. */
+const numberKey = (v: unknown) => asciiDigits(String(v ?? '')).toLowerCase().replace(/^q(uestion)?\s*/, '').replace(/[^0-9a-z]/g, '').replace(/^0+(?=\d)/, '');
 
 /**
  * A question and its options without spacing, punctuation or LaTeX commands, so the same question
- * read twice ("$18$ seats" and "18 seats") compares equal.
+ * read twice ("$18$ seats" and "18 seats") compares equal. Letters of every script count: keeping
+ * only a to z would make every Hindi or Tamil question without digits equal to every other one.
  */
 export const sameKey = (text: string, options: string[] | null) =>
-  [text, ...(options ?? [])].join('|').toLowerCase().replace(/\\[a-z]+/g, '').replace(/[^a-z0-9|]/g, '');
+  asciiDigits([text, ...(options ?? [])].join('|')).toLowerCase().replace(/\\[a-z]+/g, '').replace(/[^\p{L}\p{M}\p{N}|]/gu, '');
 
 /**
  * Skips each draft that repeats an earlier one of the same paper, as when a PDF holds its pages
@@ -555,9 +574,10 @@ paperRoutes.post('/papers/:id/pages/:n/read', async (c) => {
     );
     let seq = 0;
     for (const it of items) {
-      const text = clip(it.text, 4000);
+      // Hindi and Tamil digits become 0 to 9, which every solver and the maths renderer read.
+      const text = asciiDigits(clip(it.text, 4000));
       if (!text) continue;
-      let options = Array.isArray(it.options) ? it.options.map((o) => clip(o, 500)).filter(Boolean) : [];
+      let options = Array.isArray(it.options) ? it.options.map((o) => asciiDigits(clip(o, 500))).filter(Boolean) : [];
       const kind = it.kind === 'mcq' && options.length === 4 ? 'mcq' : 'other';
       if (kind === 'other') options = [];
       const guess = clip(it.chapter_guess, 120);
@@ -674,7 +694,7 @@ async function solve(models: string[], userId: string, p: { class_level: number;
   const messages = [
     {
       role: 'system' as const,
-      content: `You are a careful CBSE${p.subject ? ` ${p.subject}` : ''} teacher checking the answers to Class ${p.class_level} multiple-choice questions.`,
+      content: `You are a careful CBSE${p.subject ? ` ${p.subject}` : ''} teacher checking the answers to Class ${p.class_level} multiple-choice questions. The questions may be in English, Hindi or Tamil, or mix them; you read all three equally well.`,
     },
     {
       role: 'user' as const,

@@ -75,7 +75,8 @@ class _AddStudentScreenState extends State<AddStudentScreen> {
     _username.text = s;
     setState(() {});
     final seq = ++_suggestSeq;
-    if (s.isEmpty) return;
+    // A name in Tamil or Hindi has no suggestion on the phone: the server spells it in English letters.
+    if (name.trim().isEmpty) return;
     Future<void>.delayed(const Duration(milliseconds: 350), () async {
       if (!mounted || seq != _suggestSeq || _usernameEdited) return;
       try {
