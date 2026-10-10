@@ -1,0 +1,338 @@
+/* Phone frames and the app screens drawn in HTML.
+   The screens are redrawn from the app's own tokens and layout, at the app's 390 dp reference width,
+   and scaled to the frame. Their sample names, classes and marks are made up. */
+
+/* ---------- the frame ---------- */
+.phone {
+  --pw: 300;
+  position: relative;
+  flex: none;
+  width: calc(var(--pw) * 1px);
+  padding: 8px;
+  border-radius: calc(var(--pw) * 0.15px);
+  background: var(--bezel);
+  box-shadow: var(--e4), 0 0 0 1px var(--bezel-edge), inset 0 0 0 1.5px rgba(255, 255, 255, 0.07);
+}
+.phone-screen {
+  --k: calc((var(--pw) - 16) / 390);
+  position: relative;
+  width: calc((var(--pw) - 16) * 1px);
+  height: calc((var(--pw) - 16) * 2px);
+  border-radius: calc(var(--pw) * 0.15px - 8px);
+  overflow: hidden;
+  background: var(--bg);
+  isolation: isolate;
+}
+.phone-screen::after {
+  content: "";
+  position: absolute;
+  z-index: 9;
+  left: 50%;
+  top: calc(var(--k) * 13px);
+  width: calc(var(--k) * 11px);
+  height: calc(var(--k) * 11px);
+  margin-left: calc(var(--k) * -5.5px);
+  border-radius: 50%;
+  background: #0e0e11;
+  box-shadow: 0 0 0 calc(var(--k) * 2px) rgba(255, 255, 255, 0.05);
+}
+.slot { position: absolute; inset: 0; }
+
+/* ---------- one screen ---------- */
+.scr {
+  --muted: var(--app-muted);
+  --faint: var(--app-faint);
+  --ok: var(--app-ok);
+  --wn: var(--app-wn);
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 390px;
+  height: 780px;
+  transform: scale(var(--k));
+  transform-origin: 0 0;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 13.8px;
+  line-height: 1.54;
+  font-weight: 500;
+  letter-spacing: -0.016em;
+  text-align: left;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: opacity 0.4s ease;
+}
+.scr *, .scr *::before, .scr *::after { box-sizing: border-box; }
+.scr svg { width: 1em; height: 1em; fill: currentColor; flex: none; }
+.js .scr:not(.ready) { opacity: 0; }
+.scr.reset { opacity: 0 !important; transition: none !important; }
+
+.scr .n, .scr .fig {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.04em;
+  font-weight: 700;
+}
+.scr .fig { font-weight: 600; }
+
+/* type scale, straight from the app */
+.scr .k { font-size: 11px; line-height: 1.3; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; color: var(--faint); }
+.scr .d { font-size: 38px; line-height: 1.04; font-weight: 800; letter-spacing: -0.051em; color: var(--ink); margin: 0; }
+.scr .t { font-size: 27px; line-height: 1.1; font-weight: 800; letter-spacing: -0.043em; color: var(--ink); margin: 0; }
+.scr .ct { font-size: 23px; line-height: 1.12; font-weight: 800; letter-spacing: -0.042em; color: var(--ink); margin: 0; }
+.scr .rt { font-size: 14.5px; line-height: 1.33; font-weight: 600; letter-spacing: -0.026em; color: var(--ink); }
+.scr .b { font-size: 13.8px; line-height: 1.54; font-weight: 500; letter-spacing: -0.016em; color: var(--body); }
+.scr .l { font-size: 11.5px; line-height: 1.3; font-weight: 600; letter-spacing: -0.009em; color: var(--muted); }
+.scr p { margin: 0; }
+
+/* status bar and a standard top row */
+.scr .sb {
+  position: absolute; z-index: 4; left: 0; right: 0; top: 0; height: 34px;
+  padding: 11px 26px 0; display: flex; justify-content: space-between; align-items: center;
+  font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--ink);
+}
+.scr .sb-r { display: flex; align-items: center; gap: 9px; }
+.scr .sb-sig { width: 3px; height: 4px; border-radius: 1px; background: currentColor; box-shadow: 4.5px -2px 0 currentColor, 9px -4px 0 currentColor, 13.5px -6px 0 currentColor; margin-right: 13px; }
+.scr .sb-bat { width: 21px; height: 10px; border: 1.5px solid currentColor; border-radius: 3px; position: relative; opacity: 0.9; }
+.scr .sb-bat::after { content: ""; position: absolute; inset: 1.5px; right: 5px; background: currentColor; border-radius: 1px; }
+.scr .top { position: absolute; left: 20px; right: 20px; top: 42px; display: flex; justify-content: space-between; align-items: center; }
+.scr .hd { position: absolute; left: 20px; right: 20px; top: 108px; }
+.scr .hd .k { margin-bottom: 6px; }
+.scr .home-hd { position: absolute; left: 20px; right: 20px; top: 50px; }
+
+/* ---------- shared parts ---------- */
+.scr .circ {
+  width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; flex: none;
+  background: var(--surface); box-shadow: var(--e1); border: 1px solid var(--edge); color: var(--ink); font-size: 21px;
+}
+.scr .surf { background: var(--surface); border-radius: 20px; box-shadow: var(--e2); border: 1px solid var(--edge); }
+.scr .row {
+  display: flex; align-items: center; gap: 14px; padding: 15px 15px 15px 17px; border-radius: 20px;
+  background: var(--surface); box-shadow: var(--e1); border: 1px solid var(--edge);
+}
+.scr .row .grow { flex: 1; min-width: 0; }
+.scr .row .chev { color: var(--faint); font-size: 16px; }
+.scr .tag {
+  display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 999px; white-space: nowrap;
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0; background: var(--sunk); color: var(--muted);
+}
+.scr .tag.ok { background: var(--ok-soft); color: var(--ok); }
+.scr .tag.od { background: var(--od-soft); color: var(--od); }
+.scr .tag.wn { background: var(--wn-soft); color: var(--wn); }
+.scr .tag.ai { background: var(--ai-soft); color: var(--ai-ink); }
+.scr .btn-p, .scr .btn-s {
+  display: flex; align-items: center; justify-content: center; gap: 9px; height: 52px; border-radius: 14px;
+  font-size: 14.5px; font-weight: 700; letter-spacing: -0.03em; white-space: nowrap;
+  transition: transform 0.13s cubic-bezier(0.2, 0.8, 0.2, 1), background 0.25s, color 0.25s, box-shadow 0.25s;
+}
+.scr .btn-p { background: var(--action); color: var(--action-ink); box-shadow: var(--e4); }
+.scr .btn-s { background: var(--surface); color: var(--ink); box-shadow: var(--e1); border: 1px solid var(--edge); }
+.scr .btn-p svg, .scr .btn-s svg { font-size: 18px; }
+.scr .press { transform: scale(0.972); }
+.scr .rule { display: flex; align-items: center; gap: 10px; padding: 22px 0 11px; }
+.scr .rule .kk { font-size: 11px; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; color: var(--faint); }
+.scr .rule .kn { font-family: var(--mono); font-size: 11px; font-weight: 700; color: var(--faint); letter-spacing: -0.04em; }
+.scr .rule i { flex: 1; height: 1px; background: var(--hair); }
+.scr .rule .end { font-size: 12.5px; font-weight: 600; color: var(--muted); }
+.scr .track { height: 7px; border-radius: 5px; background: var(--sunk); overflow: hidden; }
+.scr .track i { display: block; height: 100%; width: var(--to, 50%); border-radius: 5px; background: var(--ink); transition: width 0.75s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.scr .track i.pending { width: 0; }
+.scr .stack { display: flex; flex-direction: column; gap: 10px; }
+.scr .mcard { padding: 18px 20px 17px; border-radius: 26px; background: var(--surface); box-shadow: var(--e3); border: 1px solid var(--edge); }
+.scr .mcard .l { display: block; }
+.scr .mcard .val { display: flex; align-items: baseline; gap: 4px; margin: 8px 0 13px; font-family: var(--mono); letter-spacing: -0.04em; }
+.scr .mcard .val b { font-size: 36px; line-height: 1; font-weight: 700; color: var(--ink); }
+.scr .mcard .val u { text-decoration: none; font-size: 14px; font-weight: 600; color: var(--muted); }
+.scr .mcard .note { margin-top: 11px; font-size: 13.8px; color: var(--muted); }
+.scr .mcard .note .fig { color: var(--body); }
+.scr .av { width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700; letter-spacing: -0.01em; background: color-mix(in srgb, var(--pc, #2f6bea) var(--av-bg), transparent); color: color-mix(in srgb, var(--pc, #2f6bea) var(--av-amt), var(--av-mix)); }
+
+/* generic reveal states used by every demo: "pending" is how something looks before its step */
+.scr .rv { transition: opacity 0.45s ease, transform 0.55s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.scr .rv.pending { opacity: 0; transform: translateY(12px); }
+.scr .pop { transition: opacity 0.3s ease, transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.scr .pop.pending { opacity: 0; transform: scale(0.82); }
+
+/* ---------- the option rows (test screen) ---------- */
+.scr .opt {
+  display: flex; align-items: center; gap: 14px; height: 58px; padding: 0 17px; border-radius: 20px;
+  background: var(--surface); color: var(--ink); box-shadow: var(--e1); border: 1px solid var(--edge);
+  font-size: 18px; font-weight: 500; letter-spacing: -0.01em;
+  transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+.scr .opt .mk {
+  width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; flex: none;
+  border: 1.8px solid var(--ring); font-size: 12px; font-weight: 700; letter-spacing: 0; color: var(--muted);
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+.scr .opt.pick { background: var(--action); color: var(--action-ink); box-shadow: var(--e4); }
+.scr .opt.pick .mk { background: var(--action-ink); border-color: var(--action-ink); color: var(--action); animation: settle 0.26s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.scr .opt.pick.pending { background: var(--surface); color: var(--ink); box-shadow: var(--e1); }
+.scr .opt.pick.pending .mk { background: transparent; border-color: var(--ring); color: var(--muted); animation: none; }
+html[data-theme="dark"] .scr .opt.pick { border-color: #3a3a46; }
+@media (prefers-color-scheme: dark) { html:not([data-theme="light"]) .scr .opt.pick { border-color: #3a3a46; } }
+html[data-theme="dark"] .scr .opt.pick.pending { border-color: var(--edge); }
+@media (prefers-color-scheme: dark) { html:not([data-theme="light"]) .scr .opt.pick.pending { border-color: var(--edge); } }
+@keyframes settle { from { transform: scale(0.8); } to { transform: scale(1); } }
+.scr .m { font-family: "STIX Two Text", "Cambria Math", "Times New Roman", Georgia, serif; font-weight: 400; letter-spacing: 0; font-size: 1.08em; }
+.scr .m i { font-style: italic; }
+.scr .frac { display: inline-grid; text-align: center; line-height: 1.05; font-size: 0.82em; vertical-align: middle; }
+.scr .frac i { font-style: normal; padding: 0 3px; }
+.scr .frac i:first-child { border-bottom: 1px solid currentColor; }
+
+/* ---------- screen: student takes the test ---------- */
+.scr-test .bar { position: absolute; left: 20px; right: 20px; top: 42px; display: flex; align-items: center; gap: 14px; }
+.scr-test .prog { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 7px; }
+.scr-test .cnt { font-family: var(--mono); font-size: 13px; font-weight: 700; letter-spacing: -0.04em; color: var(--ink); }
+.scr-test .cnt em { font-style: normal; color: var(--faint); font-weight: 500; margin: 0 3px; }
+.scr-test .ptrack { width: 100%; height: 6px; border-radius: 4px; background: var(--sunk); overflow: hidden; }
+.scr-test .ptrack i { display: block; height: 100%; width: 66.7%; border-radius: 4px; background: var(--ink); transition: width 0.7s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.scr-test .ptrack i.alive { width: 58.3%; }
+.scr-test .timer {
+  display: flex; align-items: center; gap: 7px; height: 42px; padding: 0 14px; border-radius: 999px;
+  background: var(--surface); box-shadow: var(--e1); border: 1px solid var(--edge);
+  font-family: var(--mono); font-weight: 700; font-size: 14px; letter-spacing: -0.04em; color: var(--ink);
+}
+.scr-test .timer svg { font-size: 17px; }
+.scr-test .qa { position: absolute; left: 20px; right: 20px; top: 112px; transition: opacity 0.35s ease, transform 0.5s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.scr-test .qhead { display: flex; justify-content: space-between; align-items: center; height: 36px; }
+.scr-test .flag { display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 14px; border-radius: 999px; background: var(--sunk); color: var(--muted); font-size: 12.5px; font-weight: 600; }
+.scr-test .flag svg { font-size: 16px; }
+.scr-test .qtext { margin: 16px 0 22px; font-size: 23px; line-height: 1.27; font-weight: 700; letter-spacing: -0.035em; color: var(--ink); }
+.scr-test .opts { display: flex; flex-direction: column; gap: 10px; }
+.scr-test .q7 { opacity: 0; transform: translateX(-28px); pointer-events: none; }
+.scr-test .q7.alive { opacity: 1; transform: none; }
+.scr-test .q8.pending { opacity: 0; transform: translateX(28px); }
+.scr-test .foot { position: absolute; left: 20px; right: 20px; bottom: 22px; display: flex; gap: 12px; }
+.scr-test .foot .circ { width: 56px; height: 52px; border-radius: 26px; }
+.scr-test .foot .btn-p { flex: 1; }
+
+/* ---------- screen: student result ---------- */
+.scr-result .body { position: absolute; left: 20px; right: 20px; top: 172px; }
+.scr-result .miss { display: flex; align-items: center; gap: 14px; }
+.scr-result .miss .x { width: 30px; height: 30px; border-radius: 50%; border: 1.6px solid var(--od); color: var(--od); display: grid; place-items: center; font-size: 15px; flex: none; }
+.scr-result .miss .ok-c { width: 30px; height: 30px; border-radius: 50%; background: var(--ok); color: #fff; display: grid; place-items: center; font-size: 16px; flex: none; }
+.scr-result .btn-p { margin-top: 14px; }
+
+/* ---------- screen: student home ---------- */
+.scr-stuhome .open-card { padding: 20px 20px 20px; border-radius: 26px; background: var(--surface); box-shadow: var(--e3); border: 1px solid var(--edge); }
+.scr-stuhome .oc-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.scr-stuhome .open-card .t { font-size: 29px; letter-spacing: -0.048em; }
+.scr-stuhome .open-card .mt { margin: 8px 0 18px; font-size: 13.8px; color: var(--muted); }
+.scr-stuhome .open-card .mt .fig { color: var(--ink); }
+
+/* ---------- screen: tutor home ---------- */
+.scr-home .g { padding: 17px 17px 13px; border-radius: 20px; background: var(--surface); box-shadow: var(--e2); border: 1px solid var(--edge); }
+.scr-home .g-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.scr-home .g .ct { font-size: 21px; }
+.scr-home .g .sub { margin-top: 2px; }
+.scr-home .g hr { border: 0; height: 1px; background: var(--hair); margin: 13px 0 11px; }
+.scr-home .g-test { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.scr-home .g-test .fig-r { text-align: right; }
+.scr-home .g-test .fig-r b { display: block; font-family: var(--mono); font-size: 15px; font-weight: 700; letter-spacing: -0.04em; color: var(--ink); }
+.scr-home .wn-t { color: var(--wn); }
+.scr-home .invite { display: flex; align-items: center; gap: 14px; padding: 15px 15px 15px 17px; border-radius: 20px; background: var(--surface); box-shadow: var(--e1); border: 1px solid var(--edge); }
+.scr-home .invite svg { font-size: 22px; }
+
+/* ---------- screen: add the paper ---------- */
+.scr-add .src { display: flex; align-items: center; gap: 14px; padding: 14px 15px 14px 17px; border-bottom: 1px solid var(--hair); transition: transform 0.13s, background 0.2s; }
+.scr-add .src:last-child { border-bottom: 0; }
+.scr-add .ico { width: 42px; height: 42px; border-radius: 13px; background: var(--sunk); display: grid; place-items: center; flex: none; font-size: 21px; color: var(--ink); }
+.scr-add .src .grow { flex: 1; min-width: 0; }
+.scr-add .thumbs { display: flex; gap: 12px; margin-top: 4px; }
+.scr-add .th { position: relative; width: 72px; height: 96px; border-radius: 12px; background: var(--surface); box-shadow: var(--e1); border: 1px solid var(--edge); padding: 10px 9px; display: flex; flex-direction: column; gap: 6px; overflow: hidden; }
+.scr-add .th b { display: block; height: 4px; border-radius: 2px; background: var(--sunk); }
+.scr-add .th b:nth-child(3n) { width: 62%; }
+.scr-add .th b:nth-child(4n) { width: 80%; }
+.scr-add .th .tag { position: absolute; left: 6px; bottom: 6px; height: 20px; }
+html[data-theme="dark"] .scr-add .th b { background: #2a2a33; }
+@media (prefers-color-scheme: dark) { html:not([data-theme="light"]) .scr-add .th b { background: #2a2a33; } }
+.scr-add .dock { position: absolute; left: 20px; right: 20px; bottom: 22px; }
+.scr-add .dock .btn-p { gap: 9px; }
+.scr-add .dock .btn-p.pending { background: var(--sunk); color: var(--muted); box-shadow: none; }
+.scr-add .dock .why { margin-top: 9px; text-align: center; opacity: 0; transition: opacity 0.3s; }
+.scr-add .dock .why.pending { opacity: 1; }
+.scr-add .lbl { display: grid; }
+.scr-add .lbl > span { grid-area: 1 / 1; display: inline-flex; align-items: center; justify-content: center; gap: 9px; transition: opacity 0.25s; }
+.scr-add .lbl .l-off { opacity: 0; }
+.scr-add .btn-p.pending .lbl .l-off { opacity: 1; }
+.scr-add .btn-p.pending .lbl .l-on { opacity: 0; }
+
+/* ---------- screen: the AI reads the paper ---------- */
+.scr-read .aicard { padding: 20px 20px 18px; border-radius: 26px; background: var(--ai-soft); }
+.scr-read .aicard .k { color: var(--ai-ink); }
+.scr-read .big { display: flex; align-items: baseline; gap: 10px; margin: 12px 0 14px; }
+.scr-read .big b { font-family: var(--mono); font-size: 46px; line-height: 1; font-weight: 700; letter-spacing: -0.04em; color: var(--ink); }
+.scr-read .big span { font-size: 19px; font-weight: 600; letter-spacing: -0.03em; color: var(--muted); }
+.scr-read .atrack { height: 7px; border-radius: 5px; background: color-mix(in srgb, var(--ai) 16%, transparent); overflow: hidden; }
+.scr-read .atrack i { display: block; height: 100%; width: 100%; border-radius: 5px; background: var(--ai); transition: width 0.8s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.scr-read .atrack i.pending { width: 0; }
+.scr-read .anote { margin-top: 14px; font-size: 14.5px; color: var(--ink); letter-spacing: -0.02em; }
+.scr-read .pages { margin-top: 18px; border-radius: 20px; background: var(--surface); box-shadow: var(--e2); border: 1px solid var(--edge); overflow: hidden; }
+.scr-read .pg { display: flex; align-items: center; gap: 14px; padding: 14px 17px; border-bottom: 1px solid var(--hair); min-height: 66px; }
+.scr-read .pg:last-child { border-bottom: 0; }
+.scr-read .pg .grow { flex: 1; }
+.scr-read .st { position: relative; width: 28px; height: 28px; flex: none; }
+.scr-read .st > i { position: absolute; inset: 0; border-radius: 50%; display: grid; place-items: center; font-size: 15px; transition: opacity 0.25s ease, transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.scr-read .st .sw { border: 1.8px solid var(--ring); }
+.scr-read .st .sr { border: 2px solid var(--ai); }
+.scr-read .st .sr::after { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--ai); animation: breathe 1.4s ease-in-out infinite; }
+.scr-read .st .sd { background: var(--ok); color: #fff; }
+.scr-read .st .sr { opacity: 0; transform: scale(0.7); }
+.scr-read .st .sr.alive:not(.pending) { opacity: 1; transform: none; }
+.scr-read .st .sd.pending { opacity: 0; transform: scale(0.5); }
+.scr-read .cap { display: grid; }
+.scr-read .cap > span { grid-area: 1 / 1; transition: opacity 0.25s ease; }
+.scr-read .cap .c-wait { opacity: 0; }
+.scr-read .cap .c-read { opacity: 0; }
+.scr-read .cap .c-wait.alive { opacity: 1; }
+.scr-read .cap .c-read.alive:not(.pending) { opacity: 1; }
+.scr-read .cap .c-done.pending { opacity: 0; }
+@keyframes breathe { 0%, 100% { transform: scale(0.78); opacity: 0.7; } 50% { transform: scale(1); opacity: 1; } }
+
+/* ---------- screen: check what the AI is unsure about ---------- */
+.scr-check .pgs { display: flex; gap: 12px; padding-top: 6px; }
+.scr-check .pgs .pgt { position: relative; width: 74px; height: 70px; border-radius: 12px; background: var(--surface); box-shadow: var(--e1); border: 1px solid var(--edge); }
+.scr-check .pgs .pgt .tag { position: absolute; right: 6px; bottom: 6px; height: 20px; min-width: 20px; justify-content: center; padding: 0 6px; }
+.scr-check .pgs .bd { position: absolute; left: 6px; top: -9px; width: 22px; height: 22px; border-radius: 50%; background: var(--wn); color: #fff; font-family: var(--mono); font-size: 11px; font-weight: 700; display: grid; place-items: center; }
+.scr-check .chips { display: flex; gap: 8px; margin: 16px 0 14px; }
+.scr-check .chip { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px; border-radius: 999px; background: var(--surface); color: var(--body); box-shadow: var(--e1); border: 1px solid var(--edge); font-size: 12.5px; font-weight: 600; letter-spacing: -0.025em; }
+.scr-check .chip.on { background: var(--action); color: var(--action-ink); box-shadow: var(--e2); }
+.scr-check .chip .fig { font-size: 12.5px; opacity: 0.8; }
+.scr-check .qc { padding: 18px 18px 14px; border-radius: 22px; background: var(--surface); box-shadow: var(--e2); border: 1px solid var(--edge); margin-bottom: 12px; }
+.scr-check .qc-top { display: flex; justify-content: space-between; align-items: center; }
+.scr-check .qc .qt { margin: 12px 0 12px; font-size: 15px; font-weight: 600; line-height: 1.35; letter-spacing: -0.025em; color: var(--ink); }
+.scr-check .qc .o { display: flex; align-items: center; gap: 12px; height: 38px; font-size: 14.5px; letter-spacing: -0.02em; color: var(--ink); }
+.scr-check .qc .o .mk { width: 26px; height: 26px; border-radius: 50%; border: 1.8px solid var(--ring); display: grid; place-items: center; font-size: 11px; font-weight: 700; color: var(--muted); flex: none; transition: background 0.2s, border-color 0.2s, color 0.2s; }
+.scr-check .qc .o .tag { margin-left: auto; opacity: 0; transition: opacity 0.3s; }
+.scr-check .qc .o .tag.pending { opacity: 1; }
+.scr-check .qc .o.chosen .mk { background: var(--ink); border-color: var(--ink); color: var(--bg); }
+.scr-check .qc .o.chosen.pending .mk { background: transparent; border-color: var(--ring); color: var(--muted); }
+.scr-check .warn { display: flex; align-items: center; gap: 8px; margin: 8px 0 12px; color: var(--wn); font-size: 12.5px; font-weight: 600; letter-spacing: -0.02em; }
+.scr-check .warn svg { font-size: 15px; }
+.scr-check .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.scr-check .pair .btn-p, .scr-check .pair .btn-s { height: 44px; font-size: 13.5px; }
+.scr-check .pair .btn-s { background: var(--sunk); box-shadow: none; border: 0; }
+.scr-check .qc-foot { display: flex; align-items: center; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--hair); }
+.scr-check .qc-foot .tag { flex: none; }
+.scr-check .qc-foot .sp { flex: 1; }
+.scr-check .qc-foot .mini { width: 34px; height: 34px; border-radius: 50%; background: var(--sunk); display: grid; place-items: center; font-size: 15px; color: var(--ink); }
+.scr-check .first { max-height: 0; opacity: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; overflow: hidden; border-width: 0; transition: max-height 0.6s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.4s ease, margin 0.5s ease, padding 0.5s ease; }
+.scr-check .first.alive { max-height: 440px; opacity: 1; margin-bottom: 12px; padding-top: 18px; padding-bottom: 14px; border-width: 1px; }
+.scr-check .list { position: absolute; left: 20px; right: 20px; top: 232px; bottom: 0; overflow: hidden; }
+.scr-check .save { position: absolute; left: 0; right: 0; bottom: 0; padding: 16px 20px 22px; background: var(--bg); border-top: 1px solid var(--hair); }
+
+/* ---------- screen: the tutor's page for one student ---------- */
+.scr-student .wk { padding: 6px 17px; border-radius: 20px; background: var(--surface); box-shadow: var(--e2); border: 1px solid var(--edge); }
+.scr-student .wk .r { display: grid; grid-template-columns: 1fr 112px 38px; gap: 14px; align-items: center; height: 48px; }
+.scr-student .wk .r b { font-size: 14.5px; font-weight: 500; letter-spacing: -0.026em; color: var(--ink); }
+.scr-student .wk .r .p { text-align: right; font-family: var(--mono); font-weight: 700; font-size: 12.5px; letter-spacing: -0.04em; color: var(--ink); }
+.scr-student .trow { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.scr-student .trow .sc { font-family: var(--mono); font-weight: 700; font-size: 15px; letter-spacing: -0.04em; color: var(--ink); }
+.scr-student .trow .l { margin-top: 1px; }
+
+/* ---------- small things that move on their own ---------- */
+@media (prefers-reduced-motion: reduce) { .scr .st .sr::after { animation: none; } }
+html[data-motion="off"] .scr .st .sr::after { animation: none; }

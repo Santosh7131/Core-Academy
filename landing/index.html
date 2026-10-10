@@ -1,0 +1,778 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ChalkDeck | From a question paper to a student test</title>
+<meta name="description" content="An Android app for tutors. Photograph a question paper, let AI draft the multiple-choice test, check the few questions it is unsure about, and send it to your students.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#FAFAFB" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0C0C0F" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta property="og:type" content="website">
+<meta property="og:title" content="ChalkDeck | From a question paper to a student test">
+<meta property="og:description" content="Photograph a question paper, let AI draft the multiple-choice test, check what it is unsure about, and send it to your students.">
+<meta property="og:image" content="assets/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<script src="assets/theme.js"></script>
+<link rel="stylesheet" href="assets/site.css">
+<link rel="stylesheet" href="assets/screens.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to the content</a>
+
+<!-- ============================================================ NAV -->
+<header class="nav" id="nav">
+  <a class="brand" href="#top" aria-label="ChalkDeck, back to the top">
+    <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect x="9" y="3" width="20" height="20" rx="6" fill="none" stroke="currentColor" stroke-width="2"/><rect x="3" y="9" width="20" height="20" rx="6" fill="currentColor"/><path d="M9 19.5l3.6 3.6L19 15.5" fill="none" stroke="var(--bg)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <span>ChalkDeck</span>
+  </a>
+  <nav class="links" aria-label="Sections">
+    <a href="#how">How it works</a>
+    <a href="#ai">AI checking</a>
+    <a href="#tutors">Features</a>
+    <a href="#students">Students</a>
+    <a href="#faq">FAQ</a>
+  </nav>
+  <div class="tools">
+    <button class="iconbtn" type="button" data-theme-toggle aria-label="Switch between light and dark"><svg class="i" aria-hidden="true"><use href="#i-moon"/></svg></button>
+    <button class="iconbtn hide-s" type="button" data-motion-toggle aria-pressed="false" aria-label="Pause animations"><svg class="i" aria-hidden="true"><use href="#i-pause"/></svg></button>
+    <a class="btn btn-sm" href="#download">Download</a>
+  </div>
+</header>
+
+<main id="main">
+
+<!-- ============================================================ HERO -->
+<section class="hero" id="top">
+  <div class="grid-bg" aria-hidden="true"></div>
+  <div class="wrap hero-grid">
+    <div class="hero-copy">
+      <p class="eyebrow" data-r><span class="pulse" aria-hidden="true"></span>Android app for tutors and their students</p>
+      <h1 class="display">
+        <span class="ln"><span class="wd"><span style="--i:0">Photograph</span></span> <span class="wd"><span style="--i:1">a</span></span> <span class="wd"><span style="--i:2">paper.</span></span></span>
+        <span class="ln"><span class="wd"><span style="--i:3">Hand</span></span> <span class="wd"><span style="--i:4">out</span></span> <span class="wd"><span style="--i:5">the</span></span> <span class="uw"><span class="wd"><span style="--i:6">test.</span></span><svg class="scribble" viewBox="0 0 220 18" preserveAspectRatio="none" aria-hidden="true"><path d="M4 12 C 52 3, 122 4, 216 9" pathLength="1"/></svg></span></span>
+      </h1>
+      <p class="lead" data-r style="--d:260ms">ChalkDeck reads your question paper with AI and drafts a multiple-choice test. You check the few questions it is unsure about, send the test to your group, and see which chapters each student finds hard.</p>
+      <div class="cta" data-r style="--d:340ms">
+        <a class="btn btn-lg" href="https://github.com/Santosh7131/Core-Academy/releases/latest" data-apk>
+          <svg class="i" aria-hidden="true"><use href="#i-download-simple"/></svg>
+          <span>Download for Android</span>
+          <small data-apk-meta></small>
+        </a>
+        <a class="btn btn-ghost" href="#how">See how it works <svg class="i" aria-hidden="true"><use href="#i-arrow-down"/></svg></a>
+      </div>
+      <p class="first-time" data-r style="--d:400ms">Installing an app from a file for the first time? <a href="#download">Here are the steps.</a></p>
+      <ul class="facts" data-r style="--d:460ms">
+        <li><svg class="i" aria-hidden="true"><use href="#i-device-mobile"/></svg>Works on Android 7 and newer</li>
+        <li><svg class="i" aria-hidden="true"><use href="#i-shield-check"/></svg>Students need no email or phone number</li>
+        <li><svg class="i" aria-hidden="true"><use href="#i-arrows-clockwise"/></svg>Updates itself after the first install</li>
+      </ul>
+    </div>
+
+    <div class="hero-art" id="heroArt" role="img" aria-label="Two phone screens with sample data: a tutor's home screen showing a live test, and a student answering a question">
+      <div class="art-back">
+        <div class="phone" style="--pw:236">
+          <div class="phone-screen">
+            <div class="scr scr-home" data-demo data-times="1200,2400,3600,4800" data-hold="4200" aria-hidden="true" id="scrHome">
+              <div class="sb"><span>9:41</span><span class="sb-r"><i class="sb-sig"></i><i class="sb-bat"></i></span></div>
+              <div class="home-hd">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start">
+                  <div><div class="k">Maple Street Tuition · 10 October</div><h2 class="d">Home</h2></div>
+                  <span class="av" style="--pc:#2f6bea">AK</span>
+                </div>
+              </div>
+              <div class="stack" style="position:absolute;left:20px;right:20px;top:138px">
+                <div class="invite">
+                  <svg class="i" aria-hidden="true"><use href="#i-user-plus"/></svg>
+                  <div class="grow"><div class="rt"><span class="fig">2</span> students want to join</div><div class="l">Choose their class and subjects</div></div>
+                  <svg class="i chev" aria-hidden="true"><use href="#i-caret-right"/></svg>
+                </div>
+                <p class="l" style="padding:6px 2px 0"><span class="fig">1</span> test live now · <span class="fig"><span data-map="2,2,2,1,1">1</span></span> students writing · <span class="fig">1</span> posted</p>
+                <div class="g">
+                  <div class="g-top">
+                    <div><h3 class="ct">10th Maths</h3><p class="l sub"><span class="fig">12</span> students</p></div>
+                    <svg class="i chev" aria-hidden="true"><use href="#i-caret-right"/></svg>
+                  </div>
+                  <span class="tag ok" style="margin-top:9px">Live now</span>
+                  <hr>
+                  <div class="g-test">
+                    <div><div class="rt">Quadratic equations</div><div class="l">Closes today <span class="fig">7:04</span> am</div></div>
+                    <div class="fig-r"><b><span data-map="7,8,9,10,11">11</span>/12</b><span class="l wn-t"><span data-map="2,2,2,1,1">1</span> writing now</span></div>
+                  </div>
+                </div>
+                <div class="g">
+                  <div class="g-top">
+                    <div><h3 class="ct">9th Science</h3><p class="l sub"><span class="fig">9</span> students</p></div>
+                    <svg class="i chev" aria-hidden="true"><use href="#i-caret-right"/></svg>
+                  </div>
+                  <span class="tag" style="margin-top:9px">Posted</span>
+                  <hr>
+                  <div class="g-test">
+                    <div><div class="rt">Life processes</div><div class="l">Opens tomorrow <span class="fig">4:04</span> am</div></div>
+                  </div>
+                </div>
+                <div class="rule"><span class="kk">No test running</span><span class="kn">1</span><i></i></div>
+                <div class="row"><div class="grow"><div class="rt">10th Physics</div></div><span class="l"><span class="fig">6</span> students</span><svg class="i chev" aria-hidden="true"><use href="#i-caret-right"/></svg></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="art-front">
+        <div class="phone" style="--pw:292">
+          <div class="phone-screen">
+            <div class="scr scr-test" data-demo data-times="1000,2500,2900,4300" data-hold="3600" aria-hidden="true" id="scrTest">
+              <div class="sb"><span>9:41</span><span class="sb-r"><i class="sb-sig"></i><i class="sb-bat"></i></span></div>
+              <div class="bar">
+                <span class="circ"><svg class="i"><use href="#i-x"/></svg></span>
+                <div class="prog">
+                  <div class="cnt"><span data-map="7,7,7,8,8">8</span><em>/</em>12</div>
+                  <div class="ptrack"><i data-end="3"></i></div>
+                </div>
+                <div class="timer"><svg class="i"><use href="#i-timer"/></svg><span>14:<span data-count="33" data-from="41" data-ms="8000" data-pad="2">33</span></span></div>
+              </div>
+              <div class="qa q7" data-end="3">
+                <div class="qhead"><span class="k">Question 7</span><span class="flag"><svg class="i"><use href="#i-flag"/></svg>Flag</span></div>
+                <p class="qtext">If <span class="m"><i>x</i> = 2, <i>y</i> = −1</span> is a solution of <span class="m">3<i>x</i> + <i>ky</i> = 4</span>, what is the value of <span class="m"><i>k</i></span>?</p>
+                <div class="opts">
+                  <div class="opt"><span class="mk">A</span><span class="m">−2</span></div>
+                  <div class="opt pick" data-at="1"><span class="mk">B</span><span class="m">2</span></div>
+                  <div class="opt"><span class="mk">C</span><span class="m"><span class="frac"><i>1</i><i>2</i></span></span></div>
+                  <div class="opt"><span class="mk">D</span><span class="m">10</span></div>
+                </div>
+              </div>
+              <div class="qa q8" data-at="3">
+                <div class="qhead"><span class="k">Question 8</span><span class="flag"><svg class="i"><use href="#i-flag"/></svg>Flag</span></div>
+                <p class="qtext">Which of these is a rational number?</p>
+                <div class="opts">
+                  <div class="opt"><span class="mk">A</span><span class="m">√3</span></div>
+                  <div class="opt"><span class="mk">B</span><span class="m"><i>π</i></span></div>
+                  <div class="opt pick" data-at="4"><span class="mk">C</span><span class="m">¾</span></div>
+                  <div class="opt"><span class="mk">D</span><span class="m">√7</span></div>
+                </div>
+              </div>
+              <div class="foot">
+                <span class="circ"><svg class="i"><use href="#i-arrow-left"/></svg></span>
+                <span class="btn-p" data-press="2">Next question <svg class="i"><use href="#i-arrow-right"/></svg></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="float fl-a" aria-hidden="true">
+        <span class="fl-ico ai"><svg class="i"><use href="#i-sparkle"/></svg></span>
+        <span><b>AI paper reader</b><small>Page 3 of 4 read</small></span>
+      </div>
+      <div class="float fl-b" aria-hidden="true">
+        <span class="fl-ico ok"><svg class="i"><use href="#i-check"/></svg></span>
+        <span><b>8 / 10</b><small>Marks appear after it closes</small></span>
+      </div>
+      <p class="art-note">Sample data</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ BELT -->
+<section class="belt" aria-label="What it does">
+  <div class="belt-track">
+    <ul class="belt-row">
+      <li>Photos, or a PDF of up to 20 pages</li>
+      <li>English, <span lang="hi">हिन्दी</span> and <span lang="ta">தமிழ்</span> papers</li>
+      <li>Printed answer keys come first</li>
+      <li>Two AI models answer each question</li>
+      <li>A third model settles the ties</li>
+      <li>Time limit and closing time</li>
+      <li>Order shuffled for each student</li>
+      <li>Marks appear after the test closes</li>
+      <li>A reminder before a test closes</li>
+      <li>Weakest chapters for every student</li>
+      <li>Classes 1 to 12, plus levels you name</li>
+      <li>Light and dark</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ============================================================ HOW IT WORKS -->
+<section class="story" id="how">
+  <div class="wrap">
+    <div class="srule" data-r><span class="kick">How it works</span><span class="kick num">01</span><i></i></div>
+    <h2 class="h2" data-r>From a photo to a result for every student.</h2>
+
+    <div class="story-grid">
+      <ol class="steps" id="steps">
+        <li class="step" data-screen="add">
+          <span class="step-n num">1</span>
+          <h3>Add the paper</h3>
+          <p>Take a photo of each page, choose photos from your gallery, or pick a PDF of up to 20 pages. Add the answer key too if the paper has one. No paper at hand? Describe the test and the AI writes the questions.</p>
+          <div class="step-phone" aria-hidden="true"></div>
+        </li>
+        <li class="step" data-screen="read">
+          <span class="step-n num">2</span>
+          <h3>The AI reads it</h3>
+          <p>It goes through the pages one at a time, finds each question and its options, and works out the answers. You watch the count of questions grow while it reads.</p>
+          <div class="step-phone" aria-hidden="true"></div>
+        </li>
+        <li class="step" data-screen="check">
+          <span class="step-n num">3</span>
+          <h3>Check what it is unsure about</h3>
+          <p>Questions the AI could settle are marked as ready. The rest wait in a short Needs you list: two AI checks that disagree, a figure it cannot see, a line it could not read. Tap once to choose an answer.</p>
+          <div class="step-phone" aria-hidden="true"></div>
+        </li>
+        <li class="step" data-screen="home">
+          <span class="step-n num">4</span>
+          <h3>Send it to your group</h3>
+          <p>Choose the group, set a time limit and a closing time, and publish. Students are notified when the test opens. Your home screen shows how many have submitted and how many are still writing.</p>
+          <div class="step-phone" aria-hidden="true"></div>
+        </li>
+        <li class="step" data-screen="test">
+          <span class="step-n num">5</span>
+          <h3>Students answer on their phones</h3>
+          <p>One question at a time. If you set a time limit, a timer counts down and the test submits itself when it runs out. Nothing is marked until they submit, and marks and the right answers appear after the test closes, or when you choose to show them.</p>
+          <div class="step-phone" aria-hidden="true"></div>
+        </li>
+        <li class="step" data-screen="student">
+          <span class="step-n num">6</span>
+          <h3>See who needs help</h3>
+          <p>Each student has a page with their average, their weakest chapters and the tests they missed. If an answer turns out to be wrong, fix it on the test page and everyone is marked again.</p>
+          <div class="step-phone" aria-hidden="true"></div>
+        </li>
+      </ol>
+
+      <div class="stage" aria-hidden="true">
+        <div class="phone" style="--pw:318">
+          <div class="phone-screen">
+
+            <div class="slot" data-screen="add">
+              <div class="scr scr-add" data-demo data-times="900,1300,1650,2000,2350,2900" data-hold="4200">
+                <div class="sb"><span>9:41</span><span class="sb-r"><i class="sb-sig"></i><i class="sb-bat"></i></span></div>
+                <div class="top"><span class="circ"><svg class="i"><use href="#i-arrow-left"/></svg></span></div>
+                <div class="hd"><div class="k">10th Maths</div><h2 class="d">Add the paper</h2><p class="b" style="margin-top:12px;color:var(--muted)">Include the answer key if the paper has one.</p></div>
+                <div style="position:absolute;left:20px;right:20px;top:270px">
+                  <div class="surf">
+                    <div class="src" data-press="1"><span class="ico"><svg class="i"><use href="#i-camera"/></svg></span><div class="grow"><div class="rt">Take photos</div><div class="l">One for each page, in good light</div></div><svg class="i chev" style="color:var(--faint)"><use href="#i-caret-right"/></svg></div>
+                    <div class="src"><span class="ico"><svg class="i"><use href="#i-images"/></svg></span><div class="grow"><div class="rt">Choose from the gallery</div><div class="l">Photos you already took</div></div><svg class="i chev" style="color:var(--faint)"><use href="#i-caret-right"/></svg></div>
+                    <div class="src"><span class="ico"><svg class="i"><use href="#i-file-pdf"/></svg></span><div class="grow"><div class="rt">Pick a PDF</div><div class="l">Up to <span class="fig">20</span> pages</div></div><svg class="i chev" style="color:var(--faint)"><use href="#i-caret-right"/></svg></div>
+                  </div>
+                  <div class="rule rv" style="padding-top:28px" data-at="2"><span class="kk">Pages</span><span class="kn"><span data-map="0,0,1,2,3,4,4">4</span></span><i></i></div>
+                  <div class="thumbs">
+                    <div class="th pop" data-at="2"><b></b><b></b><b></b><b></b><b></b><b></b><b></b><span class="tag">1</span></div>
+                    <div class="th pop" data-at="3"><b></b><b></b><b></b><b></b><b></b><b></b><b></b><span class="tag">2</span></div>
+                    <div class="th pop" data-at="4"><b></b><b></b><b></b><b></b><b></b><b></b><b></b><span class="tag">3</span></div>
+                    <div class="th pop" data-at="5"><b></b><b></b><b></b><b></b><b></b><b></b><b></b><span class="tag">4</span></div>
+                  </div>
+                </div>
+                <div class="dock">
+                  <div class="btn-p" data-at="5" data-press="6"><span class="lbl"><span class="l-on"><svg class="i"><use href="#i-scan"/></svg>Read 4 pages with AI</span><span class="l-off"><svg class="i"><use href="#i-scan"/></svg>Read with AI</span></span></div>
+                  <p class="l why" data-at="5">Add at least one page.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="slot" data-screen="read">
+              <div class="scr scr-read" data-demo data-times="1500,3000,4500,6000" data-hold="4200">
+                <div class="sb"><span>9:41</span><span class="sb-r"><i class="sb-sig"></i><i class="sb-bat"></i></span></div>
+                <div class="top"><span class="circ"><svg class="i"><use href="#i-arrow-left"/></svg></span><span class="circ"><svg class="i"><use href="#i-pencil-simple"/></svg></span></div>
+                <div class="hd"><div class="k">Question paper · 10th Maths</div><h2 class="d">Paper 10 Oct</h2></div>
+                <div style="position:absolute;left:20px;right:20px;top:222px">
+                  <div class="aicard">
+                    <div class="k">AI paper reader</div>
+                    <div class="big"><b data-map="0,1,2,3,4">4</b><span>of 4 pages read</span></div>
+                    <div class="atrack"><i class="a1" data-at="1"></i><i class="a2" data-at="2"></i><i class="a3" data-at="3"></i><i class="a4" data-at="4"></i></div>
+                    <p class="anote"><span class="fig"><span data-map="0,6,10,13,16">16</span></span> questions found<span data-end="4"> so far</span>, <span class="fig"><span data-map="0,4,7,10,13">13</span></span> answers worked out.</p>
+                  </div>
+                  <div class="pages">
+                    <div class="pg">
+                      <span class="st"><i class="sr" data-at="0" data-end="1"></i><i class="sd" data-at="1"><svg class="i"><use href="#i-check"/></svg></i></span>
+                      <div class="grow"><div class="rt" style="font-size:17px">Page 1</div><div class="l cap"><span class="c-read" data-at="0" data-end="1">Reading</span><span class="c-done" data-at="1"><span class="fig">6</span> questions</span></div></div>
+                    </div>
+                    <div class="pg">
+                      <span class="st"><i class="sw" data-end="1"></i><i class="sr" data-at="1" data-end="2"></i><i class="sd" data-at="2"><svg class="i"><use href="#i-check"/></svg></i></span>
+                      <div class="grow"><div class="rt" style="font-size:17px">Page 2</div><div class="l cap"><span class="c-wait" data-end="1">Waiting</span><span class="c-read" data-at="1" data-end="2">Reading</span><span class="c-done" data-at="2"><span class="fig">4</span> questions</span></div></div>
+                    </div>
+                    <div class="pg">
+                      <span class="st"><i class="sw" data-end="2"></i><i class="sr" data-at="2" data-end="3"></i><i class="sd" data-at="3"><svg class="i"><use href="#i-check"/></svg></i></span>
+                      <div class="grow"><div class="rt" style="font-size:17px">Page 3</div><div class="l cap"><span class="c-wait" data-end="2">Waiting</span><span class="c-read" data-at="2" data-end="3">Reading</span><span class="c-done" data-at="3"><span class="fig">3</span> questions</span></div></div>
+                    </div>
+                    <div class="pg">
+                      <span class="st"><i class="sw" data-end="3"></i><i class="sr" data-at="3" data-end="4"></i><i class="sd" data-at="4"><svg class="i"><use href="#i-check"/></svg></i></span>
+                      <div class="grow"><div class="rt" style="font-size:17px">Page 4</div><div class="l cap"><span class="c-wait" data-end="3">Waiting</span><span class="c-read" data-at="3" data-end="4">Reading</span><span class="c-done" data-at="4"><span class="fig">3</span> questions</span></div></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="slot" data-screen="check">
+              <div class="scr scr-check" data-demo data-times="1800,2800" data-hold="5200">
+                <div class="sb"><span>9:41</span><span class="sb-r"><i class="sb-sig"></i><i class="sb-bat"></i></span></div>
+                <div class="top"><span class="circ"><svg class="i"><use href="#i-arrow-left"/></svg></span><span class="circ"><svg class="i"><use href="#i-pencil-simple"/></svg></span></div>
+                <div class="hd"><div class="k">Question paper · 10th Maths</div><h2 class="d" style="font-size:34px">Practice Paper 2</h2></div>
+                <div style="position:absolute;left:20px;right:20px;top:200px">
+                  <div class="pgs">
+                    <div class="pgt"><span class="tag">1</span></div>
+                    <div class="pgt"><span class="bd">1</span><span class="tag">2</span></div>
+                    <div class="pgt"><span class="bd">2</span><span class="tag">3</span></div>
+                    <div class="pgt"><span class="tag">4</span></div>
+                  </div>
+                  <div class="chips">
+                    <span class="chip on">Needs you <span class="fig"><span data-map="3,3,2">2</span></span></span>
+                    <span class="chip">Ready <span class="fig"><span data-map="3,3,4">4</span></span></span>
+                    <span class="chip">Skipped <span class="fig">0</span></span>
+                  </div>
+                </div>
+                <div class="list" style="top:330px">
+                  <div class="qc first" data-end="2">
+                    <div class="qc-top"><span class="k">Q 7 · Page 2</span><span class="tag wn">AI is split</span></div>
+                    <p class="qt">The sum of the roots of the equation 3x squared minus 9x plus 5 equals 0 is</p>
+                    <div class="o"><span class="mk">A</span>3<span class="tag ai" data-at="1">AI 1</span></div>
+                    <div class="o"><span class="mk">B</span>−3</div>
+                    <div class="o chosen" data-at="1"><span class="mk">C</span>5 over 3<span class="tag ai" data-at="1">AI 2</span></div>
+                    <div class="o"><span class="mk">D</span>9</div>
+                    <p class="warn"><svg class="i"><use href="#i-warning"/></svg>The AI checks chose different answers.</p>
+                    <div class="pair"><span class="btn-p">Use A</span><span class="btn-s" data-press="1">Use C</span></div>
+                  </div>
+                  <div class="qc">
+                    <div class="qc-top"><span class="k">Q 11 · Page 3</span><span class="tag wn">Needs a figure</span></div>
+                    <p class="qt">In the figure, DE is parallel to BC. Find the length of EC.</p>
+                    <div class="o"><span class="mk">A</span>2 cm</div>
+                    <div class="o"><span class="mk">B</span>3 cm</div>
+                    <p class="warn"><svg class="i"><use href="#i-warning"/></svg>AI cannot see figures. Add a photo of it, or skip the question.</p>
+                  </div>
+                </div>
+                <div class="save"><div class="btn-p"><span>Save <span data-map="3,3,4">4</span> ready questions</span></div></div>
+              </div>
+            </div>
+
+            <div class="slot" data-screen="home" data-clone="#scrHome"></div>
+            <div class="slot" data-screen="test" data-clone="#scrTest"></div>
+
+            <div class="slot" data-screen="student">
+              <div class="scr scr-student" data-demo data-times="300,1500,2600" data-hold="5000">
+                <div class="sb"><span>9:41</span><span class="sb-r"><i class="sb-sig"></i><i class="sb-bat"></i></span></div>
+                <div class="top"><span class="circ"><svg class="i"><use href="#i-arrow-left"/></svg></span><span class="circ"><svg class="i"><use href="#i-dots-three-vertical"/></svg></span></div>
+                <div class="hd"><div class="k">Class 9 · Maths · Science</div><h2 class="d">Kavya Nair</h2></div>
+                <div style="position:absolute;left:20px;right:20px;top:206px">
+                  <div class="mcard rv" data-at="1">
+                    <span class="l">Average marks</span>
+                    <div class="val"><b><span data-map="0,70">70</span></b><u>%</u></div>
+                    <div class="track"><i style="--to:70%" data-at="1"></i></div>
+                    <p class="note"><span class="fig">5</span> tests written · <span class="fig">1</span> missed · last seen <span class="fig">2:04</span> am</p>
+                  </div>
+                  <div class="rule rv" data-at="2"><span class="kk">Weakest chapters</span><i></i><span class="end">All <span class="fig">8</span></span></div>
+                  <div class="wk rv" data-at="2">
+                    <div class="r"><b>Polynomials</b><div class="track"><i style="--to:45%" data-at="2"></i></div><span class="p">45%</span></div>
+                    <div class="r"><b>Linear equations</b><div class="track"><i style="--to:60%" data-at="2"></i></div><span class="p">60%</span></div>
+                    <div class="r"><b>Triangles</b><div class="track"><i style="--to:70%" data-at="2"></i></div><span class="p">70%</span></div>
+                  </div>
+                  <div class="rule rv" data-at="3"><span class="kk">Tests</span><span class="kn">6</span><i></i></div>
+                  <div class="stack">
+                    <div class="row rv" data-at="3"><div class="grow"><div class="rt">Number systems</div><div class="l">Submitted yesterday <span class="fig">1:16</span> am · <span class="fig">12</span> min</div></div><span class="trow"><span class="sc">8/10</span></span></div>
+                    <div class="row rv" data-at="3"><div class="grow"><div class="rt">Polynomials</div><div class="l">Submitted Thu <span class="fig">8</span> Oct · <span class="fig">13</span> min</div></div><span class="trow"><span class="sc">6/10</span></span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+        <ul class="stage-dots" aria-hidden="true"><li></li><li></li><li></li><li></li><li></li><li></li></ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ AI CHECKING -->
+<section class="ai-sec" id="ai">
+  <div class="wrap">
+    <div class="panel" data-r="scale">
+      <div class="ai-copy">
+        <div class="srule" data-r><span class="kick">AI checking</span><span class="kick num">02</span><i></i></div>
+        <h2 class="h2" data-r>The AI drafts. You decide.</h2>
+        <p class="lead" data-r>A printed answer key is used first. When the paper has none, two different AI models answer each question on their own.</p>
+        <ol class="rules" data-r>
+          <li><span class="rn num">1</span><p><b>They agree</b> and are both confident, so the question is marked.</p></li>
+          <li><span class="rn num">2</span><p><b>They split.</b> A third model gives a second opinion.</p></li>
+          <li><span class="rn num">3</span><p><b>Still unclear.</b> The question goes to your Needs you list, with each model's pick on the card.</p></li>
+        </ol>
+        <div class="limits" data-r>
+          <h3>What it cannot do</h3>
+          <ul>
+            <li>It cannot see figures or diagrams. Those questions wait for you to add a photo of the figure, or to skip them.</li>
+            <li>It can still be wrong. Look through the Ready list before you publish. If an answer turns out wrong later, fix it on the test page and every student is marked again.</li>
+            <li>Reading a page can slip on a letter, more often in some scripts. Clear printed pages in good light work best.</li>
+          </ul>
+        </div>
+        <p class="langs" data-r>Tested with sample papers in <span class="cyc"><span>English</span><span lang="hi">हिन्दी</span><span lang="ta">தமிழ்</span></span></p>
+      </div>
+
+      <div class="cases" data-demo data-times="300,1100,1800,2600,4300,5100,5800,6700,7600,9300,10100,10800,11700,12700" data-hold="3800" aria-hidden="true">
+        <article class="case rv" data-at="1">
+          <div class="c-head"><span class="tag">Q 4</span><p>Which of these is a rational number?</p></div>
+          <div class="voices">
+            <span class="voice rv" data-at="2"><b>AI 1</b> picks C <i>96% sure</i></span>
+            <span class="voice rv" data-at="3"><b>AI 2</b> picks C <i>93% sure</i></span>
+          </div>
+          <div class="verdict ok rv" data-at="4"><svg class="i"><use href="#i-check-circle"/></svg>Marked C. Both agree.</div>
+        </article>
+        <article class="case rv" data-at="5">
+          <div class="c-head"><span class="tag">Q 7</span><p>The sum of the roots of 3x² − 9x + 5 = 0 is</p></div>
+          <div class="voices">
+            <span class="voice rv" data-at="6"><b>AI 1</b> picks A <i>91% sure</i></span>
+            <span class="voice split rv" data-at="7"><b>AI 2</b> picks C <i>94% sure</i></span>
+            <span class="voice second rv" data-at="8"><b>Second opinion</b> picks C <i>92% sure</i></span>
+          </div>
+          <div class="verdict ok rv" data-at="9"><svg class="i"><use href="#i-check-circle"/></svg>Marked C. Two of three agree.</div>
+        </article>
+        <article class="case rv" data-at="10">
+          <div class="c-head"><span class="tag">Q 12</span><p>Which of these best describes a mean proportional?</p></div>
+          <div class="voices">
+            <span class="voice rv" data-at="11"><b>AI 1</b> picks A <i>88% sure</i></span>
+            <span class="voice split rv" data-at="12"><b>AI 2</b> picks D <i>90% sure</i></span>
+            <span class="voice second split rv" data-at="13"><b>Second opinion</b> picks C <i>71% sure</i></span>
+          </div>
+          <div class="verdict wn rv" data-at="14"><svg class="i"><use href="#i-hand-pointing"/></svg>Your call. All three picks are on the card.</div>
+        </article>
+        <p class="cases-note">Sample questions and figures</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ FEATURES -->
+<section class="bento" id="tutors">
+  <div class="wrap">
+    <div class="srule" data-r><span class="kick">For tutors</span><span class="kick num">03</span><i></i></div>
+    <h2 class="h2" data-r>What it does for a tutor.</h2>
+    <p class="lead" data-r>The app does one thing, which is tests. These parts make running them easier.</p>
+
+    <div class="grid">
+      <article class="cell c-describe" data-r>
+        <span class="cell-ico ai"><svg class="i" aria-hidden="true"><use href="#i-sparkle"/></svg></span>
+        <h3>No paper? Describe the test.</h3>
+        <p>Say what it should cover and how many questions you want, from 1 to 1,000. The AI writes the questions and their answers, and anything it doubts goes on your Needs you list.</p>
+        <div class="vis vis-describe" aria-hidden="true">
+          <div class="prompt"><span class="typed">10th Maths, quadratic equations, 12 questions</span></div>
+          <div class="qlines"><i style="--n:0"></i><i style="--n:1"></i><i style="--n:2"></i><span class="tag ai">12 questions written</span></div>
+        </div>
+      </article>
+
+      <article class="cell c-join" data-r style="--d:80ms">
+        <span class="cell-ico"><svg class="i" aria-hidden="true"><use href="#i-user-plus"/></svg></span>
+        <h3>Add students, or let them ask</h3>
+        <p>Add a student and the app suggests a username and gives a PIN. Students who already use the app can join with your six-character code, and you approve each request.</p>
+        <div class="vis vis-code" aria-hidden="true">
+          <div class="code"><i>K</i><i>R</i><i>7</i><b>-</b><i>4</i><i>M</i><i>Q</i></div>
+          <span class="tag wn">2 students want to join</span>
+        </div>
+      </article>
+
+      <article class="cell c-groups" data-r>
+        <span class="cell-ico"><svg class="i" aria-hidden="true"><use href="#i-stack"/></svg></span>
+        <h3>A group for each class and subject</h3>
+        <p>Make a group such as 10th Maths. Classes 1 to 12 are built in, and you can add levels with your own names.</p>
+        <div class="vis vis-groups" aria-hidden="true">
+          <div class="grow-row" style="--n:0"><b>10th Maths</b><span>12 students</span></div>
+          <div class="grow-row" style="--n:1"><b>9th Science</b><span>9 students</span></div>
+          <div class="grow-row" style="--n:2"><b>Spoken English</b><span>7 students</span></div>
+        </div>
+      </article>
+
+      <article class="cell c-run" data-r style="--d:80ms">
+        <span class="cell-ico"><svg class="i" aria-hidden="true"><use href="#i-timer"/></svg></span>
+        <h3>Tests that run themselves</h3>
+        <p>Set a time limit, a closing time, and whether the order is shuffled for each student. When time runs out, the student's test is submitted for them.</p>
+        <div class="vis vis-ring" aria-hidden="true">
+          <svg viewBox="0 0 80 80"><circle class="ring-bg" cx="40" cy="40" r="34"/><circle class="ring-fg" cx="40" cy="40" r="34" pathLength="100"/></svg>
+          <div><b class="num">20 min</b><span>Shuffled for each student</span></div>
+        </div>
+      </article>
+
+      <article class="cell c-hold" data-r style="--d:160ms">
+        <span class="cell-ico"><svg class="i" aria-hidden="true"><use href="#i-lock-simple"/></svg></span>
+        <h3>Marks wait until it closes</h3>
+        <p>Students see their marks and the right answers after the closing time, or sooner once everyone has finished. You can show them early with one tap.</p>
+        <div class="vis vis-hold" aria-hidden="true">
+          <div class="hold hold-a"><svg class="i"><use href="#i-lock-simple"/></svg><span>Hidden until 9:00 pm</span></div>
+          <div class="hold hold-b"><svg class="i"><use href="#i-eye"/></svg><span class="num">8 / 10</span></div>
+        </div>
+      </article>
+
+      <article class="cell c-student" data-r>
+        <span class="cell-ico"><svg class="i" aria-hidden="true"><use href="#i-chart-bar"/></svg></span>
+        <h3>A page for every student</h3>
+        <p>Average marks, weakest chapters and missed tests in one place. A student forgot the PIN? Reset it from the same page.</p>
+        <div class="vis vis-bars" aria-hidden="true">
+          <div class="bar-row"><b>Polynomials</b><i style="--w:45%"></i><span class="num">45%</span></div>
+          <div class="bar-row"><b>Linear equations</b><i style="--w:60%"></i><span class="num">60%</span></div>
+          <div class="bar-row"><b>Triangles</b><i style="--w:70%"></i><span class="num">70%</span></div>
+        </div>
+      </article>
+
+      <article class="cell c-nudge" data-r style="--d:80ms">
+        <span class="cell-ico"><svg class="i" aria-hidden="true"><use href="#i-bell"/></svg></span>
+        <h3>Nudges at the right time</h3>
+        <p>Students are told when a test opens, and reminded an hour before it closes if they have not started. You get a summary of the day at 8 pm.</p>
+        <div class="vis vis-nudge" aria-hidden="true">
+          <div class="toast t1"><b>Linear equations</b><span>New test · 12 questions · 20 min · closes today 9:00 pm</span></div>
+          <div class="toast t2"><b>Today's tests</b><span>9 students wrote 9 tests today, average 74%.</span></div>
+        </div>
+      </article>
+
+      <article class="cell c-team" data-r style="--d:160ms">
+        <span class="cell-ico"><svg class="i" aria-hidden="true"><use href="#i-users"/></svg></span>
+        <h3>More than one tutor</h3>
+        <p>Add other tutors to your tuition. Everyone can see every group.</p>
+        <div class="vis vis-team" aria-hidden="true">
+          <span class="av" style="--pc:#2f6bea">PK</span><span class="av" style="--pc:#d6336c">RK</span><span class="av" style="--pc:#1a9e62">MS</span><span class="av add"><svg class="i"><use href="#i-plus"/></svg></span>
+        </div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ STUDENTS -->
+<section class="students" id="students">
+  <div class="wrap students-grid">
+    <div class="students-copy">
+      <div class="srule" data-r><span class="kick">For students</span><span class="kick num">04</span><i></i></div>
+      <h2 class="h2" data-r>A username, a PIN, and the test.</h2>
+      <ul class="points">
+        <li data-r><span class="pi"><svg class="i" aria-hidden="true"><use href="#i-key"/></svg></span><p><b>Log in with what your tutor gives you.</b> There is no sign-up, and no email address or phone number to hand over.</p></li>
+        <li data-r><span class="pi"><svg class="i" aria-hidden="true"><use href="#i-flag"/></svg></span><p><b>One question at a time.</b> Flag one to come back to it. Every answer is saved as you choose it, even if the app closes.</p></li>
+        <li data-r><span class="pi"><svg class="i" aria-hidden="true"><use href="#i-list-checks"/></svg></span><p><b>Then the result.</b> When the test closes, or once everyone has finished, you see your marks, every right answer, and a short list of the ones you missed.</p></li>
+        <li data-r><span class="pi"><svg class="i" aria-hidden="true"><use href="#i-users"/></svg></span><p><b>More than one tutor?</b> Join another tuition with its code and switch between them.</p></li>
+        <li data-r><span class="pi"><svg class="i" aria-hidden="true"><use href="#i-prohibit"/></svg></span><p><b>Screenshots are blocked</b> on student phones, so questions and answers are harder to pass around.</p></li>
+      </ul>
+    </div>
+    <div class="students-art" role="img" aria-label="Two phone screens with sample data: a student's home screen with an open test, and a result screen showing 8 out of 10">
+      <div class="sa-1">
+        <div class="phone" style="--pw:262">
+          <div class="phone-screen">
+            <div class="scr scr-stuhome" data-demo data-times="400,1700" data-hold="4600" aria-hidden="true">
+              <div class="sb"><span>9:41</span><span class="sb-r"><i class="sb-sig"></i><i class="sb-bat"></i></span></div>
+              <div class="home-hd">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start">
+                  <div><div class="k">Maple Street Tuition · Class 9</div><h2 class="d">Kavya</h2></div>
+                  <span class="av" style="--pc:#2f6bea">KN</span>
+                </div>
+              </div>
+              <div style="position:absolute;left:20px;right:20px;top:140px">
+                <div class="open-card rv" data-at="1">
+                  <div class="oc-top"><span class="k">Open now</span><span class="tag">4 h 59 min left</span></div>
+                  <h3 class="t">Linear equations</h3>
+                  <p class="mt"><span class="fig">12</span> questions · <span class="fig">20</span> min · closes <span class="fig">9:04</span> am</p>
+                  <div class="btn-p" data-press="2">Start test <svg class="i"><use href="#i-arrow-right"/></svg></div>
+                </div>
+                <div class="rule"><span class="kk">Results</span><span class="kn">1</span><i></i><span class="end">All results</span></div>
+                <div class="row rv" data-at="1"><div class="grow"><div class="rt">Number systems</div><div class="l">Submitted yesterday <span class="fig">2:04</span> am</div></div><b class="n" style="font-size:16px">8/10</b></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="sa-2">
+        <div class="phone" style="--pw:262">
+          <div class="phone-screen">
+            <div class="scr scr-result" data-demo data-times="300,1200,1700,2100" data-hold="5200" aria-hidden="true">
+              <div class="sb"><span>9:41</span><span class="sb-r"><i class="sb-sig"></i><i class="sb-bat"></i></span></div>
+              <div class="top"><span class="circ"><svg class="i"><use href="#i-arrow-left"/></svg></span></div>
+              <div class="hd"><div class="k">Submitted yesterday 2:04 am</div><h2 class="d">Number systems</h2></div>
+              <div class="body">
+                <div class="mcard rv" data-at="1">
+                  <span class="l">Your marks</span>
+                  <div class="val"><b><span data-map="0,8">8</span></b><u>/ 10</u></div>
+                  <div class="track"><i style="--to:80%" data-at="1"></i></div>
+                  <p class="note"><span class="fig">80%</span> · <span class="fig">8</span> right, <span class="fig">2</span> wrong · <span class="fig">6</span> min</p>
+                </div>
+                <div class="btn-p rv" data-at="2"><span>Review the <span class="n" style="font-size:14.5px">2</span> you missed</span><svg class="i"><use href="#i-arrow-right"/></svg></div>
+                <div class="rule rv" data-at="3"><span class="kk">To review</span><span class="kn">2</span><i></i></div>
+                <div class="stack">
+                  <div class="row miss rv" data-at="3"><span class="x"><svg class="i"><use href="#i-x"/></svg></span><div class="grow"><div class="rt">Which of these is a rational number?</div><div class="l">Q4 · chose A, right answer C</div></div><svg class="i chev"><use href="#i-caret-right"/></svg></div>
+                  <div class="row miss rv" data-at="3"><span class="x"><svg class="i"><use href="#i-x"/></svg></span><div class="grow"><div class="rt">Which is the smallest?</div><div class="l">Q9 · chose A, right answer C</div></div><svg class="i chev"><use href="#i-caret-right"/></svg></div>
+                </div>
+                <div class="rule rv" data-at="4"><span class="kk">Right</span><span class="kn">8</span><i></i></div>
+                <div class="row miss rv" data-at="4"><span class="ok-c"><svg class="i"><use href="#i-check"/></svg></span><div class="grow"><div class="rt">8 right answers</div></div><svg class="i chev"><use href="#i-caret-down"/></svg></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="art-note">Sample data</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ DOWNLOAD -->
+<section class="get" id="download">
+  <div class="wrap">
+    <div class="get-card" data-r="scale">
+      <div class="get-main">
+        <div class="srule" data-r><span class="kick">Download</span><span class="kick num">05</span><i></i></div>
+        <h2 class="h2" data-r>Get the app.</h2>
+        <p class="lead" data-r>A direct download for Android 7 or newer. After the first install, new versions arrive inside the app.</p>
+        <div class="cta" data-r>
+          <a class="btn btn-lg" href="https://github.com/Santosh7131/Core-Academy/releases/latest" data-apk>
+            <svg class="i" aria-hidden="true"><use href="#i-download-simple"/></svg>
+            <span>Download the APK</span>
+            <small data-apk-meta></small>
+          </a>
+        </div>
+        <dl class="meta" id="apkMeta" data-r hidden>
+          <div><dt>Version</dt><dd class="num" data-meta="version">-</dd></div>
+          <div><dt>Size</dt><dd class="num" data-meta="size">-</dd></div>
+          <div><dt>Released</dt><dd class="num" data-meta="date">-</dd></div>
+        </dl>
+        <div class="hash" id="apkHash" data-r hidden>
+          <span class="hash-l">SHA-256</span>
+          <code data-meta="sha"></code>
+          <button class="copy" type="button" data-copy aria-label="Copy the SHA-256 checksum"><svg class="i" aria-hidden="true"><use href="#i-copy"/></svg><span>Copy</span></button>
+        </div>
+        <p class="fine" data-r>Compare the checksum with the file you downloaded if you want to be sure it is the one published here. <span class="fine-fallback" hidden>The version details could not be loaded, so the button opens the downloads page instead.</span></p>
+      </div>
+
+      <div class="get-steps" data-r>
+        <h3>Installing it</h3>
+        <ol>
+          <li><span class="num">1</span><p>Download the file on your Android phone, then open it from your browser's downloads or from the Files app.</p></li>
+          <li><span class="num">2</span><p>If Android asks, allow your browser or Files app to install apps from this source. It is a one-time setting, and Android takes you to the right screen.</p></li>
+          <li><span class="num">3</span><p>Tap Install. Android may show a notice because the app is not from the Play Store. That is normal for a direct download.</p></li>
+          <li><span class="num">4</span><p>Open the app. Students log in with the username and PIN their tutor gave them. Tutors open the Tutor tab and tap "New tutor? Create your tuition".</p></li>
+        </ol>
+        <div class="qr" id="qr" hidden>
+          <div class="qr-box" id="qrBox" aria-hidden="true"></div>
+          <p><b>On a computer?</b> Scan this code with your phone to open this page there.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ FAQ -->
+<section class="faq" id="faq">
+  <div class="wrap faq-grid">
+    <div>
+      <div class="srule" data-r><span class="kick">Questions</span><span class="kick num">06</span><i></i></div>
+      <h2 class="h2" data-r>Things people ask first.</h2>
+    </div>
+    <div class="qa-list" data-r>
+      <div class="qa-item">
+        <button type="button" aria-expanded="false" aria-controls="a1"><span>Is it on the Play Store?</span><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg></button>
+        <div class="ans" id="a1"><div><p>Not at the moment. You download the app file from this page and install it. Once it is installed, it updates itself from inside the app.</p></div></div>
+      </div>
+      <div class="qa-item">
+        <button type="button" aria-expanded="false" aria-controls="a2"><span>Does it work on iPhone?</span><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg></button>
+        <div class="ans" id="a2"><div><p>No. It is an Android app for now, and needs Android 7 or newer.</p></div></div>
+      </div>
+      <div class="qa-item">
+        <button type="button" aria-expanded="false" aria-controls="a3"><span>What does a student need?</span><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg></button>
+        <div class="ans" id="a3"><div><p>An Android phone, the app, and a username and PIN from their tutor. No email address or phone number is asked for.</p></div></div>
+      </div>
+      <div class="qa-item">
+        <button type="button" aria-expanded="false" aria-controls="a4"><span>Can the tests be anything other than multiple choice?</span><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg></button>
+        <div class="ans" id="a4"><div><p>No. The app makes multiple-choice tests, and the AI reader looks for multiple-choice questions on your pages.</p></div></div>
+      </div>
+      <div class="qa-item">
+        <button type="button" aria-expanded="false" aria-controls="a5"><span>How does the AI decide the answers?</span><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg></button>
+        <div class="ans" id="a5"><div><p>If your paper has a printed answer key, that is used. If not, two different AI models answer each question separately. When they agree and are both confident, the question is marked. When they split, a third model gives a second opinion, and anything still unclear waits for you with each pick shown. <a href="#ai">More on AI checking.</a></p></div></div>
+      </div>
+      <div class="qa-item">
+        <button type="button" aria-expanded="false" aria-controls="a6"><span>Which languages can it read?</span><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg></button>
+        <div class="ans" id="a6"><div><p>We tested sample papers in English, Hindi and Tamil. Clear printed pages, one page per photo, in good light, give the best result. A letter can still slip, so look over the questions before you publish.</p></div></div>
+      </div>
+      <div class="qa-item">
+        <button type="button" aria-expanded="false" aria-controls="a7"><span>Can students copy answers or share screenshots?</span><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg></button>
+        <div class="ans" id="a7"><div><p>Right answers appear only after the test closes, and screenshots are blocked on student phones. Someone can still photograph a screen with another phone, and nothing in an app can stop that.</p></div></div>
+      </div>
+      <div class="qa-item">
+        <button type="button" aria-expanded="false" aria-controls="a8"><span>A student forgot their PIN. What now?</span><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg></button>
+        <div class="ans" id="a8"><div><p>Open the student's page and choose Reset PIN.</p></div></div>
+      </div>
+      <div class="qa-item">
+        <button type="button" aria-expanded="false" aria-controls="a9"><span>What happens to the data?</span><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg></button>
+        <div class="ans" id="a9"><div><p>The privacy page lists what the app stores, where it is kept, and which services read the pages tutors upload. <a href="privacy.html">Read it here.</a></p></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<!-- ============================================================ FOOTER -->
+<footer class="site-foot">
+  <div class="wrap foot-grid">
+    <div class="foot-brand">
+      <a class="brand" href="#top" aria-label="ChalkDeck, back to the top">
+        <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect x="9" y="3" width="20" height="20" rx="6" fill="none" stroke="currentColor" stroke-width="2"/><rect x="3" y="9" width="20" height="20" rx="6" fill="currentColor"/><path d="M9 19.5l3.6 3.6L19 15.5" fill="none" stroke="var(--bg)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>ChalkDeck</span>
+      </a>
+      <p>From a question paper to a student test.</p>
+    </div>
+    <nav class="foot-links" aria-label="Footer">
+      <a href="#how">How it works</a>
+      <a href="#ai">AI checking</a>
+      <a href="#tutors">Features</a>
+      <a href="#download">Download</a>
+      <a href="privacy.html">Privacy</a>
+    </nav>
+    <div class="foot-meta">
+      <p>Contact: <mark class="blank">FILL IN: contact email</mark></p>
+      <p>© 2026 <mark class="blank">FILL IN: owner or company name</mark></p>
+      <div class="foot-tools">
+        <button class="pill-btn" type="button" data-theme-toggle><svg class="i" aria-hidden="true"><use href="#i-moon"/></svg><span>Theme</span></button>
+        <button class="pill-btn" type="button" data-motion-toggle aria-pressed="false"><svg class="i" aria-hidden="true"><use href="#i-pause"/></svg><span>Pause animations</span></button>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<!--sprite:start-->
+<svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+<symbol id="i-arrow-down" viewBox="0 0 256 256"><path d="M204.24,148.24l-72,72a6,6,0,0,1-8.48,0l-72-72a6,6,0,0,1,8.48-8.48L122,201.51V40a6,6,0,0,1,12,0V201.51l61.76-61.75a6,6,0,0,1,8.48,8.48Z"/></symbol>
+<symbol id="i-arrow-left" viewBox="0 0 256 256"><path d="M222,128a6,6,0,0,1-6,6H54.49l61.75,61.76a6,6,0,1,1-8.48,8.48l-72-72a6,6,0,0,1,0-8.48l72-72a6,6,0,0,1,8.48,8.48L54.49,122H216A6,6,0,0,1,222,128Z"/></symbol>
+<symbol id="i-arrow-right" viewBox="0 0 256 256"><path d="M220.24,132.24l-72,72a6,6,0,0,1-8.48-8.48L201.51,134H40a6,6,0,0,1,0-12H201.51L139.76,60.24a6,6,0,0,1,8.48-8.48l72,72A6,6,0,0,1,220.24,132.24Z"/></symbol>
+<symbol id="i-arrows-clockwise" viewBox="0 0 256 256"><path d="M222,48V96a6,6,0,0,1-6,6H168a6,6,0,0,1,0-12h33.52L183.47,72a81.51,81.51,0,0,0-57.53-24h-.46A81.5,81.5,0,0,0,68.19,71.28a6,6,0,1,1-8.38-8.58,93.38,93.38,0,0,1,65.67-26.76H126a93.45,93.45,0,0,1,66,27.53l18,18V48a6,6,0,0,1,12,0ZM187.81,184.72a81.5,81.5,0,0,1-57.29,23.34h-.46a81.51,81.51,0,0,1-57.53-24L54.48,166H88a6,6,0,0,0,0-12H40a6,6,0,0,0-6,6v48a6,6,0,0,0,12,0V174.48l18,18.05a93.45,93.45,0,0,0,66,27.53h.52a93.38,93.38,0,0,0,65.67-26.76,6,6,0,1,0-8.38-8.58Z"/></symbol>
+<symbol id="i-bell" viewBox="0 0 256 256"><path d="M220.07,176.94C214.41,167.2,206,139.73,206,104a78,78,0,1,0-156,0c0,35.74-8.42,63.2-14.08,72.94A14,14,0,0,0,48,198H90.48a38,38,0,0,0,75,0H208a14,14,0,0,0,12.06-21.06ZM128,218a26,26,0,0,1-25.29-20h50.58A26,26,0,0,1,128,218Zm81.71-33a1.9,1.9,0,0,1-1.7,1H48a1.9,1.9,0,0,1-1.7-1,2,2,0,0,1,0-2C53.87,170,62,139.69,62,104a66,66,0,1,1,132,0c0,35.68,8.14,65.95,15.71,79A2,2,0,0,1,209.71,185Z"/></symbol>
+<symbol id="i-camera" viewBox="0 0 256 256"><path d="M208,58H179.21L165,36.67A6,6,0,0,0,160,34H96a6,6,0,0,0-5,2.67L76.78,58H48A22,22,0,0,0,26,80V192a22,22,0,0,0,22,22H208a22,22,0,0,0,22-22V80A22,22,0,0,0,208,58Zm10,134a10,10,0,0,1-10,10H48a10,10,0,0,1-10-10V80A10,10,0,0,1,48,70H80a6,6,0,0,0,5-2.67L99.21,46h57.57L171,67.33A6,6,0,0,0,176,70h32a10,10,0,0,1,10,10ZM128,90a42,42,0,1,0,42,42A42,42,0,0,0,128,90Zm0,72a30,30,0,1,1,30-30A30,30,0,0,1,128,162Z"/></symbol>
+<symbol id="i-caret-down" viewBox="0 0 256 256"><path d="M212.24,100.24l-80,80a6,6,0,0,1-8.48,0l-80-80a6,6,0,0,1,8.48-8.48L128,167.51l75.76-75.75a6,6,0,0,1,8.48,8.48Z"/></symbol>
+<symbol id="i-caret-right" viewBox="0 0 256 256"><path d="M180.24,132.24l-80,80a6,6,0,0,1-8.48-8.48L167.51,128,91.76,52.24a6,6,0,0,1,8.48-8.48l80,80A6,6,0,0,1,180.24,132.24Z"/></symbol>
+<symbol id="i-chart-bar" viewBox="0 0 256 256"><path d="M224,202H214V40a6,6,0,0,0-6-6H152a6,6,0,0,0-6,6V82H96a6,6,0,0,0-6,6v42H48a6,6,0,0,0-6,6v66H32a6,6,0,0,0,0,12H224a6,6,0,0,0,0-12ZM158,46h44V202H158ZM102,94h44V202H102ZM54,142H90v60H54Z"/></symbol>
+<symbol id="i-check" viewBox="0 0 256 256"><path d="M228.24,76.24l-128,128a6,6,0,0,1-8.48,0l-56-56a6,6,0,0,1,8.48-8.48L96,191.51,219.76,67.76a6,6,0,0,1,8.48,8.48Z"/></symbol>
+<symbol id="i-check-circle" viewBox="0 0 256 256"><path d="M172.24,99.76a6,6,0,0,1,0,8.48l-56,56a6,6,0,0,1-8.48,0l-24-24a6,6,0,0,1,8.48-8.48L112,151.51l51.76-51.75A6,6,0,0,1,172.24,99.76ZM230,128A102,102,0,1,1,128,26,102.12,102.12,0,0,1,230,128Zm-12,0a90,90,0,1,0-90,90A90.1,90.1,0,0,0,218,128Z"/></symbol>
+<symbol id="i-copy" viewBox="0 0 256 256"><path d="M216,34H88a6,6,0,0,0-6,6V82H40a6,6,0,0,0-6,6V216a6,6,0,0,0,6,6H168a6,6,0,0,0,6-6V174h42a6,6,0,0,0,6-6V40A6,6,0,0,0,216,34ZM162,210H46V94H162Zm48-48H174V88a6,6,0,0,0-6-6H94V46H210Z"/></symbol>
+<symbol id="i-device-mobile" viewBox="0 0 256 256"><path d="M176,18H80A22,22,0,0,0,58,40V216a22,22,0,0,0,22,22h96a22,22,0,0,0,22-22V40A22,22,0,0,0,176,18ZM70,62H186V194H70ZM80,30h96a10,10,0,0,1,10,10V50H70V40A10,10,0,0,1,80,30Zm96,196H80a10,10,0,0,1-10-10V206H186v10A10,10,0,0,1,176,226Z"/></symbol>
+<symbol id="i-dots-three-vertical" viewBox="0 0 256 256"><path d="M118,60a10,10,0,1,1,10,10A10,10,0,0,1,118,60Zm10,58a10,10,0,1,0,10,10A10,10,0,0,0,128,118Zm0,68a10,10,0,1,0,10,10A10,10,0,0,0,128,186Z"/></symbol>
+<symbol id="i-download-simple" viewBox="0 0 256 256"><path d="M222,144v64a6,6,0,0,1-6,6H40a6,6,0,0,1-6-6V144a6,6,0,0,1,12,0v58H210V144a6,6,0,0,1,12,0Zm-98.24,4.24a6,6,0,0,0,8.48,0l40-40a6,6,0,0,0-8.48-8.48L134,129.51V32a6,6,0,0,0-12,0v97.51L92.24,99.76a6,6,0,0,0-8.48,8.48Z"/></symbol>
+<symbol id="i-eye" viewBox="0 0 256 256"><path d="M245.48,125.57c-.34-.78-8.66-19.23-27.24-37.81C201,70.54,171.38,50,128,50S55,70.54,37.76,87.76c-18.58,18.58-26.9,37-27.24,37.81a6,6,0,0,0,0,4.88c.34.77,8.66,19.22,27.24,37.8C55,185.47,84.62,206,128,206s73-20.53,90.24-37.75c18.58-18.58,26.9-37,27.24-37.8A6,6,0,0,0,245.48,125.57ZM128,194c-31.38,0-58.78-11.42-81.45-33.93A134.77,134.77,0,0,1,22.69,128,134.56,134.56,0,0,1,46.55,95.94C69.22,73.42,96.62,62,128,62s58.78,11.42,81.45,33.94A134.56,134.56,0,0,1,233.31,128C226.94,140.21,195,194,128,194Zm0-112a46,46,0,1,0,46,46A46.06,46.06,0,0,0,128,82Zm0,80a34,34,0,1,1,34-34A34,34,0,0,1,128,162Z"/></symbol>
+<symbol id="i-file-pdf" viewBox="0 0 256 256"><path d="M222,152a6,6,0,0,1-6,6H190v20h18a6,6,0,0,1,0,12H190v18a6,6,0,0,1-12,0V152a6,6,0,0,1,6-6h32A6,6,0,0,1,222,152ZM90,172a26,26,0,0,1-26,26H54v10a6,6,0,0,1-12,0V152a6,6,0,0,1,6-6H64A26,26,0,0,1,90,172Zm-12,0a14,14,0,0,0-14-14H54v28H64A14,14,0,0,0,78,172Zm84,8a34,34,0,0,1-34,34H112a6,6,0,0,1-6-6V152a6,6,0,0,1,6-6h16A34,34,0,0,1,162,180Zm-12,0a22,22,0,0,0-22-22H118v44h10A22,22,0,0,0,150,180ZM42,112V40A14,14,0,0,1,56,26h96a6,6,0,0,1,4.25,1.76l56,56A6,6,0,0,1,214,88v24a6,6,0,0,1-12,0V94H152a6,6,0,0,1-6-6V38H56a2,2,0,0,0-2,2v72a6,6,0,0,1-12,0ZM158,82h35.52L158,46.48Z"/></symbol>
+<symbol id="i-flag" viewBox="0 0 256 256"><path d="M44.08,51.37A6,6,0,0,0,42,55.9V224a6,6,0,0,0,12,0V178.78c28.08-22.79,51.88-11,79.34,2.57,16.12,8,33.49,16.58,52,16.58,13.57,0,27.76-4.6,42.56-17.42A6,6,0,0,0,230,176V55.9a6,6,0,0,0-9.93-4.54c-29,25.12-53.28,13.09-81.41-.84C110.77,36.71,79,21.16,44.08,51.37ZM218,173.17c-28.08,22.8-51.88,11-79.34-2.58C113.4,158.08,85.09,144.07,54,164V58.72c28.08-22.8,51.88-11,79.34,2.56C158.6,73.79,186.91,87.8,218,67.91Z"/></symbol>
+<symbol id="i-hand-pointing" viewBox="0 0 256 256"><path d="M196,90a25.87,25.87,0,0,0-14.59,4.49A26,26,0,0,0,142,78.1V44a26,26,0,0,0-52,0v87l-7.53-12.1a26,26,0,0,0-45,26.07l4.67,8.25c34,60,48.07,84.77,93.86,84.77a86.1,86.1,0,0,0,86-86V116A26,26,0,0,0,196,90Zm14,62a74.09,74.09,0,0,1-74,74c-38.8,0-50-19.83-83.42-78.69L47.89,139l0,0A14,14,0,0,1,53,119.88,13.87,13.87,0,0,1,60,118a14,14,0,0,1,12.15,7l.1.17,18.68,30A6,6,0,0,0,102,152V44a14,14,0,0,1,28,0v68a6,6,0,0,0,12,0V100a14,14,0,0,1,28,0v20a6,6,0,0,0,12,0v-4a14,14,0,0,1,28,0Z"/></symbol>
+<symbol id="i-images" viewBox="0 0 256 256"><path d="M216,42H72A14,14,0,0,0,58,56V74H40A14,14,0,0,0,26,88V200a14,14,0,0,0,14,14H184a14,14,0,0,0,14-14V182h18a14,14,0,0,0,14-14V56A14,14,0,0,0,216,42ZM70,56a2,2,0,0,1,2-2H216a2,2,0,0,1,2,2v67.57L204.53,110.1a14,14,0,0,0-19.8,0l-21.42,21.41L117.9,86.1a14,14,0,0,0-19.8,0L70,114.2ZM186,200a2,2,0,0,1-2,2H40a2,2,0,0,1-2-2V88a2,2,0,0,1,2-2H58v82a14,14,0,0,0,14,14H186Zm30-30H72a2,2,0,0,1-2-2V131.17l36.58-36.58a2,2,0,0,1,2.83,0l49.66,49.66a6,6,0,0,0,8.49,0l25.65-25.66a2,2,0,0,1,2.83,0l22,22V168A2,2,0,0,1,216,170ZM162,84a10,10,0,1,1,10,10A10,10,0,0,1,162,84Z"/></symbol>
+<symbol id="i-key" viewBox="0 0 256 256"><path d="M215.15,40.85A78,78,0,0,0,86.2,121.31l-56.1,56.1a13.94,13.94,0,0,0-4.1,9.9V216a14,14,0,0,0,14,14H72a6,6,0,0,0,6-6V206H96a6,6,0,0,0,6-6V182h18a6,6,0,0,0,4.24-1.76l10.45-10.44A77.59,77.59,0,0,0,160,174h.1A78,78,0,0,0,215.15,40.85ZM226,98.16c-1.12,35.16-30.67,63.8-65.88,63.84a65.93,65.93,0,0,1-24.51-4.67,6,6,0,0,0-6.64,1.26L117.51,170H96a6,6,0,0,0-6,6v18H72a6,6,0,0,0-6,6v18H40a2,2,0,0,1-2-2V187.31a2,2,0,0,1,.58-1.41l58.83-58.83a6,6,0,0,0,1.26-6.64A65.61,65.61,0,0,1,94,95.92C94,60.71,122.68,31.16,157.83,30A66,66,0,0,1,226,98.16ZM190,76a10,10,0,1,1-10-10A10,10,0,0,1,190,76Z"/></symbol>
+<symbol id="i-list-checks" viewBox="0 0 256 256"><path d="M222,128a6,6,0,0,1-6,6H128a6,6,0,0,1,0-12h88A6,6,0,0,1,222,128ZM128,70h88a6,6,0,0,0,0-12H128a6,6,0,0,0,0,12Zm88,116H128a6,6,0,0,0,0,12h88a6,6,0,0,0,0-12ZM83.76,43.76,56,71.51,44.24,59.76a6,6,0,0,0-8.48,8.48l16,16a6,6,0,0,0,8.48,0l32-32a6,6,0,0,0-8.48-8.48Zm0,64L56,135.51,44.24,123.76a6,6,0,1,0-8.48,8.48l16,16a6,6,0,0,0,8.48,0l32-32a6,6,0,0,0-8.48-8.48Zm0,64L56,199.51,44.24,187.76a6,6,0,0,0-8.48,8.48l16,16a6,6,0,0,0,8.48,0l32-32a6,6,0,0,0-8.48-8.48Z"/></symbol>
+<symbol id="i-lock-simple" viewBox="0 0 256 256"><path d="M208,82H174V56a46,46,0,0,0-92,0V82H48A14,14,0,0,0,34,96V208a14,14,0,0,0,14,14H208a14,14,0,0,0,14-14V96A14,14,0,0,0,208,82ZM94,56a34,34,0,0,1,68,0V82H94ZM210,208a2,2,0,0,1-2,2H48a2,2,0,0,1-2-2V96a2,2,0,0,1,2-2H208a2,2,0,0,1,2,2Z"/></symbol>
+<symbol id="i-moon" viewBox="0 0 256 256"><path d="M232.13,143.64a6,6,0,0,0-6-1.49A90.07,90.07,0,0,1,113.86,29.85a6,6,0,0,0-7.49-7.48A102.88,102.88,0,0,0,54.48,58.68,102,102,0,0,0,197.32,201.52a102.88,102.88,0,0,0,36.31-51.89A6,6,0,0,0,232.13,143.64Zm-42,48.29a90,90,0,0,1-126-126A90.9,90.9,0,0,1,99.65,37.66,102.06,102.06,0,0,0,218.34,156.35,90.9,90.9,0,0,1,190.1,191.93Z"/></symbol>
+<symbol id="i-pause" viewBox="0 0 256 256"><path d="M200,34H160a14,14,0,0,0-14,14V208a14,14,0,0,0,14,14h40a14,14,0,0,0,14-14V48A14,14,0,0,0,200,34Zm2,174a2,2,0,0,1-2,2H160a2,2,0,0,1-2-2V48a2,2,0,0,1,2-2h40a2,2,0,0,1,2,2ZM96,34H56A14,14,0,0,0,42,48V208a14,14,0,0,0,14,14H96a14,14,0,0,0,14-14V48A14,14,0,0,0,96,34Zm2,174a2,2,0,0,1-2,2H56a2,2,0,0,1-2-2V48a2,2,0,0,1,2-2H96a2,2,0,0,1,2,2Z"/></symbol>
+<symbol id="i-pencil-simple" viewBox="0 0 256 256"><path d="M225.9,74.78,181.21,30.09a14,14,0,0,0-19.8,0L38.1,153.41a13.94,13.94,0,0,0-4.1,9.9V208a14,14,0,0,0,14,14H92.69a13.94,13.94,0,0,0,9.9-4.1L225.9,94.58a14,14,0,0,0,0-19.8ZM94.1,209.41a2,2,0,0,1-1.41.59H48a2,2,0,0,1-2-2V163.31a2,2,0,0,1,.59-1.41L136,72.48,183.51,120ZM217.41,86.1,192,111.51,144.49,64,169.9,38.58a2,2,0,0,1,2.83,0l44.68,44.69a2,2,0,0,1,0,2.83Z"/></symbol>
+<symbol id="i-play" viewBox="0 0 256 256"><path d="M231.36,116.19,87.28,28.06a14,14,0,0,0-14.18-.27A13.69,13.69,0,0,0,66,39.87V216.13a13.69,13.69,0,0,0,7.1,12.08,14,14,0,0,0,14.18-.27l144.08-88.13a13.82,13.82,0,0,0,0-23.62Zm-6.26,13.38L81,217.7a2,2,0,0,1-2.06,0,1.78,1.78,0,0,1-1-1.61V39.87a1.78,1.78,0,0,1,1-1.61A2.06,2.06,0,0,1,80,38a2,2,0,0,1,1,.31L225.1,126.43a1.82,1.82,0,0,1,0,3.14Z"/></symbol>
+<symbol id="i-plus" viewBox="0 0 256 256"><path d="M222,128a6,6,0,0,1-6,6H134v82a6,6,0,0,1-12,0V134H40a6,6,0,0,1,0-12h82V40a6,6,0,0,1,12,0v82h82A6,6,0,0,1,222,128Z"/></symbol>
+<symbol id="i-prohibit" viewBox="0 0 256 256"><path d="M128,26A102,102,0,1,0,230,128,102.12,102.12,0,0,0,128,26Zm90,102a89.6,89.6,0,0,1-22.29,59.22L68.78,60.29A89.95,89.95,0,0,1,218,128ZM38,128A89.6,89.6,0,0,1,60.29,68.78L187.22,195.71A89.95,89.95,0,0,1,38,128Z"/></symbol>
+<symbol id="i-scan" viewBox="0 0 256 256"><path d="M222,40V80a6,6,0,0,1-12,0V46H176a6,6,0,0,1,0-12h40A6,6,0,0,1,222,40ZM80,210H46V176a6,6,0,0,0-12,0v40a6,6,0,0,0,6,6H80a6,6,0,0,0,0-12Zm136-40a6,6,0,0,0-6,6v34H176a6,6,0,0,0,0,12h40a6,6,0,0,0,6-6V176A6,6,0,0,0,216,170ZM40,86a6,6,0,0,0,6-6V46H80a6,6,0,0,0,0-12H40a6,6,0,0,0-6,6V80A6,6,0,0,0,40,86ZM80,74h96a6,6,0,0,1,6,6v96a6,6,0,0,1-6,6H80a6,6,0,0,1-6-6V80A6,6,0,0,1,80,74Zm6,96h84V86H86Z"/></symbol>
+<symbol id="i-shield-check" viewBox="0 0 256 256"><path d="M208,42H48A14,14,0,0,0,34,56v56c0,51.94,25.12,83.4,46.2,100.64,22.73,18.6,45.27,24.89,46.22,25.15a6,6,0,0,0,3.16,0c.95-.26,23.49-6.55,46.22-25.15C196.88,195.4,222,163.94,222,112V56A14,14,0,0,0,208,42Zm2,70c0,37.76-13.94,68.39-41.44,91.06A131.17,131.17,0,0,1,128,225.72a130.94,130.94,0,0,1-40.56-22.66C59.94,180.39,46,149.76,46,112V56a2,2,0,0,1,2-2H208a2,2,0,0,1,2,2ZM172.24,99.76a6,6,0,0,1,0,8.48l-56,56a6,6,0,0,1-8.48,0l-24-24a6,6,0,0,1,8.48-8.48L112,151.51l51.76-51.75A6,6,0,0,1,172.24,99.76Z"/></symbol>
+<symbol id="i-sparkle" viewBox="0 0 256 256"><path d="M196.89,130.94,144.4,111.6,125.06,59.11a13.92,13.92,0,0,0-26.12,0L79.6,111.6,27.11,130.94a13.92,13.92,0,0,0,0,26.12L79.6,176.4l19.34,52.49a13.92,13.92,0,0,0,26.12,0L144.4,176.4l52.49-19.34a13.92,13.92,0,0,0,0-26.12Zm-4.15,14.86-55.08,20.3a6,6,0,0,0-3.56,3.56l-20.3,55.08a1.92,1.92,0,0,1-3.6,0L89.9,169.66a6,6,0,0,0-3.56-3.56L31.26,145.8a1.92,1.92,0,0,1,0-3.6l55.08-20.3a6,6,0,0,0,3.56-3.56l20.3-55.08a1.92,1.92,0,0,1,3.6,0l20.3,55.08a6,6,0,0,0,3.56,3.56l55.08,20.3a1.92,1.92,0,0,1,0,3.6ZM146,40a6,6,0,0,1,6-6h18V16a6,6,0,0,1,12,0V34h18a6,6,0,0,1,0,12H182V64a6,6,0,0,1-12,0V46H152A6,6,0,0,1,146,40ZM246,88a6,6,0,0,1-6,6H230v10a6,6,0,0,1-12,0V94H208a6,6,0,0,1,0-12h10V72a6,6,0,0,1,12,0V82h10A6,6,0,0,1,246,88Z"/></symbol>
+<symbol id="i-stack" viewBox="0 0 256 256"><path d="M229.18,173a6,6,0,0,1-2.16,8.2l-96,56a6,6,0,0,1-6,0l-96-56a6,6,0,0,1,6-10.36l93,54.23,93-54.23A6,6,0,0,1,229.18,173ZM221,122.82l-93,54.23L35,122.82a6,6,0,0,0-6,10.36l96,56a6,6,0,0,0,6,0l96-56a6,6,0,0,0-6-10.36ZM26,80a6,6,0,0,1,3-5.18l96-56a6,6,0,0,1,6,0l96,56a6,6,0,0,1,0,10.36l-96,56a6,6,0,0,1-6,0l-96-56A6,6,0,0,1,26,80Zm17.91,0L128,129.05,212.09,80,128,31Z"/></symbol>
+<symbol id="i-sun" viewBox="0 0 256 256"><path d="M122,40V16a6,6,0,0,1,12,0V40a6,6,0,0,1-12,0Zm68,88a62,62,0,1,1-62-62A62.07,62.07,0,0,1,190,128Zm-12,0a50,50,0,1,0-50,50A50.06,50.06,0,0,0,178,128ZM59.76,68.24a6,6,0,1,0,8.48-8.48l-16-16a6,6,0,0,0-8.48,8.48Zm0,119.52-16,16a6,6,0,1,0,8.48,8.48l16-16a6,6,0,1,0-8.48-8.48ZM192,70a6,6,0,0,0,4.24-1.76l16-16a6,6,0,0,0-8.48-8.48l-16,16A6,6,0,0,0,192,70Zm4.24,117.76a6,6,0,0,0-8.48,8.48l16,16a6,6,0,0,0,8.48-8.48ZM46,128a6,6,0,0,0-6-6H16a6,6,0,0,0,0,12H40A6,6,0,0,0,46,128Zm82,82a6,6,0,0,0-6,6v24a6,6,0,0,0,12,0V216A6,6,0,0,0,128,210Zm112-88H216a6,6,0,0,0,0,12h24a6,6,0,0,0,0-12Z"/></symbol>
+<symbol id="i-timer" viewBox="0 0 256 256"><path d="M128,42a94,94,0,1,0,94,94A94.11,94.11,0,0,0,128,42Zm0,176a82,82,0,1,1,82-82A82.1,82.1,0,0,1,128,218ZM172.24,91.76a6,6,0,0,1,0,8.48l-40,40a6,6,0,1,1-8.48-8.48l40-40A6,6,0,0,1,172.24,91.76ZM98,16a6,6,0,0,1,6-6h48a6,6,0,0,1,0,12H104A6,6,0,0,1,98,16Z"/></symbol>
+<symbol id="i-user-plus" viewBox="0 0 256 256"><path d="M254,136a6,6,0,0,1-6,6H230v18a6,6,0,0,1-12,0V142H200a6,6,0,0,1,0-12h18V112a6,6,0,0,1,12,0v18h18A6,6,0,0,1,254,136Zm-57.41,60.14a6,6,0,1,1-9.18,7.72C166.9,179.45,138.69,166,108,166s-58.89,13.45-79.41,37.86a6,6,0,0,1-9.18-7.72C35.14,177.41,55,164.48,77,158.25a66,66,0,1,1,62,0C161,164.48,180.86,177.41,196.59,196.14ZM108,154a54,54,0,1,0-54-54A54.06,54.06,0,0,0,108,154Z"/></symbol>
+<symbol id="i-users" viewBox="0 0 256 256"><path d="M112.6,158.43a58,58,0,1,0-57.2,0A93.83,93.83,0,0,0,5.21,196.72a6,6,0,0,0,10.05,6.56,82,82,0,0,1,137.48,0,6,6,0,0,0,10-6.56A93.83,93.83,0,0,0,112.6,158.43ZM38,108a46,46,0,1,1,46,46A46.06,46.06,0,0,1,38,108Zm211,97a6,6,0,0,1-8.3-1.74A81.8,81.8,0,0,0,172,166a6,6,0,0,1,0-12,46,46,0,1,0-17.08-88.73,6,6,0,1,1-4.46-11.14,58,58,0,0,1,50.14,104.3,93.83,93.83,0,0,1,50.19,38.29A6,6,0,0,1,249,205Z"/></symbol>
+<symbol id="i-warning" viewBox="0 0 256 256"><path d="M235.07,189.09,147.61,37.22h0a22.75,22.75,0,0,0-39.22,0L20.93,189.09a21.53,21.53,0,0,0,0,21.72A22.35,22.35,0,0,0,40.55,222h174.9a22.35,22.35,0,0,0,19.6-11.19A21.53,21.53,0,0,0,235.07,189.09ZM224.66,204.8a10.46,10.46,0,0,1-9.21,5.2H40.55a10.46,10.46,0,0,1-9.21-5.2,9.51,9.51,0,0,1,0-9.72L118.79,43.21a10.75,10.75,0,0,1,18.42,0l87.46,151.87A9.51,9.51,0,0,1,224.66,204.8ZM122,144V104a6,6,0,0,1,12,0v40a6,6,0,0,1-12,0Zm16,36a10,10,0,1,1-10-10A10,10,0,0,1,138,180Z"/></symbol>
+<symbol id="i-x" viewBox="0 0 256 256"><path d="M204.24,195.76a6,6,0,1,1-8.48,8.48L128,136.49,60.24,204.24a6,6,0,0,1-8.48-8.48L119.51,128,51.76,60.24a6,6,0,0,1,8.48-8.48L128,119.51l67.76-67.75a6,6,0,0,1,8.48,8.48L136.49,128Z"/></symbol>
+</svg>
+<!--sprite:end-->
+<script src="assets/vendor/qrcode.js" defer></script>
+<script src="assets/site.js" defer></script>
+</body>
+</html>
