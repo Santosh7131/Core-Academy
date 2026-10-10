@@ -107,7 +107,7 @@ try {
       [s.username, s.name, s.classLevel, hash, salt],
     ))[0].id;
     await q(
-      `insert into memberships (tuition_id, user_id, role, status, class_level) values ($3, $1, 'student', 'active', $2)`,
+      `insert into memberships (tuition_id, user_id, role, status, class_level, joined_at) values ($3, $1, 'student', 'active', $2, now() - interval '30 days')`,
       [studentIds[s.username], s.classLevel, TUITION],
     );
     await q(
