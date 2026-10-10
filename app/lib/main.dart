@@ -16,11 +16,21 @@ import 'theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await _keepPhonesUpright();
   Push.start();
   await Device.load();
   await session.loadPrefs();
   _resolveDark();
   runApp(const CoreAcademyApp());
+}
+
+/// A phone turned on its side has too little height for a question and its buttons, or for a form with the
+/// keyboard open, so phones stay upright. A tablet turns freely.
+Future<void> _keepPhonesUpright() async {
+  final view = PlatformDispatcher.instance.views.first;
+  if (view.physicalSize.shortestSide / view.devicePixelRatio < 600) {
+    await SystemChrome.setPreferredOrientations(const [DeviceOrientation.portraitUp]);
+  }
 }
 
 /// Applies the theme choice to the token getters. Returns true when it changed.

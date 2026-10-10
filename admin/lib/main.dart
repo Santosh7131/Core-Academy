@@ -14,6 +14,11 @@ import 'theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // As in the main app: a phone stays upright.
+  final view = PlatformDispatcher.instance.views.first;
+  if (view.physicalSize.shortestSide / view.devicePixelRatio < 600) {
+    await SystemChrome.setPreferredOrientations(const [DeviceOrientation.portraitUp]);
+  }
   await Device.load();
   await session.loadPrefs();
   _resolveDark();

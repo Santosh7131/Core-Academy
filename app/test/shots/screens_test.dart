@@ -34,6 +34,9 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 final _shots = Platform.environment['SHOTS'] == '1';
+
+/// LANDSCAPE=1 draws every screen on its side (a phone turned round), to find what no longer fits.
+final _landscape = Platform.environment['LANDSCAPE'] == '1';
 final _boundary = GlobalKey();
 const _ratio = 2.625;
 
@@ -63,7 +66,7 @@ Map<String, Object?> _tuition({int pending = 2, bool open = true, String role = 
 
 Future<void> _show(WidgetTester t, Widget screen, {bool dark = false, double height = 2400}) async {
   setResolvedDark(dark);
-  t.view.physicalSize = Size(1080, height);
+  t.view.physicalSize = _landscape ? const Size(2400, 1080) : Size(1080, height);
   t.view.devicePixelRatio = _ratio;
   addTearDown(t.view.reset);
   await t.pumpWidget(RepaintBoundary(
@@ -85,7 +88,7 @@ Future<void> _shot(WidgetTester t, String name) async {
     final boundary = t.renderObject<RenderRepaintBoundary>(find.byKey(_boundary));
     final image = await boundary.toImage(pixelRatio: _ratio);
     final data = await image.toByteData(format: ui.ImageByteFormat.png);
-    File('../tools/out/shots/$name.png')
+    File('../tools/out/shots/$name${_landscape ? '-land' : ''}.png')
       ..createSync(recursive: true)
       ..writeAsBytesSync(data!.buffer.asUint8List());
   });
