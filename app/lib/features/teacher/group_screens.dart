@@ -397,7 +397,12 @@ class _GroupsScreenState extends State<GroupsScreen> with WidgetsBindingObserver
       child: PullToRefresh(
         onRefresh: _load,
         child: ListView(padding: EdgeInsets.zero, physics: const AlwaysScrollableScrollPhysics(), children: [
-          TabHeader(kicker: groups == null ? 'Your classes' : f.count(groups.length, 'group'), title: 'Groups'),
+          TabHeader(
+            kicker: groups == null ? 'Your classes' : f.count(groups.length, 'group'),
+            title: 'Groups',
+            // At the top, where it stays in reach however many groups there are.
+            actions: [CircleBtn(icon: Ph.plus, label: 'New group', onTap: _newGroup)],
+          ),
           const SizedBox(height: 18),
           if (groups == null && _error != null)
             ErrorState(message: _error!, onRetry: _load)
@@ -429,10 +434,6 @@ class _GroupsScreenState extends State<GroupsScreen> with WidgetsBindingObserver
                   ],
                 ]),
               ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(gutter, 16, gutter, 0),
-              child: SecondaryButton('New group', icon: Ph.plus, onTap: _newGroup),
-            ),
           ],
           navClearance,
         ]),
@@ -526,6 +527,25 @@ class _GroupScreenState extends State<GroupScreen> with WidgetsBindingObserver, 
         _go('/t/papers/new?$_query');
       case 'chat':
         _go('/t/groups/${widget.classLevel}/${widget.subjectId}/chat?name=${_enc(widget.subjectName)}');
+    }
+  }
+
+  /// Only an empty group can go (no students, no tests): the server refuses any other.
+  Future<void> _remove() async {
+    final yes = await confirmCard(
+      context,
+      title: 'Remove $_name?',
+      body: 'It has no students or tests. You can add the group again later.',
+      confirm: 'Remove',
+      destructive: true,
+    );
+    if (!yes || !mounted) return;
+    try {
+      await api.delete('/teacher/groups/${widget.classLevel}/${widget.subjectId}');
+      changes.reportAreas({Area.settings, Area.students, Area.tests});
+      if (mounted) context.pop();
+    } on ApiException catch (e) {
+      if (mounted) showProblem(context, e);
     }
   }
 
@@ -623,6 +643,10 @@ class _GroupScreenState extends State<GroupScreen> with WidgetsBindingObserver, 
       ],
       const SizedBox(height: gapRow),
       SecondaryButton('Add student', icon: Ph.userPlus, onTap: () => _go('/t/students/new?$_query')),
+      if (students.isEmpty && tests.isEmpty) ...[
+        const SizedBox(height: 22),
+        Center(child: TextAction('Remove this group', color: danger, onTap: _remove)),
+      ],
     ];
   }
 }
