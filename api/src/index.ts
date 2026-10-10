@@ -16,12 +16,16 @@ import { tuitionRoutes } from './routes/tuition.ts';
 
 const app = new Hono<AppEnv>();
 
-// The Android app does not need CORS; the web version planned for later will.
-app.use('*', cors({
-  origin: '*',
-  allowHeaders: ['authorization', 'content-type', 'x-install-id', 'x-app', 'x-device', 'x-os', 'x-tuition'],
-  allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-}));
+// The Android apps need no CORS. A browser build is let in only from the origins named in CORS_ORIGINS
+// (comma separated), which the live function never sets: no website can call it from a page.
+const origins = (process.env.CORS_ORIGINS ?? '').split(',').map((o) => o.trim()).filter(Boolean);
+if (origins.length) {
+  app.use('*', cors({
+    origin: origins,
+    allowHeaders: ['authorization', 'content-type', 'x-install-id', 'x-app', 'x-device', 'x-os', 'x-tuition'],
+    allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+  }));
+}
 
 // Requests per route per day, for the admin app (lib/metrics.ts says which ones count).
 app.use('*', async (c, next) => {

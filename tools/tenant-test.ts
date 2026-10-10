@@ -347,6 +347,51 @@ try {
   const sc = await db.query('select id from subjects where tuition_id = $1', [mk2.body.tuition.id]);
   created.subjects.push(...sc.rows.map((r) => r.id));
 
+  // ------------------------------------------------------------------ what a client may point at, and what it may use
+  const upA = await api('POST', '/teacher/uploads', TA);
+  check('an upload key names its tuition', upA.status === 200 && String(upA.body?.key).startsWith(`questions/${A}/`), upA.body);
+  const upB = await api('POST', '/teacher/uploads', TB);
+  const qBase = { class_level: 9, subject_id: physics, text: `${tag} Which one?`, options: ['a', 'b', 'c', 'd'], correct_option: 0 };
+  const stolen = await api('POST', '/teacher/questions', TB, { ...qBase, image_key: upA.body.key });
+  check('B cannot point a question at a picture A uploaded', stolen.status === 400 && code(stolen) === 'unknown_image', stolen.body);
+  const anyFile = await api('POST', '/teacher/questions', TB, { ...qBase, image_key: 'admin/update.json' });
+  check('nor at any other file in storage', anyFile.status === 400 && code(anyFile) === 'unknown_image', anyFile.body);
+  const mine = await api('POST', '/teacher/questions', TB, { ...qBase, image_key: upB.body.key });
+  check('B can use a picture key it was given', mine.status === 201, mine.body);
+  if (mine.body?.id) created.questions.push(mine.body.id);
+  const edit = await api('PATCH', `/teacher/questions/${mine.body?.id}`, TB, { ...qBase, image_key: upA.body.key });
+  check("and cannot swap it for A's on an edit", edit.status === 400 && code(edit) === 'unknown_image', edit.body);
+
+  const chA = await api('POST', '/teacher/chapters', TA, { class_level: 9, subject_id: MATHS, name: `${tag} A chapter` });
+  const bPaper = await api('POST', '/teacher/papers', TB, { pages: 1, class_level: 9, subject_id: physics });
+  if (bPaper.body?.paper?.id) created.papers.push(bPaper.body.paper.id);
+  const chOnPaper = await api('PATCH', `/teacher/papers/${bPaper.body?.paper?.id}`, TB, { chapter_id: chA.body?.chapter?.id });
+  check("B cannot file its paper under A's chapter", chOnPaper.status === 400 && code(chOnPaper) === 'unknown_chapter', chOnPaper.body);
+  if (chA.body?.chapter?.id) await db.query('delete from chapters where id = $1', [chA.body.chapter.id]);
+
+  // A page that was never uploaded cannot be marked uploaded; one that arrived can; one over the size limit is thrown away.
+  const noBytes = await api('POST', `/teacher/papers/${bPaper.body?.paper?.id}/pages/1/uploaded`, TB);
+  check('a page that never arrived is not marked uploaded', noBytes.status === 409 && code(noBytes) === 'not_uploaded', noBytes.body);
+  const put1 = await fetch(bPaper.body.uploads[0].put_url, { method: 'PUT', headers: { 'content-type': 'image/jpeg' }, body: Buffer.alloc(2000, 1) });
+  check('a small upload goes through to storage', put1.ok, put1.status);
+  check('and then it is marked uploaded', (await api('POST', `/teacher/papers/${bPaper.body?.paper?.id}/pages/1/uploaded`, TB)).status === 200);
+  const big = await api('POST', '/teacher/papers', TB, { pages: 1, class_level: 9, subject_id: physics });
+  if (big.body?.paper?.id) created.papers.push(big.body.paper.id);
+  const put2 = await fetch(big.body.uploads[0].put_url, { method: 'PUT', headers: { 'content-type': 'image/jpeg' }, body: Buffer.alloc(16 * 1024 * 1024, 2) });
+  const tooBig = await api('POST', `/teacher/papers/${big.body?.paper?.id}/pages/1/uploaded`, TB);
+  check('a picture over 15 MB is refused', put2.ok && tooBig.status === 413 && code(tooBig) === 'too_big', [put2.status, tooBig.body]);
+  const gone = await api('POST', `/teacher/papers/${big.body?.paper?.id}/pages/1/uploaded`, TB);
+  check('and removed from storage', gone.status === 409 && code(gone) === 'not_uploaded', gone.body);
+
+  // A tuition that has used its day of AI is told so, and its next call is not made.
+  await db.query(
+    `insert into ai_usage (tuition_id, task, model, ok, ms) select $1, 'cap_test', 'test-model', false, 1 from generate_series(1, 501)`,
+    [B],
+  );
+  const capped = await api('POST', '/teacher/papers/chat', TB, { class_level: 9, subject_id: physics, request: 'two easy questions on motion', count: 2 });
+  check('a tuition that used its day of AI is told so', capped.status === 429 && code(capped) === 'ai_limit', capped.body);
+  await db.query(`delete from ai_usage where task = 'cap_test'`);
+
   // ------------------------------------------------------------------ AI cost is told per tuition
   const usage = await db.query('select count(*) as n from ai_usage where tuition_id is null and created_at > now() - interval \'1 hour\' and user_id = any($1::uuid[])', [created.users]);
   check('AI calls made here carry a tuition', Number(usage.rows[0].n) === 0, usage.rows[0]);

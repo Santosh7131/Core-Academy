@@ -364,6 +364,3 @@ class FactList extends StatelessWidget {
 
 /// Bottom spacing so the last row clears the floating navigation.
 const navClearance = SizedBox(height: 110);
-
-/// Bottom spacing on a tab with a [FloatingAdd]: clears the tab bar and the button above it.
-const fabClearance = SizedBox(height: 180);

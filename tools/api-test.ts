@@ -552,6 +552,7 @@ try {
   check('new PIN works and the lock is cleared', (await login(`${tag}.two`, '2468')).status === 200);
   await api('POST', `/teacher/students/${created.users[0]}/active`, T, { active: false });
   check('deactivated student cannot log in', (await login(`${tag}.one`, '1234')).status === 403);
+  check('a wrong PIN on a turned-off login does not say it is turned off', (await login(`${tag}.one`, '0000')).status === 401);
   check('deactivated student session stops working', (await api('GET', '/student/home', S1)).status === 401);
 
   // Deleting: a question nobody has written leaves its tests; a written test goes only when asked twice.

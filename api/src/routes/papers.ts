@@ -9,8 +9,8 @@ import { wrapBareMath } from '../lib/latex-json.ts';
 import { verdict, type Pick } from '../lib/votes.ts';
 import { mustKeepOrder } from '../lib/questions.ts';
 import { asciiDigits, hasIndicText, indicLabelIndex, namesIndicLanguage } from '../lib/text.ts';
-import { deleteObjects, maybeViewUrl, readObject, uploadUrl, viewUrl } from '../lib/storage.ts';
-import { defaultSubject, ensureGroup, taughtSubject } from '../lib/tuition.ts';
+import { deleteObjects, MAX_IMAGE_BYTES, maybeViewUrl, objectSize, readObject, uploadUrl, viewUrl } from '../lib/storage.ts';
+import { defaultSubject, ensureGroup, ownChapter, ownImageKey, taughtSubject } from '../lib/tuition.ts';
 import { readBody } from './body.ts';
 
 // Mounted behind requireUser('teacher') in index.ts.
@@ -23,6 +23,9 @@ export const paperRoutes = new Hono<AppEnv>();
 
 const MAX_PAGES = 20;
 const pageKey = (paperId: string, pageNo: number) => `papers/${paperId}/p${pageNo}.jpg`;
+
+/** Papers one tuition may start in a day. Each one is photos in storage and AI work, so there is a ceiling. */
+const MAX_PAPERS_PER_DAY = 100;
 
 /** The name old papers carry until AI or the tutor names them. */
 const UNNAMED = 'New paper';
@@ -75,6 +78,10 @@ paperRoutes.post('/papers', async (c) => {
   // An app that sends a class but no subject is older than subjects: its papers are Maths (or the tuition's first subject).
   const sent = uuidOpt(b.subject_id, 'subject');
   const subjectId = sent ? (await taughtSubject(T, sent)).id : classLevel != null ? await defaultSubject(T) : null;
+  const today = await tq1<{ n: number }>(T, `select count(*) as n from papers where tuition_id = @T and created_at > now() - interval '1 day'`);
+  if ((today?.n ?? 0) >= MAX_PAPERS_PER_DAY) {
+    throw new HttpError(429, 'too_many_papers', 'That is a lot of papers for one day. Please try again tomorrow.');
+  }
   const paper = await tx(async (cx) => {
     const p = await q1(
       `insert into papers (tuition_id, class_level, exam_name, category, page_count, uploaded_by, subject_id, name_auto)
@@ -228,13 +235,23 @@ ${written.length ? '' : '- name: at most 40 characters, e.g. "Quadratic equation
 });
 
 paperRoutes.post('/papers/:id/pages/:n/uploaded', async (c) => {
-  const r = await tq1(
+  const id = uuid(c.req.param('id'), 'paper id');
+  const n = Number(c.req.param('n'));
+  const page = await tq1(
     tuitionOf(c).id,
-    `update paper_pages pp set uploaded = true from papers p
-      where p.id = pp.paper_id and p.tuition_id = @T and pp.paper_id = $1 and pp.page_no = $2 returning pp.page_no`,
-    [uuid(c.req.param('id'), 'paper id'), Number(c.req.param('n'))],
+    `select pp.object_key from paper_pages pp join papers p on p.id = pp.paper_id
+      where p.tuition_id = @T and pp.paper_id = $1 and pp.page_no = $2`,
+    [id, n],
   );
-  if (!r) throw notFound('This page');
+  if (!page) throw notFound('This page');
+  // The upload went straight to storage, which cannot cap its size: look at what arrived.
+  const size = await objectSize(page.object_key);
+  if (size === null) throw new HttpError(409, 'not_uploaded', 'This page did not finish uploading. Please add it again.');
+  if (size > MAX_IMAGE_BYTES) {
+    await deleteObjects([page.object_key]).catch(() => {});
+    throw new HttpError(413, 'too_big', 'That picture is too big. Use one under 15 MB.');
+  }
+  await pool.query('update paper_pages set uploaded = true where paper_id = $1 and page_no = $2', [id, n]);
   return c.json({ ok: true });
 });
 
@@ -318,7 +335,7 @@ paperRoutes.patch('/papers/:id', async (c) => {
         'category' in b ? (str(b, 'category', { max: 60, optional: true }) ?? null) : cur.category,
         classLevel,
         subjectId,
-        'chapter_id' in b ? uuidOpt(b.chapter_id, 'chapter') : cur.chapter_id,
+        'chapter_id' in b ? await ownChapter(T, uuidOpt(b.chapter_id, 'chapter'), cx) : cur.chapter_id,
         moved,
         'exam_name' in b,
       ],
@@ -1043,9 +1060,9 @@ paperRoutes.patch('/drafts/:id', async (c) => {
       options,
       kind,
       correct,
-      'chapter_id' in b ? uuidOpt(b.chapter_id, 'chapter') : d.chapter_id,
+      'chapter_id' in b ? await ownChapter(tuitionOf(c).id, uuidOpt(b.chapter_id, 'chapter')) : d.chapter_id,
       'needs_diagram' in b ? b.needs_diagram === true : d.needs_diagram,
-      'image_key' in b ? (typeof b.image_key === 'string' && b.image_key ? b.image_key : null) : d.image_key,
+      'image_key' in b ? ownImageKey(tuitionOf(c).id, b.image_key, d.image_key) : d.image_key,
       status,
       marking,
       reworded,

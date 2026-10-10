@@ -26,28 +26,6 @@ String testState(Map<String, dynamic> t) {
   return 'open';
 }
 
-String testMeta(Map<String, dynamic> t) {
-  final parts = [
-    t['subject'] == null ? className(t['class_level']) : groupName(t['class_level'] as int, '${t['subject']}'),
-    f.count(t['question_count'] as int, 'question'),
-  ];
-  final opens = f.parseTime(t['opens_at']);
-  final closes = f.parseTime(t['closes_at']);
-  switch (testState(t)) {
-    case 'upcoming':
-      parts.add('opens ${f.when(opens!)}');
-    case 'open':
-      if (closes != null) parts.add('closes ${f.when(closes)}');
-    case 'closed':
-      parts.add('closed ${f.when(closes!)}');
-    case 'done':
-      parts.add('all submitted');
-    default:
-      parts.add('not published');
-  }
-  return parts.join(' · ');
-}
-
 // ---------------------------------------------------------------- editor
 
 class TestEditor extends StatefulWidget {

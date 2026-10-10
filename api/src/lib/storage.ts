@@ -1,10 +1,22 @@
-import { DeleteObjectsCommand, GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { DeleteObjectsCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 // Credentials, endpoint and region come from the AWS_* variables Neon injects for the branch.
 // Neon Object Storage only supports path-style addressing.
 const s3 = new S3Client({ forcePathStyle: true });
 export const BUCKET = 'uploads';
+
+/** The most a photo or page image may weigh. A phone photo is a few MB; a presigned upload cannot cap the size itself. */
+export const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
+
+/** The size of a stored object, or null when there is none. */
+export async function objectSize(key: string): Promise<number | null> {
+  try {
+    return (await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: key }))).ContentLength ?? null;
+  } catch {
+    return null;
+  }
+}
 
 /** A URL the phone can PUT the bytes to directly, so images never pass through the API. */
 export const uploadUrl = (key: string, contentType = 'image/jpeg') =>
@@ -17,8 +29,9 @@ export async function maybeViewUrl(key: string | null | undefined) {
   return key ? viewUrl(key) : null;
 }
 
-export async function readObject(key: string): Promise<{ bytes: Buffer; type: string }> {
+export async function readObject(key: string, maxBytes = MAX_IMAGE_BYTES): Promise<{ bytes: Buffer; type: string }> {
   const r = await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: key }));
+  if ((r.ContentLength ?? 0) > maxBytes) throw new Error(`The stored file is larger than ${maxBytes} bytes.`);
   const bytes = Buffer.from(await r.Body!.transformToByteArray());
   return { bytes, type: r.ContentType ?? 'image/jpeg' };
 }

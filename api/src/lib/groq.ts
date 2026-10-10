@@ -15,7 +15,6 @@ const TRIES_PER_MODEL = 2;
 const list = (v: string | undefined, fallback: string) => (v ?? fallback).split(',').map((s) => s.trim()).filter(Boolean);
 // Pages are read by Gemini when its key is set, with Groq's vision model behind it.
 export const VISION_MODELS = list(process.env.GROQ_VISION_MODELS, `${geminiConfigured() ? 'gemini-3.5-flash-lite,' : ''}qwen/qwen3.8-27b`);
-export const TEXT_MODELS = list(process.env.GROQ_TEXT_MODELS, 'openai/gpt-oss-120b,openai/gpt-oss-20b');
 // Answers are worked out by one model and checked by another family, so the two can disagree.
 // The checker was chosen by running one 82-question worksheet through each candidate (29 of its
 // questions had split the others). Gemini 3.1 Flash-Lite never contradicted the solver there, and
@@ -88,12 +87,31 @@ async function logUsage(row: {
     .catch(() => {});
 }
 
+/**
+ * AI calls one tuition may make in a day, failed ones too (they use the providers' free quota just the same).
+ * A sign-up is open to anyone, so without a ceiling one account could use up the day's quota for everybody.
+ * A tutor who really does 500 calls a day (some forty papers) is far beyond what anyone needs.
+ */
+const DAILY_CALLS = Number(process.env.AI_DAILY_CALLS) || 500;
+
+async function usedToday(tuitionId: string): Promise<number> {
+  try {
+    const r = await pool.query<{ n: string }>(`select count(*) as n from ai_usage where tuition_id = $1 and created_at > now() - interval '1 day'`, [tuitionId]);
+    return Number(r.rows[0]?.n ?? 0);
+  } catch {
+    return 0; // counting is a guard: when it cannot run, real use is not held up
+  }
+}
+
 export const aiConfigured = () => keys.length > 0 || geminiConfigured();
 const usable = (model: string) => (isGemini(model) ? geminiConfigured() : keys.length > 0);
 
 export async function chat(opts: ChatOptions): Promise<{ content: string; model: string }> {
   const models = opts.models.filter(usable);
   if (!models.length) throw new HttpError(503, 'ai_not_configured', 'AI is not set up on the server yet.');
+  if (opts.tuitionId && (await usedToday(opts.tuitionId)) >= DAILY_CALLS) {
+    throw new HttpError(429, 'ai_limit', 'This tuition has used all the AI it gets in a day. It works again tomorrow.');
+  }
   let retryAfter: number | null = null;
   const timeLeft = () => (opts.deadline === undefined ? Infinity : opts.deadline - Date.now());
 

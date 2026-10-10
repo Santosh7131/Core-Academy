@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { waitUntil } from '@neon/functions';
 import { Hono } from 'hono';
 import {
@@ -14,7 +13,8 @@ import { mustKeepOrder } from '../lib/questions.ts';
 import { deleteObjects, maybeViewUrl, uploadUrl } from '../lib/storage.ts';
 import { MATHS, studentSubjects, subjectIds } from '../lib/subjects.ts';
 import {
-  defaultSubject, elsewhere, ensureGroup, FIRST_TUITION, memberStudents, ownQuestions, refreshLogin, taughtSubject, taughtSubjectIds,
+  defaultSubject, elsewhere, ensureGroup, FIRST_TUITION, memberStudents, newImageKey, ownImageKey, ownQuestions, refreshLogin, taughtSubject,
+  taughtSubjectIds,
 } from '../lib/tuition.ts';
 import { freeUsername, latinName, usernameBase } from '../lib/usernames.ts';
 import { readBody } from './body.ts';
@@ -866,6 +866,7 @@ teacherRoutes.get('/questions/:id', async (c) => {
 teacherRoutes.post('/questions', async (c) => {
   const T = tuitionOf(c).id;
   const x = readQuestion(await readBody(c));
+  x.image_key = ownImageKey(T, x.image_key);
   await assertLevel(T, x.class_level);
   if (!(x.marks > 0 && x.marks <= 100)) throw bad('Marks must be between 0 and 100.');
   const subject = (await questionSubject(T, x)) ?? (await defaultSubject(T));
@@ -888,8 +889,9 @@ teacherRoutes.patch('/questions/:id', async (c) => {
   await assertLevel(T, x.class_level);
   const subject = await questionSubject(T, x);
   const regraded = await tx(async (cx) => {
-    const before = await tq1(T, 'select correct_option, marks from questions where id = $1 and tuition_id = @T for update', [id], cx);
+    const before = await tq1(T, 'select correct_option, marks, image_key from questions where id = $1 and tuition_id = @T for update', [id], cx);
     if (!before) throw notFound('This question');
+    x.image_key = ownImageKey(T, x.image_key, before.image_key);
     await cx.query(
       `update questions set class_level = $2, chapter_id = $3, text = $4, options = $5, correct_option = $6, solution = $7,
                             marks = $8, keep_option_order = $9, image_key = $10, updated_at = now(),
@@ -933,7 +935,7 @@ teacherRoutes.delete('/questions/:id', async (c) => {
 
 /** A direct upload URL for a question diagram. */
 teacherRoutes.post('/uploads', async (c) => {
-  const key = `questions/${randomUUID()}.jpg`;
+  const key = newImageKey(tuitionOf(c).id);
   return c.json({ key, put_url: await uploadUrl(key) });
 });
 

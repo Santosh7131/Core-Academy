@@ -43,11 +43,16 @@ authRoutes.post('/login', async (c) => {
     [username],
   );
   if (!u) {
+    // The same work as a real attempt, so how long the reply takes does not say whether the username exists.
+    await hashSecret(secret);
     await log('unknown_user');
     throw wrong;
   }
   if (!u.active) {
-    await log('inactive', u.id);
+    // Only the person who knows the login is told it is off; anyone else sees what they would for a wrong guess.
+    const right = await verifySecret(secret, u.secret_hash, u.secret_salt);
+    await log(right ? 'inactive' : 'wrong_secret', u.id);
+    if (!right) throw wrong;
     throw new HttpError(403, 'inactive', 'This login has been turned off. Please ask your teacher.');
   }
   if (u.locked_until && u.locked_until > u.now) {

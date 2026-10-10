@@ -1,4 +1,4 @@
-import { randomInt } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 import { pool, q1, tq, tq1, type Db } from './db.ts';
 import { bad, HttpError } from './http.ts';
 import { MATHS } from './subjects.ts';
@@ -97,6 +97,29 @@ export async function ownQuestions(tuition: string, ids: string[], db: Db = pool
   if (!ids.length) return;
   const n = await tq1<{ n: number }>(tuition, `select count(*) as n from questions where tuition_id = @T and id = any($1::uuid[])`, [ids], db);
   if (!n || n.n !== ids.length) throw bad('One of those questions is not in this tuition.', 'unknown_question');
+}
+
+/** A chapter id the client sent must be one of this tuition's own (null when none was sent). */
+export async function ownChapter(tuition: string, id: string | null, db: Db = pool): Promise<string | null> {
+  if (!id) return null;
+  const ch = await tq1(tuition, 'select 1 as x from chapters where id = $1 and tuition_id = @T', [id], db);
+  if (!ch) throw bad('That chapter is not in this tuition.', 'unknown_chapter');
+  return id;
+}
+
+/** A new key for a question's diagram. It names the tuition, so a key can only ever be used by the tuition it was made for. */
+export const newImageKey = (tuition: string) => `questions/${tuition}/${randomUUID()}.jpg`;
+
+/**
+ * The image key a client sent for a question or draft. The server made every key it will accept, so a
+ * client cannot point a question at someone else's file (a signed link to it would then be handed out):
+ * it must be one of this tuition's own, or the one the row already has.
+ */
+export function ownImageKey(tuition: string, key: unknown, current: string | null = null): string | null {
+  if (typeof key !== 'string' || !key) return null;
+  if (key === current) return key;
+  if (key.startsWith(`questions/${tuition}/`) && /^questions\/[0-9a-f-]{36}\/[0-9a-f-]{36}\.jpg$/i.test(key)) return key;
+  throw bad('That picture does not belong to this tuition. Add it again.', 'unknown_image');
 }
 
 /** True when the person has an active or waiting place in some other tuition than this one. */
