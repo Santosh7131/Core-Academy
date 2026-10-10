@@ -36,14 +36,14 @@ node tools/landing-brand.mjs --site https://your-domain.example
 
 ## How the download button works
 
-When the page loads it asks GitHub for the latest release of the repository named in the button's link, takes the file ending in `.apk`, and fills in the version, size, release date and SHA-256 checksum from it. The button then points straight at that file. If GitHub cannot be reached (offline, or its hourly limit for anonymous requests), the button keeps pointing at the repository's releases page instead. The repository has to stay public for this to work.
+When the page loads it asks GitHub for the latest release of the repository named in the button's link, takes the file ending in `.apk`, and shows its size on the button, which then points straight at that file. Nothing else about the release (version, date, checksum) is shown on the page. If GitHub cannot be reached (offline, or its hourly limit for anonymous requests), the button keeps pointing at the repository's releases page instead. The repository has to stay public for this to work.
 
 Every release made with `tools/release-app.ps1` shows up on the page by itself. There is nothing to edit.
 
 ## Things to know
 
 - **The app does not carry the new name yet.** It installs as "Core Academy" and the file is called `core-academy-<version>.apk`. The page avoids naming the app inside the install steps, so nothing contradicts what people see after installing. Renaming the app itself is a separate change in the Flutter projects.
-- **Screens on the page are drawn in HTML** from the app's own colours, type and layout, with made-up names and numbers, and are labelled "Sample data". They are not screenshots.
+- **Screens on the page are drawn in HTML** from the app's own colours, type and layout, with made-up names and numbers ("Maple Street Tuition", "Kavya Nair"). They are not screenshots, and the page carries no "sample data" label.
 - **Animations** play by default. They stop for visitors whose system asks for reduced motion, and any visitor can pause them with the button in the top bar or the footer. The choice is kept in the browser (`localStorage`, key `cd-motion`), as is the theme (`cd-theme`).
 - **No cookies, no analytics.** The only outside request is to `api.github.com` for the release details, and the page's Content Security Policy allows nothing else.
 - **There is no terms page.** Terms need an owner, a place and decisions that are not made yet, and writing them here would mean inventing them.

@@ -312,10 +312,11 @@
   }
 
   // ---------------------------------------------------------------- the latest release
+  // The download buttons point straight at the newest APK and show its size. If GitHub cannot be asked,
+  // they keep pointing at the releases page, which still works.
   const apkLinks = $$('[data-apk]');
   const first = apkLinks[0] && apkLinks[0].getAttribute('href');
   const repo = first && (first.match(/github\.com\/([^/]+\/[^/]+)\/releases/) || [])[1];
-  const meta = (k) => $(`[data-meta="${k}"]`);
 
   async function loadRelease() {
     if (!repo) return;
@@ -329,44 +330,14 @@
     }
     const apk = (data.assets || []).find((a) => /\.apk$/i.test(a.name));
     if (!apk) throw new Error('No APK in the latest release');
-    const version = String(data.tag_name || '').replace(/^v/i, '');
     const mb = `${(apk.size / 1e6).toFixed(1)} MB`;
-    const when = data.published_at ? new Date(data.published_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
     for (const a of apkLinks) {
       a.href = apk.browser_download_url;
       const small = $('[data-apk-meta]', a);
-      if (small) small.textContent = `${version ? `v${version} · ` : ''}${mb}`;
-    }
-    if (meta('version')) meta('version').textContent = version || '-';
-    if (meta('size')) meta('size').textContent = mb;
-    if (meta('date')) meta('date').textContent = when || '-';
-    $('#apkMeta').hidden = false;
-    const sha = String(apk.digest || '').replace(/^sha256:/i, '');
-    if (sha && meta('sha')) {
-      meta('sha').textContent = sha;
-      $('#apkHash').hidden = false;
+      if (small) small.textContent = mb;
     }
   }
-  loadRelease().catch(() => { const f = $('.fine-fallback'); if (f) f.hidden = false; });
-
-  const copyBtn = $('[data-copy]');
-  if (copyBtn) {
-    copyBtn.addEventListener('click', async () => {
-      const text = meta('sha') ? meta('sha').textContent : '';
-      if (!text) return;
-      let ok = false;
-      try { await navigator.clipboard.writeText(text); ok = true; } catch {
-        const r = document.createRange();
-        r.selectNodeContents(meta('sha'));
-        const s = getSelection();
-        s.removeAllRanges();
-        s.addRange(r);
-      }
-      const label = $('span', copyBtn);
-      label.textContent = ok ? 'Copied' : 'Selected';
-      setTimeout(() => { label.textContent = 'Copy'; }, 1800);
-    });
-  }
+  loadRelease().catch(() => { /* the buttons keep their fallback link */ });
 
   // ---------------------------------------------------------------- QR code for desktop visitors
   const qrBox = $('#qrBox');
