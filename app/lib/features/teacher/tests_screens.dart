@@ -700,13 +700,6 @@ class _TestResultsScreenState extends State<TestResultsScreen> with WidgetsBindi
             SecondaryButton('Show marks to students now', icon: Ph.eye, onTap: _release),
           ],
         ],
-        SectionRule('Settings', padding: const EdgeInsets.fromLTRB(0, 26, 0, 11)),
-        FactList([
-          ('Time limit', t['time_limit_min'] == null ? 'No limit' : '${t['time_limit_min']} min'),
-          ('Opens', opens == null ? 'As soon as it was posted' : f.when(opens)),
-          ('Closes', closes == null ? 'No closing time' : f.when(closes)),
-          ('Order', t['shuffle'] == true ? 'Shuffled for each student' : 'Same for everyone'),
-        ]),
         SectionRule('Students', count: students.length, padding: const EdgeInsets.fromLTRB(0, 26, 0, 11)),
         if (students.isEmpty) Text('No students are given this test.', style: bodyStyle.copyWith(color: muted)),
         for (final (i, s) in students.indexed) ...[
@@ -750,6 +743,14 @@ class _TestResultsScreenState extends State<TestResultsScreen> with WidgetsBindi
               onTap: () => setState(() => _allQuestions = !_allQuestions),
             ),
           ),
+        // The settings are last: what the tutor came for is who has written it and how it went.
+        SectionRule('Settings', padding: const EdgeInsets.fromLTRB(0, 26, 0, 11)),
+        FactList([
+          ('Time limit', t['time_limit_min'] == null ? 'No limit' : '${t['time_limit_min']} min'),
+          ('Opens', opens == null ? 'As soon as it was posted' : f.when(opens)),
+          ('Closes', closes == null ? 'No closing time' : f.when(closes)),
+          ('Order', t['shuffle'] == true ? 'Shuffled for each student' : 'Same for everyone'),
+        ]),
       ],
     );
   }

@@ -739,12 +739,13 @@ class BareField extends StatelessWidget {
 /// A grouped-input row with a short muted name at its start, for fields that already hold
 /// a value (a placeholder alone would vanish). Not a label above the box.
 class NamedField extends StatelessWidget {
-  const NamedField({super.key, required this.name, required this.controller, this.placeholder = '', this.capitalization = TextCapitalization.none, this.obscure = false});
+  const NamedField({super.key, required this.name, required this.controller, this.placeholder = '', this.capitalization = TextCapitalization.none, this.obscure = false, this.keyboard});
   final String name;
   final TextEditingController controller;
   final String placeholder;
   final TextCapitalization capitalization;
   final bool obscure;
+  final TextInputType? keyboard;
 
   @override
   Widget build(BuildContext context) => Row(children: [
@@ -752,7 +753,7 @@ class NamedField extends StatelessWidget {
           padding: const EdgeInsets.only(left: 17),
           child: SizedBox(width: 92, child: Text(name, style: bodyStyle.copyWith(color: muted))),
         ),
-        Expanded(child: BareField(controller: controller, placeholder: placeholder, capitalization: capitalization, obscure: obscure)),
+        Expanded(child: BareField(controller: controller, placeholder: placeholder, capitalization: capitalization, obscure: obscure, keyboard: keyboard)),
       ]);
 }
 

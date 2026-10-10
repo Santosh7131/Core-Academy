@@ -158,16 +158,8 @@ class _TutorHomeState extends State<TutorHome> with WidgetsBindingObserver, Auto
       if (groups.isEmpty)
         const EmptyState(icon: Ph.users, title: 'No groups yet', body: 'Open Groups and add your first group.')
       else ...[
-        if (busy.isEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: gutter),
-            child: Surface(
-              shadow: e1,
-              padding: const EdgeInsets.fromLTRB(17, 16, 17, 16),
-              child: Fig('Nothing is live or posted.', style: bodyStyle.copyWith(color: muted)),
-            ),
-          )
-        else
+        // With nothing live or posted, the summary line above already says so.
+        if (busy.isNotEmpty)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: gutter),
             child: Column(children: [
@@ -773,7 +765,7 @@ class _ChatTestScreenState extends State<ChatTestScreen> {
           ]),
           const SizedBox(height: gapRow),
           GroupedInputs(children: [
-            BareField(controller: _countText, placeholder: 'How many questions', keyboard: TextInputType.number),
+            NamedField(name: 'Questions', controller: _countText, placeholder: 'How many', keyboard: TextInputType.number),
           ]),
           if (_error != null) ...[const SizedBox(height: 16), InlineNotice(_error!, tone: Tone.danger, icon: Ph.warning)],
           if (_busy) ...[
