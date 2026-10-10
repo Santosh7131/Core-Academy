@@ -9,7 +9,7 @@ import { wrapBareMath } from '../lib/latex-json.ts';
 import { verdict, type Pick } from '../lib/votes.ts';
 import { mustKeepOrder } from '../lib/questions.ts';
 import { asciiDigits, hasIndicText, indicLabelIndex, namesIndicLanguage } from '../lib/text.ts';
-import { deleteObjects, MAX_IMAGE_BYTES, maybeViewUrl, objectSize, readObject, uploadUrl, viewUrl } from '../lib/storage.ts';
+import { declaredSize, deleteObjects, MAX_IMAGE_BYTES, maybeViewUrl, objectSize, readObject, uploadUrl, viewUrl } from '../lib/storage.ts';
 import { defaultSubject, ensureGroup, ownChapter, ownImageKey, taughtSubject } from '../lib/tuition.ts';
 import { readBody } from './body.ts';
 
@@ -78,6 +78,10 @@ paperRoutes.post('/papers', async (c) => {
   // An app that sends a class but no subject is older than subjects: its papers are Maths (or the tuition's first subject).
   const sent = uuidOpt(b.subject_id, 'subject');
   const subjectId = sent ? (await taughtSubject(T, sent)).id : classLevel != null ? await defaultSubject(T) : null;
+  // An app from 1.5.0 says how big each page is, and its upload URL then takes exactly that many bytes.
+  const sizes: unknown[] = Array.isArray(b.sizes) ? b.sizes : [];
+  if (sizes.length && sizes.length !== pages) throw bad('Say the size of every page, or none.');
+  const declared = Array.from({ length: pages }, (_, i) => declaredSize(sizes[i]));
   const today = await tq1<{ n: number }>(T, `select count(*) as n from papers where tuition_id = @T and created_at > now() - interval '1 day'`);
   if ((today?.n ?? 0) >= MAX_PAPERS_PER_DAY) {
     throw new HttpError(429, 'too_many_papers', 'That is a lot of papers for one day. Please try again tomorrow.');
@@ -96,7 +100,10 @@ paperRoutes.post('/papers', async (c) => {
     return p;
   });
   const uploads = await Promise.all(
-    Array.from({ length: pages }, async (_, i) => ({ page_no: i + 1, put_url: await uploadUrl(pageKey(paper.id, i + 1)) })),
+    Array.from({ length: pages }, async (_, i) => ({
+      page_no: i + 1,
+      put_url: await uploadUrl(pageKey(paper.id, i + 1), 'image/jpeg', declared[i] ?? undefined),
+    })),
   );
   return c.json({ paper, uploads }, 201);
 });
@@ -389,7 +396,7 @@ paperRoutes.post('/papers/:id/detect', async (c) => {
   const { subjects, chapters, lines } = await catalogue(T);
   const categories = (await tq<{ name: string }>(T, CATEGORIES)).map((r) => r.name);
 
-  const img = await readObject(page.object_key);
+  const img = await readPageImage(page.object_key);
   const { content } = await chat({
     task: 'detect_paper',
     userId: c.get('user').id,
@@ -574,6 +581,19 @@ async function skipRepeats(paperId: string, db: Db) {
   }
 }
 
+/** A page's picture, read into memory. One that has grown past the limit since it was checked is deleted. */
+async function readPageImage(key: string) {
+  try {
+    return await readObject(key);
+  } catch (e) {
+    if (e instanceof Error && e.message.startsWith('The stored file is larger')) {
+      await deleteObjects([key]).catch(() => {});
+      throw new HttpError(413, 'too_big', 'That picture is too big. Use one under 15 MB.');
+    }
+    throw e;
+  }
+}
+
 /**
  * Reads one page with each vision model in turn until one gives a usable reply: JSON with a list of
  * questions or an answer key. A reply with nothing on it is confirmed by the next model before the page
@@ -650,7 +670,7 @@ paperRoutes.post('/papers/:id/pages/:n/read', async (c) => {
   let items: Extracted[];
   let key: { number: string; answer: string }[];
   try {
-    const img = await readObject(page.object_key);
+    const img = await readPageImage(page.object_key);
     const dataUrl = `data:${img.type};base64,${img.bytes.toString('base64')}`;
     const prompt = readPrompt({ study: page.class_level != null ? await studyOf(T, page.class_level) : null, subject: page.subject }, pageNo, chapters.map((ch) => ch.name));
     ({ items, key } = await readPageWithAI(T, c.get('user').id, prompt, dataUrl));

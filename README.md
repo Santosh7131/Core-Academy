@@ -277,15 +277,20 @@ It takes only a developer login, and reads either the live database or dev. It s
 - the database and storage sizes, and an estimate of this month's compute hours, taken from
   when the database woke and its last request (Neon's own usage figures read 0 on the free plan;
   its console has the exact number);
-- API requests a day, the slowest routes and server errors, and the AI reader's use.
+- API requests a day, the slowest routes and server errors, and the AI reader's use;
+- the clients: every tuition with its students and tutors, its API requests (today, 30 days, a
+  14-day chart) and what its AI use would cost at Google's and Groq's list prices, in rupees
+  (`api/src/lib/pricing.ts`, from the tokens each call used). The free plans mean nothing is billed,
+  so this is what the work is worth, not a bill. Students are only ever counted there, never named.
+  Requests are counted per client from migration 017 on (`api_daily_tuition`).
 
 It changes only two things: it can sign an account out of one phone, and unlock a locked login.
 Only signed-in requests and logins are counted, since they use the database anyway; the
 notification trigger and anonymous traffic never wake it.
 
 It looks the same as the main app because it uses the main app's own theme and components.
-`admin/lib/theme.dart`, `ui/tokens.dart` and `ui/kit.dart` are copies: change the originals in
-`app/lib`, then copy them over again with `node tools/sync-admin-ui.mjs`. The icons come from
+`admin/lib/theme.dart`, `ui/tokens.dart`, `ui/kit.dart` and `ui/motion.dart` are copies: change the
+originals in `app/lib`, then copy them over again with `node tools/sync-admin-ui.mjs`. The icons come from
 `tools/gen-icons.mjs`, which writes both apps' sets.
 
 The developer login is made per branch, with the password typed at a hidden prompt:
@@ -436,14 +441,17 @@ and the scripts that read it would then point at the live database.
 |---|---|
 | `npm run typecheck` | The API type-checks. |
 | `npm run test:latex` | The LaTeX repair for model replies and the bare-maths wrapping (29 cases). |
-| `node tools/tenant-test.ts` | 128 checks that tuitions are walled off from each other, and that sign-up, joining, switching, PIN resets, removals, the owner's join code and the rate limits behave. It makes its own tutors, tuitions and students, and removes them. |
+| `node tools/tenant-test.ts` | 141 checks that tuitions are walled off from each other, and that sign-up, joining, switching, PIN resets, removals, the owner's join code, the rate limits, picture keys and chapters from another tuition, upload sizes and the daily AI cap behave. It makes its own tutors, tuitions and students, and removes them. |
+| `node tools/levels-test.ts` | 47 checks of classes 1 to 12 and the levels a tuition names itself. |
+| `node tools/votes-test.ts` | 25 checks of when two or three AI answers agree enough to mark a question. |
+| `node tools/text-test.mjs` | Hindi and Tamil text handling, the test writer's answer matching and suggested usernames. |
 | `node tools/summary-test.ts --log server.log` | The evening summary goes to each tuition's own tutors (after 8 pm India time; local API, dry-run push). |
-| `npm run test:api` | 140 end-to-end checks of the marking rules, when results open (closing time, last student, tutor, and which app versions wait), usernames for students who share a name, groups, the home and group pages, tutors, logins, question papers (including ones uploaded before their details are known, printed answer keys that replace AI answers, questions the bank already has, two answer calls at once and question groups) and the admin app's API against the deployed dev API (add `-- --env .env.main` for the live one; the admin checks run only where the logins file has a developer login). It creates its own students, subject, tests and paper, gives its tests only to those students, then removes them all. |
+| `npm run test:api` | 162 end-to-end checks of the marking rules, when results open (closing time, last student, tutor, and which app versions wait), usernames for students who share a name, groups, the home and group pages, tutors, logins, question papers (including ones uploaded before their details are known, printed answer keys that replace AI answers, questions the bank already has, two answer calls at once and question groups) and the admin app's API against the deployed dev API (add `-- --env .env.main` for the live one; the admin checks run only where the logins file has a developer login). It creates its own students, subject, tests and paper, gives its tests only to those students, then removes them all. |
 | `node tools/notify-test.ts --log server.log` | 25 checks of the notifications against the API on your PC, run with `PUSH_DRY_RUN=1` so each notification is written to the log instead of sent. Dev only. |
 | `node tools/check-answers.ts` | Every sample question's marked answer is right, and no other option equals it. |
 | `node tools/ai-test.ts` | How accurately the AI reads the 2-page sample paper (render it first with `tools/make-sample-paper.ps1`). |
-| `flutter analyze` and `flutter test` (in `app/`) | The app's lints and unit tests. |
-| `SHOTS=1 flutter test test/shots/screens_test.dart` (in `app/`) | Draws the tuition screens, light and dark, to `tools/out/shots` on your PC from a stub server: the real widgets and fonts, no phone. |
+| `flutter analyze` and `flutter test` (in `app/` and in `admin/`) | The lints and the widget tests; the screenshot harnesses run in their check-only mode. |
+| `SHOTS=1 flutter test test/shots/screens_test.dart` (in `app/` or `admin/`) | Draws the screens, light and dark, to `tools/out/shots` on your PC from a stub server: the real widgets and fonts, no phone. `LANDSCAPE=1` in `app/` draws them on their side. |
 | `flutter test test/contract/tenant_flow_test.dart --dart-define=API_BASE=http://127.0.0.1:8787` (in `app/`) | The app's session code against the local API: sign up, make a tuition, join a second one, be let in, switch. Then `node tools/out/cleanup-contract.mjs`. |
 | `python tools/audit.py` | The design audit: type scale only, no stray colours, no banned patterns, and where the accent is used. |
 
@@ -452,8 +460,10 @@ and the scripts that read it would then point at the live database.
 The app follows Soft Structuralism. `tools/extract-tokens.mjs` copies the token layer
 verbatim from the design guide into `app/lib/theme.dart` and `design/comps/tokens.css`; the
 guide itself stays out of the repo. The one accent colour, violet, belongs to the AI paper
-reader and nothing else. Motion stays small: the press scale, short fades between screens,
-the refresh turn and a chosen option settling into place. No spinners or animated charts.
+reader and nothing else. Motion is short and eased: an opening animation, lists that fade in a few
+at a time, grey placeholder rows with a soft light passing over them while a list loads, figures that
+count up, the press scale and a chosen option settling into place (`app/lib/ui/motion.dart`). Everything
+stands still when the phone's "remove animations" setting is on. No spinners.
 
 To view the comps, run `python -m http.server 8777 --bind 127.0.0.1 --directory design/comps`.
 
@@ -464,6 +474,29 @@ These are git-ignored and must never be committed: `.env.local`, `.env.main`,
 `tools/out/` (logins), and any keystore. The Groq keys and the Firebase service-account key
 live only in those files and on the deployed function, never in the app.
 (`google-services.json` does go into the app: it only names the Firebase project.)
+
+## Limits and safeguards
+
+Anyone can sign up as a tutor, so each door has a ceiling:
+
+- **Sign-ups:** 30 new tutors an hour for the whole service, 3 a day from one phone, and 3 tuitions a tutor.
+- **Logins:** 5 wrong tries lock a login for 5 minutes. A login that does not exist takes as long to
+  refuse as one that does, and a turned-off login says so only to someone who knows its PIN.
+  A student asking to join with a code gets 8 wrong codes an hour.
+- **AI:** a tuition may start 100 papers and make 500 AI calls (failed ones too) in a day; `AI_DAILY_CALLS`
+  on the function changes the second. Past it the app says the tuition has used its day of AI.
+- **Pictures:** a picture goes straight to storage. An app from 1.5.0 says how big each picture is and its upload
+  URL is signed for exactly that many bytes, which storage enforces (up to 15 MB). Older apps say nothing, so for them
+  the server looks at what arrived and throws away anything over 15 MB; `REQUIRE_UPLOAD_SIZE=1` on the function
+  refuses uploads that give no size, once those apps are gone. A picture key names the tuition it was made for, and a
+  question or draft can only point at its own tuition's keys, so a signed link to another file is never handed out.
+  A chapter or student id another tuition owns is refused everywhere.
+- **Browsers:** the API sends no CORS headers, so no web page can call it. A web build for testing is let in
+  only by setting `CORS_ORIGINS` (comma separated origins) on a dev function; the live one never sets it.
+- **Android:** traffic is HTTPS only in release builds, Android's auto-backup is off, and an update only
+  installs over an app signed with the same key, so a swapped download cannot take over a phone.
+- **The admin app** counts each client's requests and prices its AI use (Clients tab): a tuition using far more
+  than the rest stands out there first.
 
 ## Going live
 
@@ -492,6 +525,10 @@ to reset a forgotten one, run this in a terminal and type the password at the hi
 ```bash
 node tools/set-teacher-password.ts --env .env.main
 ```
+
+Migrations are applied with `node tools/migrate.ts --env <file>`. On a branch whose API is older than
+`018_no_default_tuition.sql`, stop before it with `--up-to 017`: that migration removes the "first tuition"
+default the old API relied on. Deploy the new API, then run the command again without `--up-to`.
 
 ## Releasing the app
 

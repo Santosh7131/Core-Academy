@@ -1,5 +1,6 @@
 import { DeleteObjectsCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { HttpError } from './http.ts';
 
 // Credentials, endpoint and region come from the AWS_* variables Neon injects for the branch.
 // Neon Object Storage only supports path-style addressing.
@@ -18,9 +19,26 @@ export async function objectSize(key: string): Promise<number | null> {
   }
 }
 
-/** A URL the phone can PUT the bytes to directly, so images never pass through the API. */
-export const uploadUrl = (key: string, contentType = 'image/jpeg') =>
-  getSignedUrl(s3, new PutObjectCommand({ Bucket: BUCKET, Key: key, ContentType: contentType }), { expiresIn: 900 });
+/**
+ * A URL the phone can PUT the bytes to directly, so images never pass through the API. Given the size the phone is
+ * about to send, the URL is signed for exactly that many bytes and storage refuses any other length (checked on
+ * Neon's storage). Without a size the upload is unbounded, which only an app from before 1.5.0 still asks for: the
+ * server then looks at what arrived (objectSize), and REQUIRE_UPLOAD_SIZE=1 refuses the request once those apps are gone.
+ */
+export const uploadUrl = (key: string, contentType = 'image/jpeg', size?: number) =>
+  getSignedUrl(s3, new PutObjectCommand({ Bucket: BUCKET, Key: key, ContentType: contentType, ...(size ? { ContentLength: size } : {}) }), { expiresIn: 900 });
+
+/** A size the phone says it will upload: a whole number of bytes up to the limit, or none (null) when it says nothing. */
+export function declaredSize(v: unknown): number | null {
+  if (v === undefined || v === null) {
+    if (process.env.REQUIRE_UPLOAD_SIZE === '1') throw new HttpError(400, 'size_required', 'Update the app to upload pictures.');
+    return null;
+  }
+  if (typeof v !== 'number' || !Number.isInteger(v) || v < 1 || v > MAX_IMAGE_BYTES) {
+    throw new HttpError(413, 'too_big', 'That picture is too big. Use one under 15 MB.');
+  }
+  return v;
+}
 
 export const viewUrl = (key: string, seconds = 3600) =>
   getSignedUrl(s3, new GetObjectCommand({ Bucket: BUCKET, Key: key }), { expiresIn: seconds });

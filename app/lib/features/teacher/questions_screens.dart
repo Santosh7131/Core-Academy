@@ -68,7 +68,7 @@ Future<({String key, Uint8List bytes})?> pickAndUploadImage(BuildContext context
   final file = await ImagePicker().pickImage(source: source, maxWidth: 1600, imageQuality: 80);
   if (file == null) return null;
   final bytes = await file.readAsBytes();
-  final up = await api.post('/teacher/uploads');
+  final up = await api.post('/teacher/uploads', {'size': bytes.length});
   await api.putBytes('${up['put_url']}', bytes);
   return (key: '${up['key']}', bytes: bytes);
 }

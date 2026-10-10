@@ -47,8 +47,8 @@ export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: Cont
 export type ChatOptions = {
   task: string;
   userId: string | null;
-  /** The tuition the call is for, so its cost can be told per tuition. */
-  tuitionId?: string | null;
+  /** The tuition the call is for: its cost is told per tuition, and its day's allowance is counted here. */
+  tuitionId: string;
   models: string[];
   messages: ChatMessage[];
   json?: boolean;
@@ -75,14 +75,14 @@ function modelParams(model: string, reasoning: ChatOptions['reasoning']): Record
 }
 
 async function logUsage(row: {
-  userId: string | null; tuitionId?: string | null; task: string; model: string; slot: number | null;
+  userId: string | null; tuitionId: string; task: string; model: string; slot: number | null;
   prompt?: number; completion?: number; ok: boolean; error?: string; ms: number;
 }) {
   await pool
     .query(
       `insert into ai_usage (user_id, tuition_id, task, model, key_slot, prompt_tokens, completion_tokens, ok, error, ms)
        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-      [row.userId, row.tuitionId ?? null, row.task, row.model, row.slot, row.prompt ?? null, row.completion ?? null, row.ok, row.error ?? null, row.ms],
+      [row.userId, row.tuitionId, row.task, row.model, row.slot, row.prompt ?? null, row.completion ?? null, row.ok, row.error ?? null, row.ms],
     )
     .catch(() => {});
 }
@@ -95,12 +95,8 @@ async function logUsage(row: {
 const DAILY_CALLS = Number(process.env.AI_DAILY_CALLS) || 500;
 
 async function usedToday(tuitionId: string): Promise<number> {
-  try {
-    const r = await pool.query<{ n: string }>(`select count(*) as n from ai_usage where tuition_id = $1 and created_at > now() - interval '1 day'`, [tuitionId]);
-    return Number(r.rows[0]?.n ?? 0);
-  } catch {
-    return 0; // counting is a guard: when it cannot run, real use is not held up
-  }
+  const r = await pool.query<{ n: string }>(`select count(*) as n from ai_usage where tuition_id = $1 and created_at > now() - interval '1 day'`, [tuitionId]);
+  return Number(r.rows[0]?.n ?? 0);
 }
 
 export const aiConfigured = () => keys.length > 0 || geminiConfigured();
@@ -109,7 +105,14 @@ const usable = (model: string) => (isGemini(model) ? geminiConfigured() : keys.l
 export async function chat(opts: ChatOptions): Promise<{ content: string; model: string }> {
   const models = opts.models.filter(usable);
   if (!models.length) throw new HttpError(503, 'ai_not_configured', 'AI is not set up on the server yet.');
-  if (opts.tuitionId && (await usedToday(opts.tuitionId)) >= DAILY_CALLS) {
+  // When the count cannot be read the call is not made: the app treats that like AI being busy and tries again.
+  let used: number;
+  try {
+    used = await usedToday(opts.tuitionId);
+  } catch {
+    throw new HttpError(503, 'ai_busy', 'AI could not be reached right now. Try again in a minute.');
+  }
+  if (used >= DAILY_CALLS) {
     throw new HttpError(429, 'ai_limit', 'This tuition has used all the AI it gets in a day. It works again tomorrow.');
   }
   let retryAfter: number | null = null;

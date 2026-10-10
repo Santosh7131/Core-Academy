@@ -44,12 +44,13 @@ export async function freeUsername(name: string, db: Db = pool, skip: string[] =
  * way it is usually spelled in English (ஹரிணி வெங்கடேஷ் becomes Harini Venkatesh); one that is already
  * in English letters, or that AI cannot spell out, is returned as it is.
  */
-export async function latinName(name: string, userId: string | null): Promise<string> {
+export async function latinName(name: string, userId: string | null, tuitionId: string): Promise<string> {
   if (name.replace(/[^A-Za-z]/g, '').length >= 3 || !hasNonLatinText(name)) return name;
   try {
     const { content } = await chat({
       task: 'spell_name',
       userId,
+      tuitionId,
       models: WRITE_MODELS,
       json: true,
       maxTokens: 200,

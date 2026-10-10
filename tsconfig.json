@@ -10,5 +10,6 @@
     "types": ["node"],
     "lib": ["ES2023", "DOM"]
   },
-  "include": ["api/src/**/*.ts", "tools/**/*.ts", "neon.ts"]
+  "include": ["api/src/**/*.ts", "tools/**/*.ts", "neon.ts"],
+  "exclude": ["tools/out"]
 }

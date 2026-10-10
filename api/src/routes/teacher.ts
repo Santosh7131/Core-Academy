@@ -10,7 +10,7 @@ import { assertLevel, CLASS_MIN, CUSTOM_MAX, levelIn, levelLabel, levelParam } f
 import { afterTestChange } from '../lib/notify.ts';
 import { pushConfigured, pushToUsers } from '../lib/push.ts';
 import { mustKeepOrder } from '../lib/questions.ts';
-import { deleteObjects, maybeViewUrl, uploadUrl } from '../lib/storage.ts';
+import { declaredSize, deleteObjects, maybeViewUrl, uploadUrl } from '../lib/storage.ts';
 import { MATHS, studentSubjects, subjectIds } from '../lib/subjects.ts';
 import {
   defaultSubject, elsewhere, ensureGroup, FIRST_TUITION, memberStudents, newImageKey, ownImageKey, ownQuestions, refreshLogin, taughtSubject,
@@ -161,7 +161,7 @@ async function setStudentSubjects(cx: any, tuition: string, studentId: string, i
 
 /** The login to suggest for a student of this name, free right now: two called Harini Venkatesh get harini.v and harini.v.2. */
 teacherRoutes.get('/username-suggestion', async (c) => {
-  const name = await latinName((c.req.query('name') ?? '').slice(0, 60), c.get('user').id);
+  const name = await latinName((c.req.query('name') ?? '').slice(0, 60), c.get('user').id, tuitionOf(c).id);
   return c.json({ username: await freeUsername(name) });
 });
 
@@ -175,7 +175,7 @@ teacherRoutes.post('/students', async (c) => {
   // next free one, so nobody has to think of a login for a second student with the same name. Any other
   // username that is taken is refused, so the tutor can pick another.
   // A name typed in Tamil or Hindi is spelled out in English letters first, as the suggestion was.
-  const latin = await latinName(displayName, c.get('user').id);
+  const latin = await latinName(displayName, c.get('user').id, tuitionOf(c).id);
   const base = usernameBase(latin);
   const suggested = requested.startsWith(base) && /^(\.\d+)?$/.test(requested.slice(base.length));
   let username = requested;
@@ -936,7 +936,7 @@ teacherRoutes.delete('/questions/:id', async (c) => {
 /** A direct upload URL for a question diagram. */
 teacherRoutes.post('/uploads', async (c) => {
   const key = newImageKey(tuitionOf(c).id);
-  return c.json({ key, put_url: await uploadUrl(key) });
+  return c.json({ key, put_url: await uploadUrl(key, 'image/jpeg', declaredSize((await readBody(c)).size) ?? undefined) });
 });
 
 // ---------------------------------------------------------------- tests

@@ -114,6 +114,8 @@ class _UploadPaperScreenState extends State<UploadPaperScreen> {
     try {
       final r = await api.post('/teacher/papers', {
         'pages': _pages.length,
+        // Each page's size, so storage takes exactly that many bytes for it.
+        'sizes': [for (final p in _pages) p.length],
         if (widget.classLevel != null) 'class_level': widget.classLevel,
         if (widget.subjectId != null) 'subject_id': widget.subjectId,
       });

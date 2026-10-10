@@ -383,6 +383,19 @@ try {
   const gone = await api('POST', `/teacher/papers/${big.body?.paper?.id}/pages/1/uploaded`, TB);
   check('and removed from storage', gone.status === 409 && code(gone) === 'not_uploaded', gone.body);
 
+  // An app that says how big a page is gets a URL that takes exactly that many bytes.
+  const sized = await api('POST', '/teacher/papers', TB, { pages: 1, class_level: 9, subject_id: physics, sizes: [1000] });
+  if (sized.body?.paper?.id) created.papers.push(sized.body.paper.id);
+  const wrongLen = await fetch(sized.body.uploads[0].put_url, { method: 'PUT', headers: { 'content-type': 'image/jpeg' }, body: Buffer.alloc(5000, 3) });
+  check('storage refuses more bytes than the page was declared to be', wrongLen.status === 403, wrongLen.status);
+  const rightLen = await fetch(sized.body.uploads[0].put_url, { method: 'PUT', headers: { 'content-type': 'image/jpeg' }, body: Buffer.alloc(1000, 3) });
+  check('and takes exactly that many', rightLen.ok, rightLen.status);
+  const huge = await api('POST', '/teacher/papers', TB, { pages: 1, class_level: 9, subject_id: physics, sizes: [20 * 1024 * 1024] });
+  check('a declared size over 15 MB is refused before anything is made', huge.status === 413 && code(huge) === 'too_big', huge.body);
+  const sizedImage = await api('POST', '/teacher/uploads', TB, { size: 500 });
+  const imgWrong = await fetch(sizedImage.body.put_url, { method: 'PUT', headers: { 'content-type': 'image/jpeg' }, body: Buffer.alloc(900, 4) });
+  check('the same holds for a question picture', imgWrong.status === 403, imgWrong.status);
+
   // A tuition that has used its day of AI is told so, and its next call is not made.
   await db.query(
     `insert into ai_usage (tuition_id, task, model, ok, ms) select $1, 'cap_test', 'test-model', false, 1 from generate_series(1, 501)`,

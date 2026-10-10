@@ -48,13 +48,6 @@ authRoutes.post('/login', async (c) => {
     await log('unknown_user');
     throw wrong;
   }
-  if (!u.active) {
-    // Only the person who knows the login is told it is off; anyone else sees what they would for a wrong guess.
-    const right = await verifySecret(secret, u.secret_hash, u.secret_salt);
-    await log(right ? 'inactive' : 'wrong_secret', u.id);
-    if (!right) throw wrong;
-    throw new HttpError(403, 'inactive', 'This login has been turned off. Please ask your teacher.');
-  }
   if (u.locked_until && u.locked_until > u.now) {
     await log('locked', u.id);
     const mins = Math.max(1, Math.ceil((u.locked_until.getTime() - u.now.getTime()) / 60_000));
@@ -76,6 +69,12 @@ authRoutes.post('/login', async (c) => {
     throw wrong;
   }
 
+  // A turned-off login is only said to be off to someone who knows its PIN, and every wrong guess at it counts
+  // toward the lockout above like any other.
+  if (!u.active) {
+    await log('inactive', u.id);
+    throw new HttpError(403, 'inactive', 'This login has been turned off. Please ask your teacher.');
+  }
   await pool.query('update users set failed_count = 0, locked_until = null, last_seen_at = now() where id = $1', [u.id]);
   await recordInstall(u.id, ci);
   const token = await createSession(u.id, ci.installId);
