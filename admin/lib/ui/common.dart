@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/api.dart';
+import '../core/format.dart' as f;
 import '../theme.dart';
 import 'kit.dart';
 
@@ -141,5 +142,6 @@ class Bars extends StatelessWidget {
 /// An app version as a tag: success when it is the newest release, warning when behind.
 Widget versionTag(String? version, String? newest) {
   if (version == null || version == 'older' || version == 'unknown') return TagChip(version == null ? 'no phone' : '1.2.0 or older');
-  return TagChip(version, tone: newest == null ? Tone.neutral : (version == newest ? Tone.success : Tone.warning));
+  // A build newer than the latest release is a test build, not one that is behind.
+  return TagChip(version, tone: newest == null || f.compareVersions(version, newest) > 0 ? Tone.neutral : (version == newest ? Tone.success : Tone.warning));
 }

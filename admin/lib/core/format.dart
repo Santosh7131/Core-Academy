@@ -55,6 +55,17 @@ String count(num n) => _indian.format(n);
 
 String plural(num n, String one, [String? many]) => '${count(n)} ${n == 1 ? one : (many ?? '${one}s')}';
 
+/// Negative when version [a] is older than [b], zero when they are the same, positive when newer ("1.10.0" is newer than "1.9.2").
+int compareVersions(String a, String b) {
+  final x = a.split('.').map((p) => int.tryParse(p) ?? 0).toList();
+  final y = b.split('.').map((p) => int.tryParse(p) ?? 0).toList();
+  for (var i = 0; i < (x.length > y.length ? x.length : y.length); i++) {
+    final d = (i < x.length ? x[i] : 0) - (i < y.length ? y[i] : 0);
+    if (d != 0) return d;
+  }
+  return 0;
+}
+
 int asInt(Object? v) => v is num ? v.toInt() : int.tryParse('$v') ?? 0;
 double asDouble(Object? v) => v is num ? v.toDouble() : double.tryParse('$v') ?? 0;
 

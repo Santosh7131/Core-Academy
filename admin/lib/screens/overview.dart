@@ -174,7 +174,7 @@ class _OverviewScreenState extends State<OverviewScreen> with WidgetsBindingObse
                 'older' => 'These do not say which phone they are on yet',
                 'unknown' => 'These phones did not send a version',
                 _ when _newest == null => 'Used this week',
-                final x => x == _newest ? 'The newest release' : 'Behind the newest release',
+                final x => x == _newest ? 'The newest release' : (f.compareVersions(x, _newest!) > 0 ? 'A test build, newer than the release' : 'Behind the newest release'),
               },
               trailing: Fig('${v['phones']} phone${f.asInt(v['phones']) == 1 ? '' : 's'}', style: rowTitleStyle),
               onTap: _openPhones,
