@@ -66,7 +66,7 @@
     <p>These services handle some of the data. Each has its own privacy terms, which apply to what it receives.</p>
     <div class="tbl">
       <div class="tbl-row"><b>Neon</b><span>Runs the database, the private file storage and the server code. The database and the storage are in AWS Asia Pacific (Singapore).</span></div>
-      <div class="tbl-row"><b>Google Gemini API</b><span>Receives page images and question text, so it can read pages and check answers.</span></div>
+      <div class="tbl-row"><b>Google Gemini API</b><span>Receives page images, question text and the descriptions a tutor types when asking the AI to write a test, so it can read pages, write questions and check answers.</span></div>
       <div class="tbl-row"><b>Groq</b><span>Receives the same, as a second reader and a second checker.</span></div>
       <div class="tbl-row"><b>Google Firebase Cloud Messaging</b><span>Delivers notifications. It receives the phone's push token and the message, such as a test's name and closing time.</span></div>
       <div class="tbl-row"><b>GitHub</b><span>Hosts the app file and the update information. When the app looks for an update, and when this website looks up the latest version, GitHub sees the request, including the IP address.</span></div>
@@ -74,7 +74,7 @@
     </div>
 
     <h2>How the AI is used</h2>
-    <p>Page images and the text of questions go to the AI services above, so they can read a paper and propose answers. A page photo contains whatever is printed on the page, so avoid photographing pages that carry student names.</p>
+    <p>Page images, the text of questions and the descriptions tutors type go to the AI services above, so they can read a paper, write questions and propose answers. A page photo contains whatever is printed on the page, so avoid photographing pages that carry student names.</p>
     <p>The app does not add student names or marks to what it sends. There is one exception: when a tutor types a student's name in a script other than English letters, such as Tamil or Hindi, the name is sent to an AI service so it can suggest a username in English letters.</p>
     <p><mark class="blank">FILL IN: read each AI provider's data-use terms and summarise here what they keep and whether they train on it</mark></p>
 
