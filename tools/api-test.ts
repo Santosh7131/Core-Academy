@@ -62,6 +62,11 @@ try {
   const s2 = await api('POST', '/teacher/students', T, { display_name: 'Test Student Two', class_level: 9, username: `${tag}.two`, pin: '5678' });
   check('teacher creates students', s1.status === 201 && s2.status === 201, [s1.body, s2.body]);
   created.users.push(s1.body.student.id, s2.body.student.id);
+  // These two were "added a week ago", so a test that closed an hour ago was theirs to miss.
+  const back = new pg.Client({ connectionString: process.env.DATABASE_URL_UNPOOLED });
+  await back.connect();
+  await back.query(`update memberships set joined_at = now() - interval '7 days' where user_id = any($1::uuid[])`, [[s1.body.student.id, s2.body.student.id]]);
+  await back.end();
   const dup = await api('POST', '/teacher/students', T, { display_name: 'Dup', class_level: 9, username: `${tag}.one`, pin: '1111' });
   check('duplicate username is refused', dup.status === 409 && dup.body?.error?.code === 'username_taken', dup.body);
 
@@ -253,6 +258,19 @@ try {
   const home2 = await api('GET', '/student/home', S2);
   const states = Object.fromEntries(home2.body.tests.filter((x: any) => [B, C].includes(x.id)).map((x: any) => [x.id, x.state]));
   check('home shows upcoming and missed', states[B] === 'upcoming' && states[C] === 'missed', states);
+
+  // A student added after a test closed has not missed it, and it was never given to them.
+  const G = await mkTest('closed for the class', { assign_all: true, student_ids: [], opens_at: iso(-7_200_000), closes_at: iso(-3_600_000) });
+  const late = await api('POST', '/teacher/students', T, { display_name: 'Test Student Late', class_level: 9, username: `${tag}.late`, pin: '4321' });
+  created.users.push(late.body.student.id);
+  const SL = (await login(`${tag}.late`, '4321')).body.token as string;
+  const homeLate = (await api('GET', '/student/home', SL)).body?.tests as any[];
+  check('a student added after a test closed has not missed it', Array.isArray(homeLate) && !homeLate.some((x) => x.id === G), homeLate?.map((x) => [x.title, x.state]));
+  check('while a student who was there before has', (await api('GET', '/student/home', S2)).body?.tests?.find((x: any) => x.id === G)?.state === 'missed');
+  const resG = (await api('GET', `/teacher/tests/${G}/results`, T)).body;
+  check('and the test was never given to them', !resG?.students?.some((x: any) => x.id === late.body.student.id) && resG?.students?.some((x: any) => x.id === s2.body.student.id), resG?.summary);
+  const lateDetail = (await api('GET', `/teacher/students/${late.body.student.id}`, T)).body;
+  check('nor does the tutor see it among their missed tests', Array.isArray(lateDetail?.missed) && lateDetail.missed.length === 0, lateDetail?.missed);
 
   // Deadline: the attempt is submitted automatically once the closing time plus grace has passed.
   if (!args.includes('--skip-wait')) {

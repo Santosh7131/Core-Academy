@@ -75,7 +75,8 @@ studentRoutes.get('/home', async (c) => {
             (select coalesce(sum(qq.marks), 0) from test_questions tq join questions qq on qq.id = tq.question_id
               where tq.test_id = t.id) as max_marks,
             la.id as attempt_id, la.attempt_no, la.submitted_at, la.deadline_at, la.score, la.max_score,
-            exists (select 1 from retake_grants g where g.test_id = t.id and g.student_id = $1 and g.used_at is null) as retake
+            exists (select 1 from retake_grants g where g.test_id = t.id and g.student_id = $1 and g.used_at is null) as retake,
+            (select m.joined_at from memberships m where m.tuition_id = t.tuition_id and m.user_id = $1) as joined_at
        from tests t
        left join lateral (select * from attempts a where a.test_id = t.id and a.student_id = $1
                            order by a.attempt_no desc limit 1) la on true
@@ -83,7 +84,9 @@ studentRoutes.get('/home', async (c) => {
       order by coalesce(t.closes_at, t.opens_at, t.created_at) desc`,
     [me.id, me.class_level],
   );
-  const tests = rows.map((r) => {
+  // A test that closed before the student joined was never theirs to write, so it is neither missed nor listed.
+  const given = rows.filter((r) => r.attempt_id || !r.closes_at || !r.joined_at || r.closes_at > r.joined_at);
+  const tests = given.map((r) => {
     const now: Date = r.now;
     let state: TestState;
     if (r.attempt_id && !r.submitted_at) state = 'in_progress';

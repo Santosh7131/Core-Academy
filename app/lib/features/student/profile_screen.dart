@@ -34,8 +34,8 @@ class ProfileScreen extends StatelessWidget {
                 shadow: e1,
                 child: Column(children: [
                   fact('Username', '${u['username'] ?? ''}'),
-                  line(),
-                  fact('Tuition', session.tuitionName),
+                  // A student's tuitions are listed below; the tutor has no such list here.
+                  if (teacher) ...[line(), fact('Tuition', session.tuitionName)],
                 ]),
               ),
               if (!teacher) ...[

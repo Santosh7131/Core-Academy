@@ -31,7 +31,7 @@ print('%-26s %5d %5d | %5d %5d | %6d %5d %5d' % ('TOTAL', *totals))
 # approved movements and is skipped.
 APPROVED = '// motion: approved'
 BANNED = {
-    'spinner / animated widget': r'CircularProgressIndicator|LinearProgressIndicator|AnimatedContainer|AnimatedOpacity|AnimationController|Hero\(|AnimatedSwitcher',
+    'spinner / animated widget': r'CircularProgressIndicator|LinearProgressIndicator|AnimatedContainer|AnimatedOpacity|AnimationController|(?<![A-Za-z_])Hero\(|AnimatedSwitcher',
     'bottom sheet': r'showModalBottomSheet|BottomSheet\(|showBottomSheet',
     'snackbar': r'SnackBar\(|showSnackBar',
     'gradient': r'LinearGradient|RadialGradient|SweepGradient',
@@ -45,9 +45,11 @@ BANNED = {
 }
 print('\nbanned-pattern scan')
 problems = 0
+# The admin app's own screens follow the same rules (its kit, theme and motion are copies of the app's).
+ADMIN_FILES = sorted(glob.glob('admin/lib/screens/*.dart') + glob.glob('admin/lib/core/*.dart') + ['admin/lib/ui/common.dart', 'admin/lib/main.dart'])
 for label, pattern in BANNED.items():
     hits = []
-    for p in FILES:
+    for p in FILES + ADMIN_FILES:
         if p.replace('\\', '/').endswith('lib/theme.dart'):
             continue
         for i, line in enumerate(io.open(p, encoding='utf-8'), 1):

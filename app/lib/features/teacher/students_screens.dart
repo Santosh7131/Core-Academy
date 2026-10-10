@@ -362,10 +362,11 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> with WidgetsB
     final lastSeen = f.parseTime(s['last_seen_at']);
     final subjects = subjectNames(s['subjects']);
 
-    // Weakest chapters first: that is where the tutor can help.
+    // Weakest chapters first: that is where the tutor can help. A chapter the student has down is not a weakness.
     double ratio(Map<String, dynamic> c) => (c['correct'] as int) / max(c['total'] as int, 1);
     final byWeakness = [...chapters]..sort((a, b) => ratio(a).compareTo(ratio(b)));
-    final chaptersShown = _allChapters ? byWeakness : byWeakness.take(3).toList();
+    final weak = byWeakness.where((c) => ratio(c) < 0.8).take(3).toList();
+    final chaptersShown = _allChapters ? byWeakness : weak;
 
     // Written and missed tests in one list, newest first.
     final items = <(DateTime, Widget)>[
@@ -421,8 +422,11 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> with WidgetsB
           SectionRule(
             _allChapters ? 'Chapters' : 'Weakest chapters',
             padding: const EdgeInsets.fromLTRB(0, 26, 0, 11),
-            trailing: chapters.length > 3 ? toggle(_allChapters ? 'Show fewer' : 'All ${chapters.length}', () => setState(() => _allChapters = !_allChapters)) : null,
+            trailing: chapters.length > weak.length ? toggle(_allChapters ? 'Show fewer' : 'All ${chapters.length}', () => setState(() => _allChapters = !_allChapters)) : null,
           ),
+          if (chaptersShown.isEmpty)
+            Text('None below 80%.', style: bodyStyle.copyWith(color: muted))
+          else
           AnimatedSize( // motion: approved
             duration: const Duration(milliseconds: 260),
             curve: Curves.easeOutCubic,

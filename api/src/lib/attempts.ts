@@ -22,6 +22,9 @@ export function shuffle<T>(items: T[]): T[] {
 // (assign_all, from before groups) also stay inside the subject, so a 10th Maths test never
 // reaches a student who takes only Science.
 //
+// A test is given only to students who were in the tuition before it closed: a student added today has not
+// "missed" last week's test, and does not count among the students it was given to.
+//
 // `tuition` is the SQL that holds one tuition's id ('@T' inside tq(), or a $n), or null for every
 // tuition at once (the scheduled notifications).
 export const assignedCte = (tuition: string | null) => `assigned as (
@@ -30,6 +33,7 @@ export const assignedCte = (tuition: string | null) => `assigned as (
     join memberships m on m.tuition_id = t.tuition_id and m.role = 'student' and m.status = 'active' and m.class_level = t.class_level
     join users u on u.id = m.user_id and u.active
    where t.status = 'published'${tuition ? ` and t.tuition_id = ${tuition}` : ''}
+     and (t.closes_at is null or m.joined_at < t.closes_at)
      and (t.assign_all or t.assign_group)
      and exists (select 1 from student_subjects ss
                   where ss.tuition_id = t.tuition_id and ss.student_id = u.id and ss.subject_id = t.subject_id)
@@ -40,6 +44,7 @@ export const assignedCte = (tuition: string | null) => `assigned as (
     join memberships m on m.tuition_id = t.tuition_id and m.user_id = ts.student_id and m.role = 'student' and m.status = 'active'
     join users u on u.id = ts.student_id and u.active
    where t.status = 'published'${tuition ? ` and t.tuition_id = ${tuition}` : ''} and not t.assign_all and not t.assign_group
+     and (t.closes_at is null or m.joined_at < t.closes_at)
 )`;
 export const ASSIGNED_CTE = assignedCte(null);
 
