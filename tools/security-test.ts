@@ -4,8 +4,10 @@
 //   3. no route answers a malformed body, a wrong type, a junk id or a junk query with a server error
 //   4. sessions: a new password signs the other phones out, a PIN reset and a turned-off login sign the student out,
 //      and five wrong tries lock a login
+//   5. requests that arrive together: wrong tries, sign-ups, tuitions, starts and submits are counted one by one
+//   6. a big body that no route reads must not freeze the next request, and one over a megabyte is refused
 // Makes its own tutors, tuitions and students and removes them again. Dev only: it refuses to run against any other branch.
-// Usage: node tools/security-test.ts [--env .env.local] [--base http://127.0.0.1:8787]
+// Usage: node tools/security-test.ts [--env .env.local] [--base http://127.0.0.1:8787] [--only '<route regex>'] [--verbose]
 import { randomInt } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import pg from 'pg';
@@ -31,6 +33,8 @@ function check(name: string, ok: boolean, detail?: unknown) {
   if (!ok || verbose) console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${ok || detail === undefined ? '' : `  -> ${JSON.stringify(detail)}`}`);
 }
 const verbose = args.includes('--verbose');
+// --only <regex>: fuzz just the routes whose "METHOD /path" matches (the other sections still run).
+const only = args.includes('--only') ? new RegExp(args[args.indexOf('--only') + 1]) : null;
 
 type Reply = { status: number; body: any };
 async function call(method: string, path: string, token: string | undefined, raw: string | undefined, headers: Record<string, string> = {}): Promise<Reply> {
@@ -326,6 +330,7 @@ try {
   for (const r of routes) {
     // Signing out is checked below: fuzzed here it would end the session every later request needs.
     if (r.key === 'POST /cron/notify' || r.key === 'POST /auth/logout') continue;
+    if (only && !only.test(r.key)) continue;
     const withBody = r.method !== 'GET';
     const own = ownParams(r)[0];
     const hasParams = r.path.includes(':');
@@ -349,6 +354,8 @@ try {
   const broke = new Map<string, { status: number; sample: string }>();
   const slow = new Map<string, string>();
   let sent = 0;
+  const fuzzStart = Date.now();
+  const slowTrace: string[] = [];
   await inParallel(6, fuzzJobs, async (job) => {
     const token = tokenFor(job.r);
     if (!token) return;
@@ -359,11 +366,13 @@ try {
     const k = job.r.key;
     if (serverError(res) && !broke.has(k)) broke.set(k, { status: res.status, sample: `${job.r.method} ${job.path.slice(0, 120)} body=${(job.raw ?? '').slice(0, 90)} -> ${JSON.stringify(res.body).slice(0, 120)}` });
     if (ms > 4000 && !slow.has(k)) slow.set(k, `${ms} ms: ${job.path.slice(0, 100)} body=${(job.raw ?? '').slice(0, 60)}`);
+    if (ms > 4000) slowTrace.push(`  ${new Date(started).toISOString()} (+${((started - fuzzStart) / 1000).toFixed(1)} s) took ${ms} ms, status ${res.status}: ${job.r.method} ${job.path.slice(0, 80)} body of ${(job.raw ?? '').length} characters: ${(job.raw ?? '').slice(0, 40)}`);
   });
   console.log(`${sent} junk requests sent`);
+  if (slowTrace.length) console.log(`${slowTrace.length} of them took over 4 seconds:\n${slowTrace.sort().join('\n')}`);
   // The junk sent to the password route counted as wrong guesses, which locked the tutor, as it should: say so, then unlock for the rest.
   const lockedByJunk = await db.query('select locked_until > now() as locked from users where id = $1', [A.tutorId]);
-  check('guessing the current password over and over locked the tutor', lockedByJunk.rows[0].locked === true, lockedByJunk.rows[0]);
+  if (!only || only.test('POST /teacher/password')) check('guessing the current password over and over locked the tutor', lockedByJunk.rows[0].locked === true, lockedByJunk.rows[0]);
   await db.query('update users set failed_count = 0, locked_until = null where id = $1', [A.tutorId]);
   check('after the junk, the tutor is still signed in', (await api('GET', '/auth/me', A.T)).status === 200);
   check('after the junk, the student is still signed in', (await api('GET', '/student/home', A.S)).status === 200);
@@ -530,6 +539,22 @@ try {
   for (const r of tuitionBurst) if (r.status === 201) created.tuitions.push(r.body.tuition.id);
   check('eight tuitions at once: only the three a tutor may run are made',
     tuitionBurst.filter((r) => r.status === 201).length === 3 && tuitionBurst.filter((r) => r.status === 409 && code(r) === 'too_many_tuitions').length === 5, tuitionBurst.map((r) => r.status).join(','));
+
+  // ---------------------------------------------------------------- 6. a big body nobody reads
+  // A large body that no route read could stay in the platform's connection to the function, and the next request on that connection then got no
+  // answer for a minute. The server now reads every body away first, and refuses one over a megabyte. A stall would show here as a request with status 0.
+  const big = JSON.stringify({ x: 'a'.repeat(300_000) });
+  const ignored = `/teacher/join-requests/${UUID0}/decline`;
+  const pairs: Reply[] = [];
+  for (let i = 0; i < 5; i++) pairs.push(await call('POST', ignored, T3, big), await call('GET', '/auth/me', T3, undefined));
+  check('300 KB that the route never reads, then an ordinary request: both answered, five times over', pairs.every((r) => r.status !== 0), pairs.map((r) => r.status).join(','));
+  const mixed = await Promise.all(Array.from({ length: 24 }, (_, i) => (i % 2 === 0 ? call('POST', ignored, T3, big) : call('GET', '/auth/me', T3, undefined))));
+  check('the same together with ordinary requests: every one answered', mixed.every((r) => r.status !== 0), mixed.map((r) => r.status).join(','));
+  const noToken = await call('POST', ignored, undefined, big);
+  check('300 KB from nobody is answered with a plain 401, and the next request is too', noToken.status === 401 && (await call('GET', '/auth/me', T3, undefined)).status === 200, noToken.status);
+  const huge = await call('POST', ignored, T3, JSON.stringify({ x: 'a'.repeat(1_500_000) }));
+  check('a body over a megabyte is refused, not parsed', huge.status === 413 && code(huge) === 'too_big', { status: huge.status, body: huge.body });
+  check('and the request after it is answered', (await call('GET', '/auth/me', T3, undefined)).status === 200);
 } catch (e) {
   fail++;
   console.log('FAIL  unexpected error:', e);

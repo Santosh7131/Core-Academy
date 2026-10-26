@@ -17,6 +17,24 @@ import { tuitionRoutes } from './routes/tuition.ts';
 
 const app = new Hono<AppEnv>();
 
+// A large request body that no route reads (a route that ignores it, or one that answers 401 first) can stay in the platform's connection to this
+// function, and the next request on that connection then gets no answer for a minute. The security test found it. So every body is read away
+// before any route runs, and one over MAX_BODY (the app sends a few KB at most) is read away and refused.
+const MAX_BODY = 1_000_000;
+const tooBig = () => new HttpError(413, 'too_big', 'That is too much data to send at once.');
+app.use('*', async (c, next) => {
+  const body = c.req.raw.body;
+  if (!body) return next();
+  if (Number(c.req.header('content-length')) > MAX_BODY) {
+    const reader = body.getReader();
+    while (!(await reader.read()).done) { /* read away, not kept */ }
+    throw tooBig();
+  }
+  // A copy is read, so the route can still read the request itself (the notification trigger does).
+  if ((await c.req.raw.clone().arrayBuffer()).byteLength > MAX_BODY) throw tooBig();
+  return next();
+});
+
 // The Android apps need no CORS. A browser build is let in only from the origins named in CORS_ORIGINS
 // (comma separated), which the live function never sets: no website can call it from a page.
 const origins = (process.env.CORS_ORIGINS ?? '').split(',').map((o) => o.trim()).filter(Boolean);
