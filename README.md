@@ -50,10 +50,12 @@ rule keep what they had: they were opened when the migration ran.
 
 ## The tutor app
 
-There are two tabs. Home lists every group that has something running: its live tests (open
-to students now) and posted tests (published, opening later), with how many students have
-submitted and how many are writing at this moment. Groups with nothing running are listed
-underneath in one short list. Groups lists them all.
+There are three tabs: Home, Courses and Groups. Home lists every group that has something running:
+its live tests (open to students now) and posted tests (published, opening later), with how many
+students have submitted and how many are writing at this moment. Groups with nothing running are
+listed underneath in one short list. Groups lists them all. Once a course exists, Home has two
+sections, Groups and Courses, built the same way; with no courses it is as described. Courses lists
+the tuition's courses (see Courses below).
 
 A group (a class and a subject, "10th Maths") has one page: a Make a test button, its tests
 (live, posted, drafts, finished) and its students with an Add student button. Class and subject
@@ -118,6 +120,30 @@ its group or to chosen students in it. A test never leaves its group: an older "
 test also reaches only the class's students who take its subject. Maths and Science are built
 in, and more subjects can be added in Settings or straight from a paper's subject choice.
 Students added by the 1.0.0 app, and everything made before subjects existed, count as Maths.
+
+## Courses
+
+A course is the other kind of group: it is not worked out from a class and a subject. A tutor makes
+one, names it, and puts in the people they choose, from any class or with no class at all. A person
+can be in any number of groups and any number of courses; adding someone to a course never takes
+them out of a group, and a person made through a course (a student with no class, no subjects) is in
+no group. A course page works like a group page: Make a test, its tests (live, posted, drafts,
+finished) and its people, with a page for each person. Every tutor of the tuition sees every course.
+
+Everything that belongs to a course (tests, papers, questions) says so in `course_id` and has no
+class or subject (migration 019), and no group query returns it, so nothing in a course ever shows
+in a group or the other way round. A student sees a Courses list only while they are in at least one
+course; a student who is only in courses has no class and opens straight on it. Deleting a course
+deletes its tests, questions, papers and results, and never its people: it refuses with 409
+`has_attempts` while someone has written a test in it, unless the call says `?with_results=1`.
+
+Old apps cannot show any of this. An app that does not say it is 1.6.0 or newer in `X-App` is never
+sent a course or a person with no class, and a student with no class who signs in from one is told
+to update (426 `update_required`). The server refuses every main-app build below
+`app_settings.min_app_build` the same way, and a new app answers a 426 with a full-screen "Please
+update" page. That row does not exist until someone writes it (`tools/min-build.ts`), so releasing
+the app forces nothing by itself. The admin app, signing out, and a caller that sends no `X-App`
+are never held to it.
 
 ## Fixing and deleting
 
@@ -444,9 +470,10 @@ and the scripts that read it would then point at the live database.
 | `node tools/tenant-test.ts` | 145 checks that tuitions are walled off from each other, and that sign-up, joining, switching, PIN resets, removals, the owner's join code, the rate limits, picture keys and chapters from another tuition, upload sizes and the daily AI cap behave. It makes its own tutors, tuitions and students, and removes them. |
 | `node tools/levels-test.ts` | 47 checks of classes 1 to 12 and the levels a tuition names itself. |
 | `node tools/votes-test.ts` | 25 checks of when two or three AI answers agree enough to mark a question. |
+| `node tools/courses-test.ts` | 114 checks of courses: people from any class or with no class at all, a course's papers, questions and tests kept out of every group, app versions from before courses kept away from them and told to update, the minimum-build gate, and deleting a course while its people stay. Against the local dry-run API (`--base http://127.0.0.1:8787 --log server.log`) it adds a check that the push names the course. It makes its own data and removes it. Dev only. `tools/courses-demo.ts` sets up a small demo of courses on dev (`--clear` removes it). |
 | `node tools/text-test.mjs` | Hindi and Tamil text handling, the test writer's answer matching and suggested usernames. |
-| `node tools/summary-test.ts --log server.log` | The evening summary goes to each tuition's own tutors (after 8 pm India time; local API, dry-run push). |
-| `npm run test:api` | 167 end-to-end checks of the marking rules, when results open (closing time, last student, tutor, and which app versions wait), usernames for students who share a name, groups, the home and group pages, tutors, logins, question papers (including ones uploaded before their details are known, printed answer keys that replace AI answers, questions the bank already has, two answer calls at once and question groups) and the admin app's API against the deployed dev API (add `-- --env .env.main` for the live one; the admin checks run only where the logins file has a developer login). It creates its own students, subject, tests and paper, gives its tests only to those students, then removes them all. |
+| `node tools/summary-test.ts --log server.log` | 7 checks that the evening summary goes to each tuition's own tutors (after 8 pm India time; local API, dry-run push). |
+| `npm run test:api` | 168 end-to-end checks of the marking rules, when results open (closing time, last student, tutor, and which app versions wait), usernames for students who share a name, groups, the home and group pages, tutors, logins, question papers (including ones uploaded before their details are known, printed answer keys that replace AI answers, questions the bank already has, two answer calls at once and question groups) and the admin app's API against the deployed dev API (add `-- --env .env.main` for the live one; the admin checks run only where the logins file has a developer login). It creates its own students, subject, tests and paper, gives its tests only to those students, then removes them all. |
 | `node tools/notify-test.ts --log server.log` | 25 checks of the notifications against the API on your PC, run with `PUSH_DRY_RUN=1` so each notification is written to the log instead of sent. Dev only. |
 | `node tools/check-answers.ts` | Every sample question's marked answer is right, and no other option equals it. |
 | `node tools/ai-test.ts` | How accurately the AI reads the 2-page sample paper (render it first with `tools/make-sample-paper.ps1`). |
