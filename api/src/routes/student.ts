@@ -2,8 +2,8 @@ import { Hono } from 'hono';
 import { requireUser, tuitionOf, type AppEnv } from '../lib/auth.ts';
 import { ASSIGNED, releaseFinishedTests, resultsOpenFor, saveAnswers, startOrResume, studentResult, submitAttempt } from '../lib/attempts.ts';
 import { holdsResults } from '../lib/client.ts';
-import { pool, q, q1, tq } from '../lib/db.ts';
-import { HttpError, uuid } from '../lib/http.ts';
+import { pool, q, q1, tq, tq1 } from '../lib/db.ts';
+import { HttpError, notFound, uuid } from '../lib/http.ts';
 import { LEVELS_JSON } from '../lib/levels.ts';
 import { readCode } from '../lib/tuition.ts';
 import { readBody } from './body.ts';
@@ -60,33 +60,30 @@ studentRoutes.use('*', requireUser('student'));
 
 type TestState = 'open' | 'in_progress' | 'upcoming' | 'done' | 'missed';
 
-/** Every test given to this student in this tuition, each with the state the home screen sorts by. */
-studentRoutes.get('/home', async (c) => {
-  const me = c.get('user');
-  const t = tuitionOf(c);
-  await q('select finalize_expired_attempts()');
-  await releaseFinishedTests(t.id);
-  const open = resultsOpenFor(holdsResults(c));
-  const rows = await tq(
-    t.id,
-    `select t.id, t.title, t.class_level, t.time_limit_min, t.opens_at, t.closes_at, now() as now,
+/**
+ * The tests a student is given, each with the student's latest attempt at it. `joined` is the SQL for when the
+ * student became one of the people it is given to (the tuition, or the course), and `where` picks the tests.
+ * $1 is the student.
+ */
+const testRows = (open: string, joined: string, where: string) => `select t.id, t.course_id, t.title, t.class_level, t.time_limit_min, t.opens_at, t.closes_at, now() as now,
             ${open} as results_open,
             (select count(*) from test_questions tq where tq.test_id = t.id) as question_count,
             (select coalesce(sum(qq.marks), 0) from test_questions tq join questions qq on qq.id = tq.question_id
               where tq.test_id = t.id) as max_marks,
             la.id as attempt_id, la.attempt_no, la.submitted_at, la.deadline_at, la.score, la.max_score,
             exists (select 1 from retake_grants g where g.test_id = t.id and g.student_id = $1 and g.used_at is null) as retake,
-            (select m.joined_at from memberships m where m.tuition_id = t.tuition_id and m.user_id = $1) as joined_at
+            ${joined} as joined_at
        from tests t
        left join lateral (select * from attempts a where a.test_id = t.id and a.student_id = $1
                            order by a.attempt_no desc limit 1) la on true
-      where t.tuition_id = @T and t.status = 'published' and ${ASSIGNED}
-      order by coalesce(t.closes_at, t.opens_at, t.created_at) desc`,
-    [me.id, me.class_level],
-  );
+      where ${where}
+      order by coalesce(t.closes_at, t.opens_at, t.created_at) desc`;
+
+/** What the student's screens show of each test: the state they sort by, and marks only once those are open. */
+function present(rows: any[]) {
   // A test that closed before the student joined was never theirs to write, so it is neither missed nor listed.
   const given = rows.filter((r) => r.attempt_id || !r.closes_at || !r.joined_at || r.closes_at > r.joined_at);
-  const tests = given.map((r) => {
+  return given.map((r) => {
     const now: Date = r.now;
     let state: TestState;
     if (r.attempt_id && !r.submitted_at) state = 'in_progress';
@@ -96,6 +93,7 @@ studentRoutes.get('/home', async (c) => {
     else state = 'open';
     return {
       id: r.id,
+      course_id: r.course_id,
       title: r.title,
       class_level: r.class_level,
       time_limit_min: r.time_limit_min,
@@ -115,8 +113,93 @@ studentRoutes.get('/home', async (c) => {
         : null,
     };
   });
+}
+
+/**
+ * Every class test given to this student in this tuition, each with the state the home screen sorts by, and how
+ * many courses they are in. A course's tests are not here: they have a page of their own, so a course never
+ * looks like part of the class. A student who is only in courses has no class and so no tests here.
+ */
+studentRoutes.get('/home', async (c) => {
+  const me = c.get('user');
+  const t = tuitionOf(c);
+  await q('select finalize_expired_attempts()');
+  await releaseFinishedTests(t.id);
+  const open = resultsOpenFor(holdsResults(c));
+  const rows = await tq(
+    t.id,
+    testRows(
+      open,
+      `(select m.joined_at from memberships m where m.tuition_id = t.tuition_id and m.user_id = $1)`,
+      `t.tuition_id = @T and t.status = 'published' and t.course_id is null and ${ASSIGNED}`,
+    ),
+    [me.id, me.class_level],
+  );
+  const courses = await tq1<{ n: number }>(
+    t.id,
+    'select count(*) as n from course_members cm join courses co on co.id = cm.course_id where cm.student_id = $1 and co.tuition_id = @T',
+    [me.id],
+  );
   const now = await q1('select now()');
-  return c.json({ server_now: now.now, tuition: { id: t.id, name: t.name }, tests });
+  return c.json({ server_now: now.now, tuition: { id: t.id, name: t.name }, tests: present(rows), courses: Number(courses?.n ?? 0) });
+});
+
+/** The courses this student is in, each with how many of its tests they can write now and when the first of them closes. */
+studentRoutes.get('/courses', async (c) => {
+  const me = c.get('user');
+  const t = tuitionOf(c);
+  await q('select finalize_expired_attempts()');
+  await releaseFinishedTests(t.id);
+  const courses = await tq<{ id: string; name: string }>(
+    t.id,
+    `select co.id, co.name from course_members cm join courses co on co.id = cm.course_id
+      where cm.student_id = $1 and co.tuition_id = @T order by co.name`,
+    [me.id],
+  );
+  const rows = await tq(
+    t.id,
+    testRows(
+      resultsOpenFor(holdsResults(c)),
+      `(select cm.added_at from course_members cm where cm.course_id = t.course_id and cm.student_id = $1)`,
+      `t.tuition_id = @T and t.status = 'published' and t.course_id in (select course_id from course_members where student_id = $1)`,
+    ),
+    [me.id],
+  );
+  const tests = present(rows);
+  return c.json({
+    courses: courses.map((co) => {
+      const open = tests.filter((x) => x.course_id === co.id && (x.state === 'open' || x.state === 'in_progress'));
+      const closing = open.map((x) => x.closes_at as Date | null).filter((d): d is Date => d != null).sort((a, b) => a.getTime() - b.getTime());
+      return { id: co.id, name: co.name, open: open.length, closes_at: closing[0] ?? null };
+    }),
+  });
+});
+
+/** One course the student is in, with its tests as the home screen lists a class's. */
+studentRoutes.get('/courses/:id', async (c) => {
+  const me = c.get('user');
+  const t = tuitionOf(c);
+  const id = uuid(c.req.param('id'), 'course id');
+  const course = await tq1<{ id: string; name: string }>(
+    t.id,
+    `select co.id, co.name from course_members cm join courses co on co.id = cm.course_id
+      where cm.student_id = $1 and co.id = $2 and co.tuition_id = @T`,
+    [me.id, id],
+  );
+  if (!course) throw notFound('This course');
+  await q('select finalize_expired_attempts()');
+  await releaseFinishedTests(t.id);
+  const rows = await tq(
+    t.id,
+    testRows(
+      resultsOpenFor(holdsResults(c)),
+      `(select cm.added_at from course_members cm where cm.course_id = t.course_id and cm.student_id = $1)`,
+      `t.tuition_id = @T and t.status = 'published' and t.course_id = $2`,
+    ),
+    [me.id, id],
+  );
+  const now = await q1('select now()');
+  return c.json({ server_now: now.now, course, tests: present(rows) });
 });
 
 studentRoutes.post('/tests/:id/start', async (c) => {
@@ -150,7 +233,7 @@ studentRoutes.get('/results', async (c) => {
             case when ${open} then a.wrong_count end as wrong_count,
             case when ${open} then a.skipped_count end as skipped_count
        from attempts a join tests t on t.id = a.test_id
-      where a.student_id = $1 and t.tuition_id = @T and a.submitted_at is not null
+      where a.student_id = $1 and t.tuition_id = @T and t.course_id is null and a.submitted_at is not null
       order by a.submitted_at desc`,
     [c.get('user').id],
   );

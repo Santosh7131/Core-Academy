@@ -497,7 +497,7 @@ adminRoutes.get('/clients/:id', async (c) => {
   const classes = await q(
     `select m.class_level, l.label, count(*) as students from memberships m
        left join tuition_levels l on l.tuition_id = m.tuition_id and l.code = m.class_level
-      where m.tuition_id = $1 and m.role = 'student' and m.status = 'active' group by m.class_level, l.label order by m.class_level`,
+      where m.tuition_id = $1 and m.role = 'student' and m.status = 'active' and m.class_level is not null group by m.class_level, l.label order by m.class_level`,
     [id],
   );
   const lastWeek = await q1(

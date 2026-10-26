@@ -8,6 +8,7 @@ import { countRequest, logError } from './lib/metrics.ts';
 import { pushConfigured } from './lib/push.ts';
 import { adminRoutes } from './routes/admin.ts';
 import { authRoutes } from './routes/auth.ts';
+import { courseRoutes } from './routes/courses.ts';
 import { notifyRoutes } from './routes/notify.ts';
 import { paperRoutes } from './routes/papers.ts';
 import { studentOpenRoutes, studentRoutes } from './routes/student.ts';
@@ -49,6 +50,7 @@ const teacher = new Hono<AppEnv>();
 teacher.use('*', requireUser('teacher'));
 teacher.route('/', teacherRoutes);
 teacher.route('/', tuitionRoutes);
+teacher.route('/', courseRoutes);
 teacher.route('/', paperRoutes);
 app.route('/teacher', teacher);
 

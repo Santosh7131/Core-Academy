@@ -77,7 +77,7 @@ tuitionRoutes.post('/join-requests/:id/accept', async (c) => {
   const subjects = 'subject_ids' in b ? subjectIds(b.subject_ids) : [];
   await taughtSubjectIds(t.id, subjects);
   const m = await tx(async (cx) => {
-    const row = await tq1<{ class_level: number }>(
+    const row = await tq1<{ class_level: number | null }>(
       t.id,
       `update memberships set status = 'active', class_level = coalesce($2, class_level)
         where tuition_id = @T and user_id = $1 and role = 'student' and status = 'pending' returning class_level`,
@@ -85,6 +85,8 @@ tuitionRoutes.post('/join-requests/:id/accept', async (c) => {
       cx,
     );
     if (!row) return null;
+    // A person who so far is only in another tuition's courses has no class to ask for: the tutor names one.
+    if (row.class_level == null) throw bad('Choose a class for this student.', 'class_needed');
     await tq(t.id, 'delete from student_subjects where tuition_id = @T and student_id = $1', [id], cx);
     if (subjects.length) {
       await tq(t.id, 'insert into student_subjects (tuition_id, student_id, subject_id) select @T::uuid, $1::uuid, unnest($2::uuid[])', [id, subjects], cx);

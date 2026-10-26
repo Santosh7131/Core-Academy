@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { tuitionOf, type AppEnv } from '../lib/auth.ts';
+import { ownCourse } from '../lib/courses.ts';
 import { pool, q, q1, tq, tq1, tx, type Db } from '../lib/db.ts';
 import { isGemini } from '../lib/gemini.ts';
 import { CHECK_MODELS, chat, parseJson, SOLVE_MODELS, TIEBREAK_MODELS, VISION_MODELS, WRITE_MODELS } from '../lib/groq.ts';
@@ -39,8 +40,12 @@ const ANSWER_BATCH = 6;
 const clip = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 const conf = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? Math.min(Math.max(v, 0), 1) : 0);
 
-/** What a paper still needs before its questions can be saved. A name is never one of them: it starts with the date. */
-function missingOf(p: { exam_name: string | null; class_level: number | null; subject_id: string | null }) {
+/**
+ * What a paper still needs before its questions can be saved. A name is never one of them: it starts with the
+ * date. A course's paper needs nothing: it has no class or subject.
+ */
+function missingOf(p: { exam_name: string | null; class_level: number | null; subject_id: string | null; course_id?: string | null }) {
+  if (p.course_id) return [];
   return [
     ...(p.class_level == null ? ['class_level'] : []),
     ...(p.subject_id == null ? ['subject_id'] : []),
@@ -49,35 +54,42 @@ function missingOf(p: { exam_name: string | null; class_level: number | null; su
 
 const CATEGORIES = `select category as name, count(*) as papers from papers where tuition_id = @T and category is not null group by 1 order by 1`;
 
+/** The tuition's papers for its groups, or with ?course=<id> a course's papers (never both). */
 paperRoutes.get('/papers', async (c) => {
   const T = tuitionOf(c).id;
+  const courseId = uuidOpt(c.req.query('course'), 'course');
+  if (courseId) await ownCourse(T, courseId);
   const rows = await tq(
     T,
-    `select p.id, p.class_level, p.exam_name, p.category, p.page_count, p.created_at,
+    `select p.id, p.class_level, p.course_id, p.exam_name, p.category, p.page_count, p.created_at,
             p.subject_id, (select name from subjects where id = p.subject_id) as subject,
             (select count(*) from paper_pages pp where pp.paper_id = p.id and pp.ai_status = 'done') as pages_read,
             (select count(*) from paper_drafts d where d.paper_id = p.id and d.status = 'draft' and d.kind = 'mcq') as to_check,
             (select count(*) from paper_drafts d where d.paper_id = p.id and d.status = 'saved') as saved
        from papers p
-      where p.tuition_id = @T
+      where p.tuition_id = @T and p.course_id is not distinct from $1::uuid
       order by p.created_at desc`,
+    [courseId],
   );
   return c.json({ papers: rows, categories: await tq(T, CATEGORIES) });
 });
 
 /**
  * Creates the paper and hands back one direct-upload URL per page. The details are optional: AI
- * finds them afterwards. (The app before 1.3 sends the class, subject and name up front.)
+ * finds them afterwards. (The app before 1.3 sends the class, subject and name up front.) A paper made for a
+ * course (course_id) has no class or subject: it belongs to the course.
  */
 paperRoutes.post('/papers', async (c) => {
   const T = tuitionOf(c).id;
   const b = await readBody(c);
   const pages = int(b, 'pages', { min: 1, max: MAX_PAGES })!;
-  const classLevel = (await levelIn(b, 'class_level', T, { optional: true })) ?? null;
+  const courseId = uuidOpt(b.course_id, 'course');
+  if (courseId) await ownCourse(T, courseId);
+  const classLevel = courseId ? null : ((await levelIn(b, 'class_level', T, { optional: true })) ?? null);
   const named = str(b, 'exam_name', { max: 80, optional: true });
   // An app that sends a class but no subject is older than subjects: its papers are Maths (or the tuition's first subject).
-  const sent = uuidOpt(b.subject_id, 'subject');
-  const subjectId = sent ? (await taughtSubject(T, sent)).id : classLevel != null ? await defaultSubject(T) : null;
+  const sent = courseId ? null : uuidOpt(b.subject_id, 'subject');
+  const subjectId = courseId ? null : sent ? (await taughtSubject(T, sent)).id : classLevel != null ? await defaultSubject(T) : null;
   // An app from 1.5.0 says how big each page is, and its upload URL then takes exactly that many bytes.
   const sizes: unknown[] = Array.isArray(b.sizes) ? b.sizes : [];
   if (sizes.length && sizes.length !== pages) throw bad('Say the size of every page, or none.');
@@ -88,10 +100,10 @@ paperRoutes.post('/papers', async (c) => {
   }
   const paper = await tx(async (cx) => {
     const p = await q1(
-      `insert into papers (tuition_id, class_level, exam_name, category, page_count, uploaded_by, subject_id, name_auto)
-       values ($1, $2, $3, $4, $5, $6, $7, $8) returning id, class_level, exam_name, category, page_count, subject_id`,
+      `insert into papers (tuition_id, class_level, exam_name, category, page_count, uploaded_by, subject_id, name_auto, course_id)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning id, class_level, exam_name, category, page_count, subject_id, course_id`,
       [T, classLevel, named ?? autoName(), str(b, 'category', { max: 60, optional: true }) ?? null,
-        pages, c.get('user').id, subjectId, named === undefined],
+        pages, c.get('user').id, subjectId, named === undefined, courseId],
       cx,
     );
     for (let n = 1; n <= pages; n++) {
@@ -130,13 +142,16 @@ const INDIC_WRITE_BATCH = 10;
 paperRoutes.post('/papers/chat', async (c) => {
   const T = tuitionOf(c).id;
   const b = await readBody(c);
-  const classLevel = (await levelIn(b, 'class_level', T))!;
-  const subjectId = uuid(b.subject_id, 'subject');
+  // A course's test (course_id) is written for the course, which has no class or subject to name.
+  const courseId = uuidOpt(b.course_id, 'course');
+  const course = courseId ? await ownCourse(T, courseId) : null;
+  const classLevel = course ? null : (await levelIn(b, 'class_level', T))!;
+  const subjectId = course ? null : uuid(b.subject_id, 'subject');
   const request = str(b, 'request', { max: 1500 })!;
   const count = int(b, 'count', { min: 1, max: WRITE_BATCH, optional: true }) ?? 15;
   const paperId = b.paper_id == null ? null : uuid(b.paper_id, 'paper id');
-  const subject = await taughtSubject(T, subjectId);
-  const study = await studyOf(T, classLevel);
+  const subject = course ? null : await taughtSubject(T, subjectId!);
+  const study = course ? `the course "${course.name}"` : await studyOf(T, classLevel!);
   // A request in Hindi or Tamil (or asking for one) is written in that language, a few questions at a time.
   const indic = hasIndicText(request) || namesIndicLanguage(request);
   const asked = indic ? Math.min(count, INDIC_WRITE_BATCH) : count;
@@ -146,13 +161,14 @@ paperRoutes.post('/papers/chat', async (c) => {
   let paperName = '';
   if (paperId) {
     // Only a paper of this tuition: adding to another tuition's paper by its id is refused as not found.
-    const p = await tq1<{ exam_name: string; class_level: number; subject_id: string; category: string | null; page_count: number }>(
+    const p = await tq1<{ exam_name: string; class_level: number | null; subject_id: string | null; course_id: string | null; category: string | null; page_count: number }>(
       T,
-      'select exam_name, class_level, subject_id, category, page_count from papers where id = $1 and tuition_id = @T',
+      'select exam_name, class_level, subject_id, course_id, category, page_count from papers where id = $1 and tuition_id = @T',
       [paperId],
     );
     if (!p) throw notFound('This paper');
-    if (p.category !== 'Made with AI' || p.page_count !== 0 || p.class_level !== classLevel || p.subject_id !== subjectId) {
+    const sameKind = course ? p.course_id === courseId : p.course_id === null && p.class_level === classLevel && p.subject_id === subjectId;
+    if (p.category !== 'Made with AI' || p.page_count !== 0 || !sameKind) {
       throw bad('That paper was not written here, so questions cannot be added to it.');
     }
     paperName = p.exam_name;
@@ -170,10 +186,10 @@ paperRoutes.post('/papers/chat', async (c) => {
     temperature: 0.7,
     reasoning: 'low',
     messages: [
-      { role: 'system', content: `You write multiple-choice questions for ${isClassNumber(classLevel) ? 'a CBSE tuition teacher' : 'a tuition teacher'} in India. You are exact about maths and science.` },
+      { role: 'system', content: `You write multiple-choice questions for ${classLevel != null && isClassNumber(classLevel) ? 'a CBSE tuition teacher' : 'a tuition teacher'} in India. You are exact about maths and science.` },
       {
         role: 'user',
-        content: `Write exactly ${asked} multiple-choice questions for ${study} ${subject.name}, as the teacher asks below. The request may name a number of questions for the whole test: ignore that, this reply is ${asked}.
+        content: `Write exactly ${asked} multiple-choice questions for ${study}${subject ? ` ${subject.name}` : ''}, as the teacher asks below. The request may name a number of questions for the whole test: ignore that, this reply is ${asked}.
 Teacher's request:
 """
 ${request}
@@ -188,7 +204,7 @@ Reply only as JSON:
 Rules:
 - Exactly four options per question, and exactly one is correct. "answer" is the text of that option, copied character for character from "options" (not a letter). Spread the right answers over all four positions.
 - Write all maths, formulas and chemical equations in LaTeX inside $...$, in the options as well as in the question, e.g. $\\frac{3}{4}$, $x^2$, $90^\\circ$, $H_2O$. This is JSON, so write every LaTeX backslash twice, as in "$\\\\frac{3}{4}$". Give each option's text without a letter label.
-- Follow the teacher's topic and difficulty. Match the ${study} syllabus.
+- Follow the teacher's topic and difficulty. ${course ? 'Pitch the questions at the level the request describes.' : `Match the ${study} syllabus.`}
 - Write the questions and the options in the language of the teacher's request: English, Hindi or Tamil, or the one the request asks for. Hindi and Tamil questions use the standard school-textbook terms, and every number is written with the digits 0 to 9. The JSON keys and the answer letters A to D stay as shown.
 - Every question must be answerable from its text alone: no figures, graphs or diagrams, and no "all of the above" or "none of the above".
 - Wrong options are plausible mistakes. Do not repeat a question.
@@ -216,7 +232,7 @@ ${written.length ? '' : '- name: at most 40 characters, e.g. "Quadratic equation
     } catch {
       // The questions are what matters: a missing name gets a plain one.
     }
-    name ||= `${subject.name} questions`;
+    name ||= `${subject?.name ?? course!.name} questions`;
   }
   const first = written.length ? Math.max(...written.map((w) => w.seq)) + 1 : 0;
 
@@ -224,9 +240,9 @@ ${written.length ? '' : '- name: at most 40 characters, e.g. "Quadratic equation
     const p = paperId
       ? { id: paperId }
       : await q1(
-          `insert into papers (tuition_id, class_level, exam_name, category, page_count, uploaded_by, subject_id)
-           values ($1, $2, $3, 'Made with AI', 0, $4, $5) returning id`,
-          [T, classLevel, name, c.get('user').id, subjectId],
+          `insert into papers (tuition_id, class_level, exam_name, category, page_count, uploaded_by, subject_id, course_id)
+           values ($1, $2, $3, 'Made with AI', 0, $4, $5, $6) returning id`,
+          [T, classLevel, name, c.get('user').id, subjectId, courseId],
           cx,
         );
     for (const [i, it] of items.entries()) {
@@ -263,7 +279,7 @@ paperRoutes.post('/papers/:id/pages/:n/uploaded', async (c) => {
 });
 
 const PAPER_COLS = `p.*, (select name from subjects where id = p.subject_id) as subject,
-  (select name from chapters where id = p.chapter_id) as chapter`;
+  (select name from chapters where id = p.chapter_id) as chapter, (select name from courses where id = p.course_id) as course`;
 
 paperRoutes.get('/papers/:id', async (c) => {
   const T = tuitionOf(c).id;
@@ -464,6 +480,14 @@ ${lines.join('\n')}
     (ch) => ch.class_level === finalClass && ch.subject_id === finalSubject && same(ch.name, clip(r.chapter, 120)),
   );
   if (chapter && cf('chapter') >= 0.8) found.chapter_id = { value: chapter.id, confidence: cf('chapter') };
+
+  // A course's paper has no class, subject or chapter: only its name and category are filled in.
+  if (p.course_id) {
+    delete found.class_level;
+    delete found.subject_id;
+    delete found.new_subject;
+    delete found.chapter_id;
+  }
 
   // Only empty details are filled: anything the teacher already chose stays.
   await pool.query(
@@ -808,13 +832,16 @@ async function solve(
   models: string[],
   userId: string,
   tuitionId: string,
-  p: { class_level: number; subject: string | null },
+  p: { class_level: number | null; subject: string | null; course?: string | null },
   batch: any[],
   how: { task?: string; deadline?: number; attemptMs?: number } = {},
 ) {
-  const who = isClassNumber(p.class_level)
-    ? `a careful CBSE${p.subject ? ` ${p.subject}` : ''} teacher checking the answers to Class ${p.class_level} multiple-choice questions`
-    : `a careful${p.subject ? ` ${p.subject}` : ''} teacher checking the answers to ${await levelLabel(tuitionId, p.class_level)} multiple-choice questions`;
+  // A course's paper has no class: its questions are checked as a careful teacher would check them.
+  const who = p.class_level == null
+    ? `a careful${p.subject ? ` ${p.subject}` : ''} teacher checking the answers to multiple-choice questions${p.course ? ` written for a course called ${p.course}` : ''}`
+    : isClassNumber(p.class_level)
+      ? `a careful CBSE${p.subject ? ` ${p.subject}` : ''} teacher checking the answers to Class ${p.class_level} multiple-choice questions`
+      : `a careful${p.subject ? ` ${p.subject}` : ''} teacher checking the answers to ${await levelLabel(tuitionId, p.class_level)} multiple-choice questions`;
   const out = new Map<number, Pick>();
   let failure: unknown = null;
   for (const model of models) {
@@ -899,7 +926,7 @@ paperRoutes.post('/papers/:id/answers', async (c) => {
   const id = uuid(c.req.param('id'), 'paper id');
   const p = await tq1(T, `select ${PAPER_COLS} from papers p where p.id = $1 and p.tuition_id = @T`, [id]);
   if (!p) throw notFound('This paper');
-  if (p.class_level == null) throw new HttpError(409, 'needs_details', 'Choose the class of this paper first.');
+  if (p.class_level == null && !p.course_id) throw new HttpError(409, 'needs_details', 'Choose the class of this paper first.');
   await skipRepeats(id, pool);
   const fromKey = await applyAnswerKeys(id);
   await fillChapters(id);
@@ -984,7 +1011,7 @@ paperRoutes.post('/papers/:id/second-opinion', async (c) => {
   const id = uuid(c.req.param('id'), 'paper id');
   const p = await tq1(T, `select ${PAPER_COLS} from papers p where p.id = $1 and p.tuition_id = @T`, [id]);
   if (!p) throw notFound('This paper');
-  if (p.class_level == null) throw new HttpError(409, 'needs_details', 'Choose the class of this paper first.');
+  if (p.class_level == null && !p.course_id) throw new HttpError(409, 'needs_details', 'Choose the class of this paper first.');
 
   const waiting = `paper_id = $1 and status = 'draft' and kind = 'mcq' and correct_option is null and ai_votes is not null
                    and (answer_claimed_at is null or answer_claimed_at < now() - interval '${CLAIM_MINUTES} minutes')`;
@@ -1111,10 +1138,12 @@ paperRoutes.post('/papers/:id/save', async (c) => {
     );
     // A question the bank already has (the same paper uploaded twice, or two papers sharing
     // questions) is not saved again.
+    // A group's paper is compared with the questions of its class and subject, a course's with the course's own.
     const bank = await tq<{ text: string; options: string[] }>(
       T,
-      'select text, options from questions where tuition_id = @T and class_level = $1 and subject_id = $2',
-      [paper.class_level, paper.subject_id],
+      `select text, options from questions where tuition_id = @T and course_id is not distinct from $3::uuid
+          and class_level is not distinct from $1::smallint and subject_id is not distinct from $2::uuid`,
+      [paper.class_level, paper.subject_id, paper.course_id],
       cx,
     );
     const have = new Set(bank.map((x) => sameKey(x.text, x.options)));
@@ -1129,10 +1158,10 @@ paperRoutes.post('/papers/:id/save', async (c) => {
       have.add(k);
       const qrow = await q1(
         `insert into questions (tuition_id, class_level, chapter_id, text, options, correct_option, keep_option_order, image_key, source, paper_id,
-                                created_by, subject_id)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, 'paper', $9, $10, $11) returning id`,
+                                created_by, subject_id, course_id)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, 'paper', $9, $10, $11, $12) returning id`,
         [T, paper.class_level, d.chapter_id ?? paper.chapter_id, d.text, d.options, d.correct_option, mustKeepOrder(d.options), d.image_key, id,
-          c.get('user').id, paper.subject_id],
+          c.get('user').id, paper.subject_id, paper.course_id],
         cx,
       );
       await cx.query(`update paper_drafts set status = 'saved', question_id = $2 where id = $1`, [d.id, qrow.id]);

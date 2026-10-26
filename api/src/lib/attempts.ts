@@ -25,6 +25,9 @@ export function shuffle<T>(items: T[]): T[] {
 // A test is given only to students who were in the tuition before it closed, or who wrote it: a student added
 // today has not "missed" last week's test, and does not count among the students it was given to.
 //
+// A course's test (course_id set) has no class and no subject: it goes to the people of its course, and only
+// them. A person added to the course today has likewise not missed a test that closed before they were added.
+//
 // `tuition` is the SQL that holds one tuition's id ('@T' inside tq(), or a $n), or null for every
 // tuition at once (the scheduled notifications).
 export const assignedCte = (tuition: string | null) => `assigned as (
@@ -32,7 +35,7 @@ export const assignedCte = (tuition: string | null) => `assigned as (
     from tests t
     join memberships m on m.tuition_id = t.tuition_id and m.role = 'student' and m.status = 'active' and m.class_level = t.class_level
     join users u on u.id = m.user_id and u.active
-   where t.status = 'published'${tuition ? ` and t.tuition_id = ${tuition}` : ''}
+   where t.status = 'published' and t.course_id is null${tuition ? ` and t.tuition_id = ${tuition}` : ''}
      and (t.closes_at is null or m.joined_at < t.closes_at or exists (select 1 from attempts x where x.test_id = t.id and x.student_id = u.id))
      and (t.assign_all or t.assign_group)
      and exists (select 1 from student_subjects ss
@@ -43,10 +46,34 @@ export const assignedCte = (tuition: string | null) => `assigned as (
     join test_students ts on ts.test_id = t.id
     join memberships m on m.tuition_id = t.tuition_id and m.user_id = ts.student_id and m.role = 'student' and m.status = 'active'
     join users u on u.id = ts.student_id and u.active
-   where t.status = 'published'${tuition ? ` and t.tuition_id = ${tuition}` : ''} and not t.assign_all and not t.assign_group
+   where t.status = 'published' and t.course_id is null${tuition ? ` and t.tuition_id = ${tuition}` : ''} and not t.assign_all and not t.assign_group
      and (t.closes_at is null or m.joined_at < t.closes_at or exists (select 1 from attempts x where x.test_id = t.id and x.student_id = u.id))
+  union
+  select t.id, cm.student_id
+    from tests t
+    join course_members cm on cm.course_id = t.course_id
+    join memberships m on m.tuition_id = t.tuition_id and m.user_id = cm.student_id and m.role = 'student' and m.status = 'active'
+    join users u on u.id = cm.student_id and u.active
+   where t.status = 'published' and t.course_id is not null${tuition ? ` and t.tuition_id = ${tuition}` : ''}
+     and (t.closes_at is null or cm.added_at < t.closes_at or exists (select 1 from attempts x where x.test_id = t.id and x.student_id = u.id))
 )`;
 export const ASSIGNED_CTE = assignedCte(null);
+
+/**
+ * SQL condition: the test was given to someone and every student it was given to has handed it in.
+ * Such a test is finished, whatever its closing time says (releaseFinishedTests opens its marks on the
+ * same condition). Needs the `assigned` CTE.
+ */
+export const EVERYONE_DONE = `(exists (select 1 from assigned a where a.test_id = t.id)
+   and not exists (select 1 from assigned a where a.test_id = t.id
+                    and not exists (select 1 from attempts x where x.test_id = t.id and x.student_id = a.student_id and x.submitted_at is not null)))`;
+
+/** The counts a test row shows: students given it, submitted, and writing right now. Needs the `assigned` CTE. */
+export const TEST_COUNTS = `${EVERYONE_DONE} as everyone_done,
+            (select count(*) from assigned a where a.test_id = t.id) as assigned,
+            (select count(distinct x.student_id) from attempts x where x.test_id = t.id and x.submitted_at is not null) as submitted,
+            (select count(*) from attempts x where x.test_id = t.id and x.submitted_at is null
+                and (x.deadline_at is null or x.deadline_at > now())) as writing`;
 
 /**
  * SQL condition: the marks of test t are open to its students: a tutor opened them, or the last
@@ -77,11 +104,16 @@ export async function releaseFinishedTests(tuitionId: string | null = null, db: 
   return r.rowCount ?? 0;
 }
 
-/** SQL condition: test t is given to student $1 in class $2 (their class in the test's tuition). */
-export const ASSIGNED = `((t.assign_all or t.assign_group) and t.class_level = $2
-      and exists (select 1 from student_subjects ss
-                   where ss.tuition_id = t.tuition_id and ss.student_id = $1 and ss.subject_id = t.subject_id)
-   or exists (select 1 from test_students ts where ts.test_id = t.id and ts.student_id = $1))`;
+/**
+ * SQL condition: test t is given to student $1 in class $2 (their class in the test's tuition, null for a
+ * student who has none). A course's test goes to the people of its course.
+ */
+export const ASSIGNED = `(t.course_id is null and (
+      (t.assign_all or t.assign_group) and t.class_level = $2
+        and exists (select 1 from student_subjects ss
+                     where ss.tuition_id = t.tuition_id and ss.student_id = $1 and ss.subject_id = t.subject_id)
+      or exists (select 1 from test_students ts where ts.test_id = t.id and ts.student_id = $1))
+   or t.course_id is not null and exists (select 1 from course_members cm where cm.course_id = t.course_id and cm.student_id = $1))`;
 
 type AttemptRow = {
   id: string; test_id: string; student_id: string; attempt_no: number;

@@ -3,7 +3,9 @@ import { Hono } from 'hono';
 import {
   checkPassword, checkPin, checkUsername, hashSecret, killSessions, newPin, tuitionOf, verifySecret, type AppEnv,
 } from '../lib/auth.ts';
-import { assignedCte, releaseFinishedTests, resultPayload } from '../lib/attempts.ts';
+import { assignedCte, EVERYONE_DONE, releaseFinishedTests, resultPayload, TEST_COUNTS } from '../lib/attempts.ts';
+import { knowsCourses } from '../lib/client.ts';
+import { courseCards, ownCourse } from '../lib/courses.ts';
 import { pool, q, q1, tq, tq1, tx } from '../lib/db.ts';
 import { bad, bool, date, HttpError, int, notFound, str, uuid, uuidOpt } from '../lib/http.ts';
 import { assertLevel, CLASS_MIN, CUSTOM_MAX, levelIn, levelLabel, levelParam } from '../lib/levels.ts';
@@ -16,7 +18,8 @@ import {
   defaultSubject, elsewhere, ensureGroup, FIRST_TUITION, memberStudents, newImageKey, ownImageKey, ownQuestions, refreshLogin, taughtSubject,
   taughtSubjectIds,
 } from '../lib/tuition.ts';
-import { freeUsername, latinName, usernameBase } from '../lib/usernames.ts';
+import { createWithLogin, pinOf, planLogin } from '../lib/students.ts';
+import { freeUsername, latinName } from '../lib/usernames.ts';
 import { readBody } from './body.ts';
 
 // Mounted behind requireUser('teacher') in index.ts, which also gives every request its tuition:
@@ -71,7 +74,7 @@ teacherRoutes.get('/dashboard', async (c) => {
             (select count(distinct x.student_id) from attempts x where x.test_id = t.id and x.submitted_at is not null) as submitted,
             (select count(*) from attempts x where x.test_id = t.id and x.submitted_at is null) as writing
        from tests t
-      where t.tuition_id = @T and t.status = 'published'
+      where t.tuition_id = @T and t.status = 'published' and t.course_id is null
         and (t.opens_at is null or t.opens_at <= now())
         and (t.closes_at is null or t.closes_at > now()
              or exists (select 1 from attempts x where x.test_id = t.id and x.submitted_at is null))
@@ -119,9 +122,22 @@ teacherRoutes.get('/dashboard', async (c) => {
 
 // ---------------------------------------------------------------- students
 
-/** A student's results in this tuition only: another tutor's tests are theirs to see. */
-const OWN_RESULTS = `from attempts a join tests t on t.id = a.test_id where a.student_id = u.id and t.tuition_id = @T and a.submitted_at is not null`;
+/**
+ * A student's results in this tuition only (another tutor's tests are theirs to see), and not a course's: what
+ * a group's page says about a student is about the group's tests.
+ */
+const OWN_RESULTS = `from attempts a join tests t on t.id = a.test_id where a.student_id = u.id and t.tuition_id = @T and t.course_id is null and a.submitted_at is not null`;
 
+/** The courses a student is in, as [{ id, name }], newest first. Needs `u` for the student row. */
+const STUDENT_COURSES = `coalesce((
+  select json_agg(json_build_object('id', co.id, 'name', co.name) order by co.created_at desc)
+    from course_members cm join courses co on co.id = cm.course_id
+   where cm.student_id = u.id and co.tuition_id = @T), '[]') as courses`;
+
+/**
+ * The tuition's students. A person who is only in courses has no class: an app that knows courses is sent them
+ * (class_level null, and the courses they are in); one that does not never is.
+ */
 teacherRoutes.get('/students', async (c) => {
   const T = tuitionOf(c).id;
   const cls = c.req.query('class');
@@ -131,13 +147,14 @@ teacherRoutes.get('/students', async (c) => {
     `select u.id, u.display_name, u.username, m.class_level, (m.status = 'active') as active, u.last_seen_at,
             (select avg(a.score / nullif(a.max_score, 0)) ${OWN_RESULTS}) as avg_pct,
             (select count(*) ${OWN_RESULTS}) as tests_done,
-            ${studentSubjects('@T')}
+            ${studentSubjects('@T')}, ${STUDENT_COURSES}
        from memberships m join users u on u.id = m.user_id
       where m.tuition_id = @T and m.role = 'student' and m.status in ('active', 'off')
         and ($1::smallint is null or m.class_level = $1)
         and ($2::uuid is null or exists (select 1 from student_subjects ss where ss.tuition_id = @T and ss.student_id = u.id and ss.subject_id = $2))
+        and ($3::boolean or m.class_level is not null)
       order by (m.status = 'active') desc, m.class_level, u.display_name`,
-    [cls ? Number(cls) : null, subject ? uuid(subject, 'subject') : null],
+    [cls ? Number(cls) : null, subject ? uuid(subject, 'subject') : null, knowsCourses(c)],
   );
   return c.json({ students: rows });
 });
@@ -151,12 +168,13 @@ async function setStudentSubjects(cx: any, tuition: string, studentId: string, i
       [tuition, studentId, ids],
     );
   }
-  const m = await q1<{ class_level: number }>(
+  const m = await q1<{ class_level: number | null }>(
     'select class_level from memberships where tuition_id = $1 and user_id = $2',
     [tuition, studentId],
     cx,
   );
-  if (m) for (const id of ids) await ensureGroup(tuition, m.class_level, id, cx);
+  // A person who is only in courses has no class yet, so no group to start.
+  if (m && m.class_level != null) for (const id of ids) await ensureGroup(tuition, m.class_level, id, cx);
 }
 
 /** The login to suggest for a student of this name, free right now: two called Harini Venkatesh get harini.v and harini.v.2. */
@@ -170,62 +188,48 @@ teacherRoutes.post('/students', async (c) => {
   const b = await readBody(c);
   const displayName = str(b, 'display_name', { max: 60 })!;
   const classLevel = (await levelIn(b, 'class_level', T))!;
-  const requested = checkUsername(b.username);
-  // The username the app suggests from the name ("harini.v", or "harini.v.2"), when it is taken, becomes the
-  // next free one, so nobody has to think of a login for a second student with the same name. Any other
-  // username that is taken is refused, so the tutor can pick another.
-  // A name typed in Tamil or Hindi is spelled out in English letters first, as the suggestion was.
-  const latin = await latinName(displayName, c.get('user').id, tuitionOf(c).id);
-  const base = usernameBase(latin);
-  const suggested = requested.startsWith(base) && /^(\.\d+)?$/.test(requested.slice(base.length));
-  let username = requested;
-  if (suggested && (await q1('select 1 as x from users where username = $1', [requested]))) username = await freeUsername(latin);
+  const plan = await planLogin(b.username, displayName, c.get('user').id, T);
   // The app before subjects sends none: its students study maths (or the tuition's first subject).
   const subjects = 'subject_ids' in b ? subjectIds(b.subject_ids) : [await defaultSubject(T)];
   await taughtSubjectIds(T, subjects);
-  const pin = b.pin === undefined || b.pin === null || b.pin === '' ? newPin() : checkPin(b.pin);
-  const { hash, salt } = await hashSecret(pin);
-  for (let attempt = 0; ; attempt++) {
-    try {
-      const u = await tx(async (cx) => {
-        const row = await q1(
-          `insert into users (role, username, display_name, class_level, secret_hash, secret_salt)
-           values ('student', $1, $2, $3, $4, $5) returning id, username, display_name, class_level`,
-          [username, displayName, classLevel, hash, salt],
-          cx,
-        );
-        await cx.query(
-          `insert into memberships (tuition_id, user_id, role, status, class_level) values ($1, $2, 'student', 'active', $3)`,
-          [T, row.id, classLevel],
-        );
-        await setStudentSubjects(cx, T, row.id, subjects);
-        return row;
-      });
-      waitUntil(afterTestChange());
-      return c.json({ student: u, login: { username, pin } }, 201);
-    } catch (e: any) {
-      if (e.code === '23505') {
-        // Someone took it between the check and the insert: try the next free one.
-        if (suggested && attempt < 3) {
-          username = await freeUsername(latin, pool, [username]);
-          continue;
-        }
-        throw new HttpError(409, 'username_taken', `The username ${username} is already taken.`);
-      }
-      if (e.code === '23503') throw bad('One of those subjects no longer exists.');
-      throw e;
-    }
+  const pin = pinOf(b);
+  try {
+    const { result: u, username } = await createWithLogin(plan, pin, async (cx, login) => {
+      const row = await q1(
+        `insert into users (role, username, display_name, class_level, secret_hash, secret_salt)
+         values ('student', $1, $2, $3, $4, $5) returning id, username, display_name, class_level`,
+        [login.username, displayName, classLevel, login.hash, login.salt],
+        cx,
+      );
+      await cx.query(
+        `insert into memberships (tuition_id, user_id, role, status, class_level) values ($1, $2, 'student', 'active', $3)`,
+        [T, row.id, classLevel],
+      );
+      await setStudentSubjects(cx, T, row.id, subjects);
+      return row;
+    });
+    waitUntil(afterTestChange());
+    return c.json({ student: u, login: { username, pin } }, 201);
+  } catch (e: any) {
+    if (e.code === '23503') throw bad('One of those subjects no longer exists.');
+    throw e;
   }
 });
 
+/**
+ * One student's page: their results and the tests they missed. For a group's page that means the tuition's class
+ * tests; with ?course=<id> it means that course's tests only, and no chapters, because a course has none.
+ */
 teacherRoutes.get('/students/:id', async (c) => {
   const T = tuitionOf(c).id;
   const id = uuid(c.req.param('id'), 'student id');
+  const courseId = uuidOpt(c.req.query('course'), 'course');
+  if (courseId) await ownCourse(T, courseId);
   await q('select finalize_expired_attempts()');
   const s = await tq1(
     T,
     `select u.id, u.display_name, u.username, m.class_level, (m.status = 'active') as active, u.last_seen_at, m.joined_at as created_at,
-            ${studentSubjects('@T')}
+            ${studentSubjects('@T')}, ${STUDENT_COURSES}
        from memberships m join users u on u.id = m.user_id
       where m.tuition_id = @T and m.user_id = $1 and m.role = 'student' and m.status in ('active', 'off')`,
     [id],
@@ -235,30 +239,33 @@ teacherRoutes.get('/students/:id', async (c) => {
     T,
     `select a.id, a.test_id, t.title, a.attempt_no, a.score, a.max_score, a.correct_count, a.wrong_count, a.skipped_count,
             a.started_at, a.submitted_at, a.auto_submitted
-       from attempts a join tests t on t.id = a.test_id where a.student_id = $1 and t.tuition_id = @T order by a.started_at desc`,
-    [id],
+       from attempts a join tests t on t.id = a.test_id
+      where a.student_id = $1 and t.tuition_id = @T and t.course_id is not distinct from $2::uuid order by a.started_at desc`,
+    [id, courseId],
   );
-  const chapters = await tq(
-    T,
-    `select coalesce(ch.name, 'No chapter') as chapter, count(*) as total,
-            count(*) filter (where an.chosen_option = qq.correct_option) as correct
-       from attempts a join tests t on t.id = a.test_id and t.tuition_id = @T
-       cross join lateral unnest(a.question_order) as qo(qid)
-       join questions qq on qq.id = qo.qid
-       left join answers an on an.attempt_id = a.id and an.question_id = qq.id
-       left join chapters ch on ch.id = qq.chapter_id
-      where a.student_id = $1 and a.submitted_at is not null
-      group by 1 order by 1`,
-    [id],
-  );
+  const chapters = courseId
+    ? []
+    : await tq(
+        T,
+        `select coalesce(ch.name, 'No chapter') as chapter, count(*) as total,
+                count(*) filter (where an.chosen_option = qq.correct_option) as correct
+           from attempts a join tests t on t.id = a.test_id and t.tuition_id = @T and t.course_id is null
+           cross join lateral unnest(a.question_order) as qo(qid)
+           join questions qq on qq.id = qo.qid
+           left join answers an on an.attempt_id = a.id and an.question_id = qq.id
+           left join chapters ch on ch.id = qq.chapter_id
+          where a.student_id = $1 and a.submitted_at is not null
+          group by 1 order by 1`,
+        [id],
+      );
   const missed = await tq(
     T,
     `with ${assignedCte('@T')}
      select t.id, t.title, t.closes_at from assigned a join tests t on t.id = a.test_id
-      where a.student_id = $1 and t.closes_at < now()
+      where a.student_id = $1 and t.closes_at < now() and t.course_id is not distinct from $2::uuid
         and not exists (select 1 from attempts x where x.test_id = t.id and x.student_id = $1)
       order by t.closes_at desc`,
-    [id],
+    [id, courseId],
   );
   return c.json({ student: s, attempts, chapters, missed });
 });
@@ -352,6 +359,7 @@ teacherRoutes.delete('/students/:id', async (c) => {
     await tq(T, 'delete from retake_grants g using tests t where t.id = g.test_id and t.tuition_id = @T and g.student_id = $1', [id], cx);
     await tq(T, 'delete from test_notices n using tests t where t.id = n.test_id and t.tuition_id = @T and n.student_id = $1', [id], cx);
     await tq(T, 'delete from student_subjects where tuition_id = @T and student_id = $1', [id], cx);
+    await tq(T, 'delete from course_members cm using courses co where co.id = cm.course_id and co.tuition_id = @T and cm.student_id = $1', [id], cx);
     await tq(T, 'delete from memberships where tuition_id = @T and user_id = $1', [id], cx);
     return true;
   });
@@ -529,24 +537,9 @@ teacherRoutes.delete('/groups/:cls/:subject', async (c) => {
 });
 
 /**
- * SQL condition: the test was given to someone and every student it was given to has handed it in.
- * Such a test is finished, whatever its closing time says (releaseFinishedTests opens its marks on the
- * same condition). Needs the `assigned` CTE.
- */
-const EVERYONE_DONE = `(exists (select 1 from assigned a where a.test_id = t.id)
-   and not exists (select 1 from assigned a where a.test_id = t.id
-                    and not exists (select 1 from attempts x where x.test_id = t.id and x.student_id = a.student_id and x.submitted_at is not null)))`;
-
-/** The counts a test row shows: students given it, submitted, and writing right now. */
-const TEST_COUNTS = `${EVERYONE_DONE} as everyone_done,
-            (select count(*) from assigned a where a.test_id = t.id) as assigned,
-            (select count(distinct x.student_id) from attempts x where x.test_id = t.id and x.submitted_at is not null) as submitted,
-            (select count(*) from attempts x where x.test_id = t.id and x.submitted_at is null
-                and (x.deadline_at is null or x.deadline_at > now())) as writing`;
-
-/**
  * The home screen: every group, each with the tests its students can write now (live) and the
- * ones posted to open later, with how many students have submitted and how many are writing.
+ * ones posted to open later, with how many students have submitted and how many are writing. The
+ * courses follow, in the same shape, for an app that knows them.
  */
 teacherRoutes.get('/home', async (c) => {
   const t = tuitionOf(c);
@@ -560,7 +553,7 @@ teacherRoutes.get('/home', async (c) => {
      select t.id, t.title, t.class_level, t.subject_id, (select name from subjects where id = t.subject_id) as subject,
             t.opens_at, t.closes_at, t.time_limit_min, now() as now, ${TEST_COUNTS}
        from tests t
-      where t.tuition_id = @T and t.status = 'published'
+      where t.tuition_id = @T and t.status = 'published' and t.course_id is null
         and (exists (select 1 from attempts x where x.test_id = t.id and x.submitted_at is null
                       and (x.deadline_at is null or x.deadline_at > now()))
              or ((t.closes_at is null or t.closes_at > now()) and not ${EVERYONE_DONE}))
@@ -590,10 +583,12 @@ teacherRoutes.get('/home', async (c) => {
     tuition: { id: T, name: t.name, join_code: meta.join_code },
     pending_requests: Number(meta.pending),
     groups: out,
+    // The totals are the groups' (an app from before courses reads them as the whole Home); the courses carry their own.
     totals: {
       live: out.reduce((s, g) => s + g.live.length, 0),
       writing: out.reduce((s, g) => s + g.live.reduce((n, x) => n + Number(x.writing), 0), 0),
     },
+    ...(knowsCourses(c) ? { courses: await courseCards(T) } : {}),
   });
 });
 
@@ -751,16 +746,14 @@ teacherRoutes.delete('/chapters/:id', async (c) => {
 
 // ---------------------------------------------------------------- questions
 
-function readQuestion(b: Record<string, any>) {
+/** What every question has, a group's or a course's: its text, options, answer, solution, marks and picture. */
+function readQuestionBody(b: Record<string, any>) {
   const options = b.options;
   if (!Array.isArray(options) || options.length !== 4 || options.some((o) => typeof o !== 'string' || !o.trim())) {
     throw bad('A question needs exactly 4 filled-in options.');
   }
   const opts = options.map((o: string) => o.trim());
   return {
-    class_level: int(b, 'class_level', { min: CLASS_MIN, max: CUSTOM_MAX })!,
-    chapter_id: uuidOpt(b.chapter_id, 'chapter'),
-    subject_id: uuidOpt(b.subject_id, 'subject'),
     text: str(b, 'text', { max: 4000 })!,
     options: opts,
     correct_option: int(b, 'correct_option', { min: 0, max: 3 })!,
@@ -771,7 +764,22 @@ function readQuestion(b: Record<string, any>) {
   };
 }
 
-const QUESTION_COLS = `qq.id, qq.class_level, qq.chapter_id, ch.name as chapter, qq.subject_id,
+/** A group's question: it has a class, and a chapter and subject. */
+function readQuestion(b: Record<string, any>) {
+  return {
+    class_level: int(b, 'class_level', { min: CLASS_MIN, max: CUSTOM_MAX })!,
+    chapter_id: uuidOpt(b.chapter_id, 'chapter'),
+    subject_id: uuidOpt(b.subject_id, 'subject'),
+    ...readQuestionBody(b),
+  };
+}
+
+/** A course's question has no class, subject or chapter: it belongs to the course. */
+function readCourseQuestion(b: Record<string, any>) {
+  return { class_level: null, chapter_id: null, subject_id: null, ...readQuestionBody(b) };
+}
+
+const QUESTION_COLS = `qq.id, qq.class_level, qq.course_id, qq.chapter_id, ch.name as chapter, qq.subject_id,
   (select name from subjects where id = qq.subject_id) as subject, qq.text, qq.options, qq.correct_option,
   qq.solution, qq.marks, qq.keep_option_order, qq.image_key, qq.source, qq.paper_id, qq.created_at, qq.updated_at,
   (select exam_name from papers where id = qq.paper_id) as paper, (select category from papers where id = qq.paper_id) as category,
@@ -809,7 +817,7 @@ teacherRoutes.get('/question-groups', async (c) => {
             array_agg(distinct sj.name) filter (where sj.name is not null) as subjects,
             max(qq.created_at) as latest
        from questions qq left join papers pa on pa.id = qq.paper_id left join subjects sj on sj.id = qq.subject_id
-      where qq.tuition_id = @T
+      where qq.tuition_id = @T and qq.course_id is null
       group by 1`,
   );
   return c.json({ groups: rows });
@@ -824,14 +832,18 @@ function groupFilter(group: string | undefined) {
   throw bad('That question group is not known.');
 }
 
+/** The questions of the tuition's groups, or with ?course=<id> the questions of that course (never both). */
 teacherRoutes.get('/questions', async (c) => {
+  const T = tuitionOf(c).id;
   const cls = c.req.query('class');
   const chapter = c.req.query('chapter');
   const subject = c.req.query('subject');
   const search = c.req.query('q');
   const g = groupFilter(c.req.query('group'));
+  const courseId = uuidOpt(c.req.query('course'), 'course');
+  if (courseId) await ownCourse(T, courseId);
   const rows = await tq(
-    tuitionOf(c).id,
+    T,
     `select ${QUESTION_COLS} from questions qq left join chapters ch on ch.id = qq.chapter_id left join papers pa on pa.id = qq.paper_id
       where qq.tuition_id = @T
         and ($1::smallint is null or qq.class_level = $1)
@@ -841,6 +853,7 @@ teacherRoutes.get('/questions', async (c) => {
         and ($5::text is null or qq.source = $5)
         and ($6::text is null or pa.category = $6)
         and (not $7 or pa.category is null)
+        and qq.course_id is not distinct from $8::uuid
       order by ${g.source === 'paper'
         // A paper group: newest paper first, each paper's questions in the order they were printed.
         ? `pa.created_at desc, qq.paper_id, (select d.page_no * 1000 + d.seq from paper_drafts d where d.question_id = qq.id limit 1)`
@@ -848,7 +861,7 @@ teacherRoutes.get('/questions', async (c) => {
                ch.sort_order nulls last, ch.name, qq.created_at desc`}
       limit ${g.source ? 1000 : 300}`,
     [cls ? Number(cls) : null, chapter ? uuid(chapter, 'chapter') : null, search?.trim() || null, subject ? uuid(subject, 'subject') : null,
-      g.source, g.category, g.uncategorised],
+      g.source, g.category, g.uncategorised, courseId],
   );
   return c.json({ questions: await Promise.all(rows.map(withImage)) });
 });
@@ -885,8 +898,11 @@ teacherRoutes.post('/questions', async (c) => {
 teacherRoutes.patch('/questions/:id', async (c) => {
   const T = tuitionOf(c).id;
   const id = uuid(c.req.param('id'));
-  const x = readQuestion(await readBody(c));
-  await assertLevel(T, x.class_level);
+  const own = await tq1<{ course_id: string | null }>(T, 'select course_id from questions where id = $1 and tuition_id = @T', [id]);
+  if (!own) throw notFound('This question');
+  const body = await readBody(c);
+  const x = own.course_id !== null ? readCourseQuestion(body) : readQuestion(body);
+  if (x.class_level !== null) await assertLevel(T, x.class_level);
   const subject = await questionSubject(T, x);
   const regraded = await tx(async (cx) => {
     const before = await tq1(T, 'select correct_option, marks, image_key from questions where id = $1 and tuition_id = @T for update', [id], cx);
@@ -941,22 +957,32 @@ teacherRoutes.post('/uploads', async (c) => {
 
 // ---------------------------------------------------------------- tests
 
-function readTest(b: Record<string, any>) {
+/**
+ * A test sent by the app. A course's test (course_id) has no class and no subject and goes to the people of its
+ * course, so those fields are not read for it; a test already made says which kind it is (`known`: its course,
+ * or null for a group's), and the body cannot change that.
+ */
+function readTest(b: Record<string, any>, known?: string | null) {
   const ids = b.question_ids;
   if (!Array.isArray(ids) || ids.some((x) => typeof x !== 'string')) throw bad('question_ids must be a list.');
   const students = b.student_ids ?? [];
   if (!Array.isArray(students)) throw bad('student_ids must be a list.');
+  const sent = uuidOpt(b.course_id, 'course');
+  if (known !== undefined && sent !== null && sent !== known) throw bad('A test cannot move between a course and a group.', 'invalid');
+  if (known !== undefined && known !== null && 'course_id' in b && sent === null) throw bad('A test cannot move between a course and a group.', 'invalid');
+  const courseId = known !== undefined ? known : sent;
   const opensAt = date(b, 'opens_at');
   const closesAt = date(b, 'closes_at');
   if (opensAt && closesAt && opensAt >= closesAt) throw bad('The test must close after it opens.');
-  const assignAll = bool(b, 'assign_all', true);
+  const assignAll = courseId ? false : bool(b, 'assign_all', true);
   // The app before subjects never sends these: null keeps what the test already has.
-  const assignGroup = 'assign_group' in b ? bool(b, 'assign_group', false) : null;
+  const assignGroup = courseId ? false : 'assign_group' in b ? bool(b, 'assign_group', false) : null;
   if (assignAll && assignGroup) throw bad('A test goes to the whole class or to the group, not both.');
   return {
     title: str(b, 'title', { max: 100 })!,
-    class_level: int(b, 'class_level', { min: CLASS_MIN, max: CUSTOM_MAX })!,
-    subject_id: uuidOpt(b.subject_id, 'subject'),
+    course_id: courseId,
+    class_level: courseId ? null : int(b, 'class_level', { min: CLASS_MIN, max: CUSTOM_MAX })!,
+    subject_id: courseId ? null : uuidOpt(b.subject_id, 'subject'),
     time_limit_min: int(b, 'time_limit_min', { min: 1, max: 300, optional: true }) ?? null,
     opens_at: opensAt,
     closes_at: closesAt,
@@ -964,17 +990,21 @@ function readTest(b: Record<string, any>) {
     assign_all: assignAll,
     assign_group: assignGroup,
     question_ids: [...new Set(ids.map((x: string) => uuid(x, 'question id')))],
-    student_ids: [...new Set(students.map((x: string) => uuid(x, 'student id')))],
+    student_ids: courseId ? [] : [...new Set(students.map((x: string) => uuid(x, 'student id')))],
     paper_id: uuidOpt(b.paper_id, 'paper'),
   };
 }
 
-/** The questions, chosen students and paper of a test must all belong to the tuition it is in. */
+/**
+ * The questions, chosen students and paper of a test must all belong to the tuition it is in, and a course's
+ * test uses only that course's questions and papers, as a group's test uses none of a course's.
+ */
 async function checkTestParts(T: string, t: ReturnType<typeof readTest>, cx?: any) {
-  await assertLevel(T, t.class_level, cx);
-  await ownQuestions(T, t.question_ids, cx);
+  if (t.course_id) await ownCourse(T, t.course_id, cx);
+  else await assertLevel(T, t.class_level!, cx);
+  await ownQuestions(T, t.question_ids, cx ?? pool, t.course_id);
   await memberStudents(T, t.student_ids, cx);
-  if (t.paper_id && !(await tq1(T, 'select 1 as x from papers where id = $1 and tuition_id = @T', [t.paper_id], cx))) {
+  if (t.paper_id && !(await tq1(T, 'select 1 as x from papers where id = $1 and tuition_id = @T and course_id is not distinct from $2::uuid', [t.paper_id, t.course_id], cx))) {
     throw bad('That paper is not in this tuition.', 'unknown_paper');
   }
 }
@@ -987,19 +1017,22 @@ async function saveTestChildren(c: any, testId: string, t: ReturnType<typeof rea
     [testId, t.question_ids],
   );
   await c.query('delete from test_students where test_id = $1', [testId]);
-  const chosen = await c.query('select not assign_all and not assign_group as chosen from tests where id = $1', [testId]);
+  const chosen = await c.query('select not assign_all and not assign_group and course_id is null as chosen from tests where id = $1', [testId]);
   if (chosen.rows[0]?.chosen && t.student_ids.length) {
     await c.query(`insert into test_students (test_id, student_id) select $1, unnest($2::uuid[])`, [testId, t.student_ids]);
   }
 }
 
+/** The tuition's group tests, or with ?course=<id> that course's tests (never both). */
 teacherRoutes.get('/tests', async (c) => {
   const T = tuitionOf(c).id;
+  const courseId = uuidOpt(c.req.query('course'), 'course');
+  if (courseId) await ownCourse(T, courseId);
   await q('select finalize_expired_attempts()');
   const rows = await tq(
     T,
     `with ${assignedCte('@T')}
-     select t.id, t.title, t.class_level, t.time_limit_min, t.opens_at, t.closes_at, t.shuffle, t.assign_all, t.status, t.created_at,
+     select t.id, t.title, t.class_level, t.course_id, t.time_limit_min, t.opens_at, t.closes_at, t.shuffle, t.assign_all, t.status, t.created_at,
             t.subject_id, (select name from subjects where id = t.subject_id) as subject, t.assign_group,
             (select count(*) from test_questions tq where tq.test_id = t.id) as question_count,
             (select count(*) from assigned a where a.test_id = t.id) as assigned,
@@ -1007,8 +1040,9 @@ teacherRoutes.get('/tests', async (c) => {
             (select count(*) from attempts x where x.test_id = t.id and x.submitted_at is null) as writing,
             now() as now
        from tests t
-      where t.tuition_id = @T
+      where t.tuition_id = @T and t.course_id is not distinct from $1::uuid
       order by coalesce(t.closes_at, t.opens_at, t.created_at) desc, t.title`,
+    [courseId],
   );
   return c.json({ tests: rows });
 });
@@ -1016,19 +1050,19 @@ teacherRoutes.get('/tests', async (c) => {
 teacherRoutes.post('/tests', async (c) => {
   const T = tuitionOf(c).id;
   const t = readTest(await readBody(c));
-  const subject = t.subject_id ? (await taughtSubject(T, t.subject_id)).id : await defaultSubject(T);
+  const subject = t.course_id ? null : t.subject_id ? (await taughtSubject(T, t.subject_id)).id : await defaultSubject(T);
   await checkTestParts(T, t);
   const id = await tx(async (cx) => {
     const row = await q1(
       `insert into tests (tuition_id, title, class_level, time_limit_min, opens_at, closes_at, shuffle, assign_all, created_by, subject_id, assign_group,
-                          paper_id)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, coalesce($11, false), $12) returning id`,
+                          paper_id, course_id)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, coalesce($11, false), $12, $13) returning id`,
       [T, t.title, t.class_level, t.time_limit_min, t.opens_at, t.closes_at, t.shuffle, t.assign_all, c.get('user').id,
-        subject, t.assign_group, t.paper_id],
+        subject, t.assign_group, t.paper_id, t.course_id],
       cx,
     );
     await saveTestChildren(cx, row.id, t);
-    await ensureGroup(T, t.class_level, subject, cx);
+    if (!t.course_id) await ensureGroup(T, t.class_level!, subject!, cx);
     return row.id;
   });
   return c.json({ id }, 201);
@@ -1039,7 +1073,8 @@ teacherRoutes.get('/tests/:id', async (c) => {
   const id = uuid(c.req.param('id'), 'test id');
   const t = await tq1(
     T,
-    `select t.*, (select count(*) from attempts x where x.test_id = t.id) as attempts from tests t where t.id = $1 and t.tuition_id = @T`,
+    `select t.*, (select name from courses where id = t.course_id) as course,
+            (select count(*) from attempts x where x.test_id = t.id) as attempts from tests t where t.id = $1 and t.tuition_id = @T`,
     [id],
   );
   if (!t) throw notFound('This test');
@@ -1061,10 +1096,12 @@ teacherRoutes.get('/tests/:id', async (c) => {
 teacherRoutes.patch('/tests/:id', async (c) => {
   const T = tuitionOf(c).id;
   const id = uuid(c.req.param('id'), 'test id');
-  const t = readTest(await readBody(c));
+  const kind = await tq1<{ course_id: string | null }>(T, 'select course_id from tests where id = $1 and tuition_id = @T', [id]);
+  if (!kind) throw notFound('This test');
+  const t = readTest(await readBody(c), kind.course_id);
   if (t.subject_id) await taughtSubject(T, t.subject_id);
   const done = await tx(async (cx) => {
-    const own = await tq1<{ status: string; subject_id: string }>(T, 'select status, subject_id from tests where id = $1 and tuition_id = @T for update', [id], cx);
+    const own = await tq1<{ status: string; subject_id: string | null }>(T, 'select status, subject_id from tests where id = $1 and tuition_id = @T for update', [id], cx);
     if (!own) throw notFound('This test');
     await checkTestParts(T, t, cx);
     const cur = await q1(
@@ -1092,7 +1129,7 @@ teacherRoutes.patch('/tests/:id', async (c) => {
       cx,
     );
     await saveTestChildren(cx, id, t);
-    await ensureGroup(T, t.class_level, row.subject_id, cx);
+    if (!t.course_id) await ensureGroup(T, t.class_level!, row.subject_id, cx);
     return row.status as string;
   });
   if (done === 'published') waitUntil(afterTestChange());
@@ -1156,9 +1193,10 @@ teacherRoutes.get('/tests/:id/results', async (c) => {
   const t = await tq1(
     T,
     `select id, title, class_level, opens_at, closes_at, time_limit_min, status, now() as now, subject_id, assign_group, shuffle,
-            results_released_at,
+            results_released_at, course_id,
             (results_released_at is not null or closes_at is null or closes_at <= now()) as results_open,
-            (select name from subjects where id = tests.subject_id) as subject
+            (select name from subjects where id = tests.subject_id) as subject,
+            (select name from courses where id = tests.course_id) as course
        from tests where id = $1 and tuition_id = @T`,
     [id],
   );

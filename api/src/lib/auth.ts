@@ -1,7 +1,7 @@
 import { createHash, pbkdf2 as pbkdf2Cb, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { createMiddleware } from 'hono/factory';
-import { clientInfo, recordInstall } from './client.ts';
+import { clientInfo, knowsCourses, recordInstall, tooOld, updateRequired } from './client.ts';
 import { pool, q1, type Db } from './db.ts';
 import { HttpError } from './http.ts';
 import { noTuition } from './tuition.ts';
@@ -81,17 +81,22 @@ const TUITION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
  * the one the app names in x-tuition (they must be an active member of it), else their first.
  * `tuition: 'required'` (the default when a teacher or student route names its role) refuses a
  * person who has none yet; a route with no role, or `tuition: 'none'`, lets them through.
+ *
+ * An app below the minimum build (app_settings.min_app_build, see minBuild) is refused with 426 update_required
+ * on every route but one that names `gate: false` (signing out must always work). So is an app from before
+ * courses when the student it is signed in as has no class, because only courses give a student none.
  */
-export const requireUser = (role?: SessionUser['role'], opts: { tuition?: 'required' | 'none' } = {}) =>
+export const requireUser = (role?: SessionUser['role'], opts: { tuition?: 'required' | 'none'; gate?: boolean } = {}) =>
   createMiddleware<AppEnv>(async (c, next) => {
     const header = c.req.header('authorization') ?? '';
     if (!header.startsWith('Bearer ')) throw new HttpError(401, 'signed_out', 'Please log in again.');
     const hash = tokenHash(header.slice(7).trim());
     const wanted = c.req.header('x-tuition')?.trim() || null;
     if (wanted && !TUITION_ID.test(wanted)) throw new HttpError(400, 'bad_tuition', 'That tuition id is not valid.');
-    const row = await q1<SessionUser & { stale: boolean; t_id: string | null; t_name: string | null; t_role: Tuition['role'] | null; t_class: number | null }>(
+    const row = await q1<SessionUser & { stale: boolean; min_build: number | null; t_id: string | null; t_name: string | null; t_role: Tuition['role'] | null; t_class: number | null }>(
       `select u.id, u.role, u.username, u.display_name, u.class_level,
               s.last_used_at < now() - interval '2 minutes' as stale,
+              (select case when jsonb_typeof(value) = 'number' then (value #>> '{}')::int end from app_settings where key = 'min_app_build') as min_build,
               m.id as t_id, m.name as t_name, m.mrole as t_role, m.mclass as t_class
          from sessions s join users u on u.id = s.user_id
          left join lateral (select t.id, t.name, mm.role as mrole, mm.class_level as mclass
@@ -103,8 +108,12 @@ export const requireUser = (role?: SessionUser['role'], opts: { tuition?: 'requi
     );
     if (!row) throw new HttpError(401, 'signed_out', 'Please log in again.');
     if (role && row.role !== role) throw new HttpError(403, 'forbidden', FORBIDDEN[role]);
+    if (opts.gate !== false && tooOld(c, row.min_build)) throw updateRequired();
     const mode = opts.tuition ?? (role === 'teacher' || role === 'student' ? 'required' : 'none');
     const tuition: Tuition | null = row.t_id ? { id: row.t_id, name: row.t_name!, role: row.t_role!, class_level: row.t_class } : null;
+    if (opts.gate !== false && row.role === 'student' && tuition && tuition.class_level === null && !knowsCourses(c)) {
+      throw updateRequired('Your courses need the newest version of Core Academy. Please install it, then open the app again. Your tutor can send it to you.');
+    }
     if (mode === 'required' && row.role !== 'developer') {
       if (!tuition && wanted) throw new HttpError(403, 'not_a_member', 'You are not part of that tuition.');
       if (!tuition) throw noTuition(row.role === 'teacher' ? 'teacher' : 'student');

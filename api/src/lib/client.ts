@@ -1,5 +1,6 @@
 import type { Context } from 'hono';
 import { pool, type Db } from './db.ts';
+import { HttpError } from './http.ts';
 
 /** What an app says about itself. Apps before 1.2.1 send none of it. */
 export type ClientInfo = {
@@ -45,6 +46,42 @@ export function holdsResults(c: Context): boolean {
   const [major, minor] = v.split('.').map(Number);
   return major > 1 || (major === 1 && minor >= 4);
 }
+
+/**
+ * Whether this app can show courses (1.6.0 and later). An older app has no screen for a course, or for a
+ * student who has no class, so it is never sent either; a caller that does not say which app it is counts
+ * as old, as in holdsResults.
+ */
+export function knowsCourses(c: Context): boolean {
+  const v = clientInfo(c).appVersion;
+  if (!v) return false;
+  const [major, minor] = v.split('.').map(Number);
+  return major > 1 || (major === 1 && minor >= 6);
+}
+
+/**
+ * The oldest build of the app the server still serves, from app_settings.min_app_build. None until a person
+ * sets it: it is switched on only once the newest app has been out long enough for phones to have updated.
+ */
+export async function minBuild(db: Db = pool): Promise<number | null> {
+  const r = await db.query(
+    `select case when jsonb_typeof(value) = 'number' then (value #>> '{}')::int end as n from app_settings where key = 'min_app_build'`,
+  );
+  return r.rows[0]?.n ?? null;
+}
+
+/** True when the request comes from the main app at a build below the minimum. The admin app and callers that name no build are never too old. */
+export function tooOld(c: Context, min: number | null): boolean {
+  const ci = clientInfo(c);
+  return min !== null && ci.app === 'core_academy' && ci.appBuild !== null && ci.appBuild < min;
+}
+
+/**
+ * 426 with a code the newest app turns into its "please update" screen. An older app only shows the sentence,
+ * so it says what to do in plain words.
+ */
+export const updateRequired = (message = 'This version of Core Academy is out of date. Please install the newest version, then open the app again. Your tutor can send it to you.') =>
+  new HttpError(426, 'update_required', message);
 
 /** Notes that this account used this install, and what the install is running now. */
 export async function recordInstall(userId: string, ci: ClientInfo, db: Db = pool) {

@@ -54,7 +54,7 @@ type Sent = { title: string; people: number; phones: number };
  * test_notices, so nobody is told twice. A test closing within 5 minutes is not announced.
  */
 async function announce(now: Date): Promise<Sent[]> {
-  const fresh = await q<{ id: string; title: string; time_limit_min: number | null; closes_at: Date | null; questions: number; students: string[] }>(
+  const fresh = await q<{ id: string; title: string; course: string | null; time_limit_min: number | null; closes_at: Date | null; questions: number; students: string[] }>(
     `with ${ASSIGNED_CTE},
      open as (
        select t.id from tests t
@@ -68,17 +68,19 @@ async function announce(now: Date): Promise<Sent[]> {
        on conflict do nothing
        returning test_id, student_id)
      select t.id, t.title, t.time_limit_min, t.closes_at,
+            (select co.name from courses co where co.id = t.course_id) as course,
             (select count(*) from test_questions tq where tq.test_id = t.id) as questions,
             array_agg(x.student_id) as students
        from told x join tests t on t.id = x.test_id
-      group by t.id, t.title, t.time_limit_min, t.closes_at`,
+      group by t.id, t.title, t.time_limit_min, t.closes_at, t.course_id`,
   );
   const out: Sent[] = [];
   for (const t of fresh) {
     const facts = [count(t.questions, 'question')];
     if (t.time_limit_min) facts.push(`${t.time_limit_min} min`);
     if (t.closes_at) facts.push(`closes ${when(t.closes_at, now)}`);
-    const phones = await pushToUsers(t.students, { title: t.title, body: `New test · ${facts.join(' · ')}` });
+    // A course's test says which course, so it is not taken for a class test.
+    const phones = await pushToUsers(t.students, { title: t.title, body: `${t.course ? `New test in ${t.course}` : 'New test'} · ${facts.join(' · ')}` });
     out.push({ title: t.title, people: t.students.length, phones });
   }
   return out;

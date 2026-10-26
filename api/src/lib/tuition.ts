@@ -92,10 +92,18 @@ export async function memberStudents(tuition: string, ids: string[], db: Db = po
   if (!n || n.n !== ids.length) throw bad('One of those students is not in this tuition.', 'unknown_student');
 }
 
-/** The questions must all be this tuition's own: a question id from another tuition is refused. */
-export async function ownQuestions(tuition: string, ids: string[], db: Db = pool) {
+/**
+ * The questions must all be this tuition's own: a question id from another tuition is refused. A course's test
+ * takes only that course's questions (`course`), and a group's test none of a course's.
+ */
+export async function ownQuestions(tuition: string, ids: string[], db: Db = pool, course: string | null = null) {
   if (!ids.length) return;
-  const n = await tq1<{ n: number }>(tuition, `select count(*) as n from questions where tuition_id = @T and id = any($1::uuid[])`, [ids], db);
+  const n = await tq1<{ n: number }>(
+    tuition,
+    `select count(*) as n from questions where tuition_id = @T and id = any($1::uuid[]) and course_id is not distinct from $2::uuid`,
+    [ids, course],
+    db,
+  );
   if (!n || n.n !== ids.length) throw bad('One of those questions is not in this tuition.', 'unknown_question');
 }
 

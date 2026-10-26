@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import {
   checkPassword, checkUsername, createSession, hashSecret, LOCK_MINUTES, MAX_FAILED, requireUser, tokenHash, verifySecret, type AppEnv,
 } from '../lib/auth.ts';
-import { clientInfo, recordInstall } from '../lib/client.ts';
+import { clientInfo, knowsCourses, minBuild, recordInstall, tooOld, updateRequired } from '../lib/client.ts';
 import { pool, q, q1, tx } from '../lib/db.ts';
 import { bad, HttpError, int, str, uuidOpt } from '../lib/http.ts';
 import { addLevel, CLASS_MAX, CLASS_MIN, LEVELS_JSON } from '../lib/levels.ts';
@@ -74,6 +74,20 @@ authRoutes.post('/login', async (c) => {
   if (!u.active) {
     await log('inactive', u.id);
     throw new HttpError(403, 'inactive', 'This login has been turned off. Please ask your teacher.');
+  }
+  // Said only to someone who knows the login is right, like "turned off" above. An app that is too old, or from
+  // before courses and signing in as a student who has no class, is told to update instead of being let in to a
+  // screen it cannot show.
+  if (tooOld(c, await minBuild())) {
+    await log('update_required', u.id);
+    throw updateRequired();
+  }
+  if (u.role === 'student' && !knowsCourses(c)) {
+    const noClass = await q1(`select 1 as x from memberships where user_id = $1 and role = 'student' and status = 'active' and class_level is null`, [u.id]);
+    if (noClass) {
+      await log('update_required', u.id);
+      throw updateRequired('Your courses need the newest version of Core Academy. Please install it, then open the app again. Your tutor can send it to you.');
+    }
   }
   await pool.query('update users set failed_count = 0, locked_until = null, last_seen_at = now() where id = $1', [u.id]);
   await recordInstall(u.id, ci);
@@ -191,7 +205,7 @@ authRoutes.post('/tuitions', requireUser('teacher', { tuition: 'none' }), async 
   return c.json({ tuition: { id: t.id, name: t.name, role: 'owner', join_code: t.join_code, join_code_shown: showCode(t.join_code) } }, 201);
 });
 
-authRoutes.post('/logout', requireUser(), async (c) => {
+authRoutes.post('/logout', requireUser(undefined, { gate: false }), async (c) => {
   const header = c.req.header('authorization') ?? '';
   await pool.query('delete from sessions where token_hash = $1', [tokenHash(header.slice(7).trim())]);
   return c.json({ ok: true });
