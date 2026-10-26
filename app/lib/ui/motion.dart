@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -18,7 +19,8 @@ const _ease = Curves.easeOutCubic;
 
 /// Fades its child in and lifts it a few pixels when it first appears, after [delay]. Give [scope]
 /// (a State or any object that lives as long as the screen) and an [id] and it plays once per
-/// screen: a row scrolled away and back does not play again.
+/// screen: a row scrolled away and back does not play again. A child that starts out of sight, such
+/// as a row far down a long list, waits there and comes in as the list is scrolled to it.
 class Reveal extends StatefulWidget {
   const Reveal({
     super.key,
@@ -41,13 +43,19 @@ class Reveal extends StatefulWidget {
 
   static final _seen = Expando<Set<Object>>('Reveal.seen');
 
+  /// When each screen made its first reveal. A row made long after that (the list was scrolled or
+  /// loaded again) has missed its place in the cascade, so it comes in at once.
+  static final _born = Expando<Stopwatch>('Reveal.born');
+
   @override
   State<Reveal> createState() => _RevealState();
 }
 
 class _RevealState extends State<Reveal> with SingleTickerProviderStateMixin {
   late final AnimationController _c = AnimationController(vsync: this, duration: widget.duration); // motion: approved
-  bool _skip = false;
+  ScrollPosition? _watching;
+  Timer? _timer;
+  Duration _wait = Duration.zero;
 
   @override
   void initState() {
@@ -56,21 +64,73 @@ class _RevealState extends State<Reveal> with SingleTickerProviderStateMixin {
     final id = widget.id;
     if (scope != null && id != null) {
       final seen = Reveal._seen[scope] ??= <Object>{};
-      if (!seen.add(id)) _skip = true;
+      if (!seen.add(id)) {
+        _c.value = 1;
+        return;
+      }
     }
-    if (_skip) {
-      _c.value = 1;
-    } else if (widget.delay == Duration.zero) {
+    _wait = widget.delay;
+    if (scope != null && _wait > Duration.zero) {
+      final age = (Reveal._born[scope] ??= Stopwatch()..start()).elapsed;
+      _wait = age >= _wait ? Duration.zero : _wait - age;
+    }
+    // Whether it is in sight is known only once it has been laid out.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _arm());
+  }
+
+  void _arm() {
+    if (!mounted) return;
+    final scrollable = Scrollable.maybeOf(context);
+    if (scrollable != null && !_inView(scrollable)) {
+      _watching = scrollable.position..addListener(_onScroll);
+      return;
+    }
+    _begin(_wait);
+  }
+
+  bool _looking = false;
+
+  /// The child has not moved until the list has been laid out again, so look after the next frame.
+  void _onScroll() {
+    if (_looking) return;
+    _looking = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _looking = false;
+      final scrollable = mounted ? Scrollable.maybeOf(context) : null;
+      if (scrollable == null || !_inView(scrollable)) return;
+      _unwatch();
+      _begin(Duration.zero);
+    });
+  }
+
+  void _begin(Duration wait) {
+    if (wait == Duration.zero) {
       _c.forward(); // motion: approved
     } else {
-      Future<void>.delayed(widget.delay, () {
+      _timer = Timer(wait, () {
         if (mounted) _c.forward(); // motion: approved
       });
     }
   }
 
+  /// Whether a little of the child shows in the scrolling area it sits in.
+  bool _inView(ScrollableState s) {
+    final box = context.findRenderObject();
+    final view = s.context.findRenderObject();
+    if (box is! RenderBox || view is! RenderBox || !box.attached || !box.hasSize || !view.attached || !view.hasSize) return true;
+    final at = box.localToGlobal(Offset.zero, ancestor: view);
+    return s.widget.axis == Axis.vertical ? at.dy < view.size.height - 24 : at.dx < view.size.width - 24;
+  }
+
+  void _unwatch() {
+    _watching?.removeListener(_onScroll);
+    _watching = null;
+  }
+
   @override
   void dispose() {
+    _timer?.cancel();
+    _unwatch();
     _c.dispose();
     super.dispose();
   }
@@ -89,11 +149,18 @@ class _RevealState extends State<Reveal> with SingleTickerProviderStateMixin {
   }
 }
 
-/// [Reveal] for a list: each child comes in a little after the one before it, up to [max] of them.
-List<Widget> staggered(List<Widget> children, {Object? scope, String prefix = 'row', int max = 9, int stepMs = 55, int startMs = 0}) => [
-      for (final (i, c) in children.indexed)
-        i >= max ? c : Reveal(scope: scope, id: '$prefix$i', delay: Duration(milliseconds: startMs + i * stepMs), child: c),
-    ];
+/// [Reveal] for a list: each child comes in a little after the one before it. The wait stops growing
+/// after [max] children, so a long list is not slow and every row still comes in. A bare spacer (a
+/// SizedBox with no child) has nothing to fade, so it neither animates nor takes a place in the order.
+List<Widget> staggered(List<Widget> children, {Object? scope, String prefix = 'row', int max = 9, int stepMs = 55, int startMs = 0}) {
+  var place = 0;
+  Widget one(Widget c) {
+    final i = place++;
+    return Reveal(scope: scope, id: '$prefix$i', delay: Duration(milliseconds: startMs + math.min(i, max) * stepMs), child: c);
+  }
+
+  return [for (final c in children) if (c is SizedBox && c.child == null) c else one(c)];
+}
 
 // ---------------------------------------------------------------- loading
 
