@@ -219,6 +219,17 @@ class _TestScreenState extends State<TestScreen> {
     );
     if (ok && mounted) {
       _flush();
+      _exit();
+    }
+  }
+
+  /// Back to the screen the test was opened from: the course page for a course test, the home list for a
+  /// class test. It loads again as it comes back, so the test shows as under way, one tap from carrying on.
+  /// With nothing underneath (the test was opened straight from a link) it goes home.
+  void _exit() {
+    if (context.canPop()) {
+      context.pop();
+    } else {
       context.go('/s');
     }
   }
@@ -286,7 +297,7 @@ class _TestScreenState extends State<TestScreen> {
           child: Column(children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(gutter, 8, gutter, 0),
-              child: Row(children: [CircleBtn(icon: Ph.x, label: 'Close', onTap: () => context.go('/s'))]),
+              child: Row(children: [CircleBtn(icon: Ph.x, label: 'Close', onTap: _exit)]),
             ),
             Expanded(
               child: _error != null

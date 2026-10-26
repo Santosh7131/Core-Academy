@@ -778,10 +778,16 @@ class PushedPanel extends StatelessWidget {
   /// Pull down to load again. Without it the panel does not react to a pull.
   final Future<void> Function()? onRefresh;
 
+  /// The space between the end of the content and a pinned footer. The list itself runs down to [_footerGap]
+  /// above the footer and carries the rest as its own end padding, so with the keyboard up a form is cut by
+  /// the edge as late as it can be, instead of a hand's breadth early.
+  static const _gapToFooter = 38.0;
+  static const _footerGap = 4.0;
+
   Widget _scrolling() {
     final list = ListView(
       physics: onRefresh == null ? null : const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(gutter, 22, gutter, 28),
+      padding: EdgeInsets.fromLTRB(gutter, 22, gutter, footer == null ? 28 : _gapToFooter - _footerGap),
       children: [
         if (kicker != null) ...[Kicker(kicker!), const SizedBox(height: 6)],
         Fig(title, style: displayStyle),
@@ -804,7 +810,7 @@ class PushedPanel extends StatelessWidget {
               ]),
             ),
             Expanded(child: _scrolling()),
-            if (footer != null) Padding(padding: const EdgeInsets.fromLTRB(gutter, 10, gutter, 12), child: footer),
+            if (footer != null) Padding(padding: const EdgeInsets.fromLTRB(gutter, _footerGap, gutter, 12), child: footer),
           ]),
         ),
       );

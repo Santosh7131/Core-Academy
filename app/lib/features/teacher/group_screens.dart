@@ -863,7 +863,7 @@ class _ChatTestScreenState extends State<ChatTestScreen> {
           GroupedInputs(children: [
             BareField(
               controller: _text,
-              placeholder: 'What should the test cover? For example: easy and medium questions on quadratic equations',
+              placeholder: 'What should the test cover? For example: easy and medium questions on one topic',
               maxLines: null,
               minLines: 4,
               maxLength: 1500,

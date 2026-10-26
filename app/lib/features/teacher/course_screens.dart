@@ -298,12 +298,12 @@ class _CourseScreenState extends State<CourseScreen> with WidgetsBindingObserver
     }
   }
 
-  /// The course, its tests and everyone's results go; the people keep their logins and their groups.
+  /// The course, its tests and everyone's results go; the people keep their logins and any groups they are in.
   Future<void> _delete() async {
     final yes = await confirmCard(
       context,
       title: 'Delete this course?',
-      body: 'This deletes $_name, its tests and everyone\'s results. The people in it keep their logins and their groups. This cannot be undone.',
+      body: 'This deletes $_name, its tests and everyone\'s results. The people in it stay as students, with their logins and any groups they are in. This cannot be undone.',
       confirm: 'Delete course',
       destructive: true,
     );

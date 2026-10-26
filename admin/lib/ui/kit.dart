@@ -683,6 +683,7 @@ class BareField extends StatelessWidget {
     this.onChanged,
     this.style,
     this.inputFormatters,
+    this.maxLength,
     this.autofillHints,
     this.suffix,
   });
@@ -701,6 +702,10 @@ class BareField extends StatelessWidget {
   final TextCapitalization capitalization;
   final TextStyle? style;
   final List<TextInputFormatter>? inputFormatters;
+
+  /// The most characters the field takes, the same as the server accepts, so a person cannot type past it
+  /// and meet an error afterwards. No counter is drawn: the field simply stops.
+  final int? maxLength;
   final Iterable<String>? autofillHints;
 
   /// A small control at the end of the field, such as the show or hide eye of a password.
@@ -716,7 +721,7 @@ class BareField extends StatelessWidget {
         textInputAction: action,
         onSubmitted: onSubmitted,
         onChanged: onChanged,
-        inputFormatters: inputFormatters,
+        inputFormatters: [...?inputFormatters, if (maxLength != null) LengthLimitingTextInputFormatter(maxLength!)],
         autofillHints: autofillHints,
         maxLines: obscure ? 1 : maxLines,
         minLines: minLines,
@@ -740,13 +745,14 @@ class BareField extends StatelessWidget {
 /// A grouped-input row with a short muted name at its start, for fields that already hold
 /// a value (a placeholder alone would vanish). Not a label above the box.
 class NamedField extends StatelessWidget {
-  const NamedField({super.key, required this.name, required this.controller, this.placeholder = '', this.capitalization = TextCapitalization.none, this.obscure = false, this.keyboard});
+  const NamedField({super.key, required this.name, required this.controller, this.placeholder = '', this.capitalization = TextCapitalization.none, this.obscure = false, this.keyboard, this.maxLength});
   final String name;
   final TextEditingController controller;
   final String placeholder;
   final TextCapitalization capitalization;
   final bool obscure;
   final TextInputType? keyboard;
+  final int? maxLength;
 
   @override
   Widget build(BuildContext context) => Row(children: [
@@ -754,7 +760,7 @@ class NamedField extends StatelessWidget {
           padding: const EdgeInsets.only(left: 17),
           child: SizedBox(width: 92, child: Text(name, style: bodyStyle.copyWith(color: muted))),
         ),
-        Expanded(child: BareField(controller: controller, placeholder: placeholder, capitalization: capitalization, obscure: obscure, keyboard: keyboard)),
+        Expanded(child: BareField(controller: controller, placeholder: placeholder, capitalization: capitalization, obscure: obscure, keyboard: keyboard, maxLength: maxLength)),
       ]);
 }
 
@@ -773,10 +779,16 @@ class PushedPanel extends StatelessWidget {
   /// Pull down to load again. Without it the panel does not react to a pull.
   final Future<void> Function()? onRefresh;
 
+  /// The space between the end of the content and a pinned footer. The list itself runs down to [_footerGap]
+  /// above the footer and carries the rest as its own end padding, so with the keyboard up a form is cut by
+  /// the edge as late as it can be, instead of a hand's breadth early.
+  static const _gapToFooter = 38.0;
+  static const _footerGap = 4.0;
+
   Widget _scrolling() {
     final list = ListView(
       physics: onRefresh == null ? null : const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(gutter, 22, gutter, 28),
+      padding: EdgeInsets.fromLTRB(gutter, 22, gutter, footer == null ? 28 : _gapToFooter - _footerGap),
       children: [
         if (kicker != null) ...[Kicker(kicker!), const SizedBox(height: 6)],
         Fig(title, style: displayStyle),
@@ -799,7 +811,7 @@ class PushedPanel extends StatelessWidget {
               ]),
             ),
             Expanded(child: _scrolling()),
-            if (footer != null) Padding(padding: const EdgeInsets.fromLTRB(gutter, 10, gutter, 12), child: footer),
+            if (footer != null) Padding(padding: const EdgeInsets.fromLTRB(gutter, _footerGap, gutter, 12), child: footer),
           ]),
         ),
       );

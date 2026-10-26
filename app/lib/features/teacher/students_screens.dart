@@ -301,13 +301,13 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> with WidgetsB
     }
   }
 
-  /// Takes the person out of the course this page was opened from. They stay a student with their login and groups.
+  /// Takes the person out of the course this page was opened from. They stay a student with their login and any groups they are in.
   Future<void> _leaveCourse(Map<String, dynamic> s) async {
     final course = widget.courseName ?? 'this course';
     final ok = await confirmCard(
       context,
       title: 'Remove ${s['display_name']} from $course?',
-      body: 'They stay a student with their login and their groups. What they wrote in the course stays in its results.',
+      body: 'They stay a student with their login and any groups they are in. What they wrote in the course stays in its results.',
       confirm: 'Remove',
       destructive: true,
     );
