@@ -468,6 +468,8 @@ and the scripts that read it would then point at the live database.
 | `npm run typecheck` | The API type-checks. |
 | `npm run test:latex` | The LaTeX repair for model replies and the bare-maths wrapping (29 cases). |
 | `node tools/tenant-test.ts` | 145 checks that tuitions are walled off from each other, and that sign-up, joining, switching, PIN resets, removals, the owner's join code, the rate limits, picture keys and chapters from another tuition, upload sizes and the daily AI cap behave. It makes its own tutors, tuitions and students, and removes them. |
+| `node tools/security-test.ts` | 663 checks that walk every route the API has, found from the app itself: nobody and each role are refused what they should be, a tutor of another tuition can read or change nothing, junk bodies, ids and queries never end in a server error, the answer key never reaches a student, a new password signs the other phones out, guesses sent all at once are counted one by one, and the sign-up and tuition caps hold under a burst. It makes its own data and removes it. Dev only. |
+| `node tools/load-test.ts` | A classroom (40 students unless `--students` says otherwise) logs in, opens the home screen, starts a test, saves answers and submits, all at the same moment, then reads the marks: no server errors, one finished attempt each, each marked on its own answers, the marks open for everyone, and a table of how long each step took (the trip from your PC to the database is in those figures). It makes its own data and removes it. Dev only. |
 | `node tools/levels-test.ts` | 47 checks of classes 1 to 12 and the levels a tuition names itself. |
 | `node tools/votes-test.ts` | 25 checks of when two or three AI answers agree enough to mark a question. |
 | `node tools/courses-test.ts` | 114 checks of courses: people from any class or with no class at all, a course's papers, questions and tests kept out of every group, app versions from before courses kept away from them and told to update, the minimum-build gate, and deleting a course while its people stay. Against the local dry-run API (`--base http://127.0.0.1:8787 --log server.log`) it adds a check that the push names the course. It makes its own data and removes it. Dev only. `tools/courses-demo.ts` sets up a small demo of courses on dev (`--clear` removes it). |
@@ -478,7 +480,7 @@ and the scripts that read it would then point at the live database.
 | `node tools/check-answers.ts` | Every sample question's marked answer is right, and no other option equals it. |
 | `node tools/ai-test.ts` | How accurately the AI reads the 2-page sample paper (render it first with `tools/make-sample-paper.ps1`). |
 | `flutter analyze` and `flutter test` (in `app/` and in `admin/`) | The lints and the widget tests; the screenshot harnesses run in their check-only mode. |
-| `SHOTS=1 flutter test test/shots/screens_test.dart` (in `app/` or `admin/`) | Draws the screens, light and dark, to `tools/out/shots` on your PC from a stub server: the real widgets and fonts, no phone. `LANDSCAPE=1` in `app/` draws them on their side. |
+| `SHOTS=1 flutter test test/shots/screens_test.dart` (in `app/` or `admin/`) | Draws the screens, light and dark, to `tools/out/shots` on your PC from a stub server: the real widgets and fonts, no phone. `LANDSCAPE=1` in `app/` draws them on their side, and `WIDTH_DP=360 TEXTSCALE=1.5` draws them on a narrow phone with large text, which is how to find what stops fitting. |
 | `flutter test test/contract/tenant_flow_test.dart --dart-define=API_BASE=http://127.0.0.1:8787` (in `app/`) | The app's session code against the local API: sign up, make a tuition, join a second one, be let in, switch. Then `node tools/out/cleanup-contract.mjs`. |
 | `python tools/audit.py` | The design audit: type scale only, no stray colours, no banned patterns, and where the accent is used. |
 
@@ -507,8 +509,9 @@ live only in those files and on the deployed function, never in the app.
 Anyone can sign up as a tutor, so each door has a ceiling:
 
 - **Sign-ups:** 30 new tutors an hour for the whole service, 3 a day from one phone, and 3 tuitions a tutor.
-- **Logins:** 5 wrong tries lock a login for 5 minutes. A login that does not exist takes as long to
-  refuse as one that does, and a turned-off login says so only to someone who knows its PIN.
+- **Logins:** 5 wrong tries lock a login for 5 minutes. Each try is counted before it is judged, so a burst of
+  guesses sent at once is counted one by one; a tutor changing their password counts the same way. A login that
+  does not exist takes as long to refuse as one that does, and a turned-off login says so only to someone who knows its PIN.
   A student asking to join with a code gets 8 wrong codes an hour.
 - **AI:** a tuition may start 100 papers and make 500 AI calls (failed ones too) in a day; `AI_DAILY_CALLS`
   on the function changes the second. Past it the app says the tuition has used its day of AI.
