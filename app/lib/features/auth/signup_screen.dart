@@ -66,10 +66,11 @@ class _TutorSignUpScreenState extends State<TutorSignUpScreen> {
         children: [
           const SizedBox(height: 26),
           GroupedInputs(children: [
-            BareField(controller: _name, placeholder: 'Your name', capitalization: TextCapitalization.words, action: TextInputAction.next),
+            BareField(controller: _name, placeholder: 'Your name', maxLength: 60, capitalization: TextCapitalization.words, action: TextInputAction.next),
             BareField(
               controller: _user,
               placeholder: 'Username, in lowercase letters',
+              maxLength: 24,
               keyboard: TextInputType.visiblePassword,
               action: TextInputAction.next,
             ),

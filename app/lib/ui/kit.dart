@@ -682,6 +682,7 @@ class BareField extends StatelessWidget {
     this.onChanged,
     this.style,
     this.inputFormatters,
+    this.maxLength,
     this.autofillHints,
     this.suffix,
   });
@@ -700,6 +701,10 @@ class BareField extends StatelessWidget {
   final TextCapitalization capitalization;
   final TextStyle? style;
   final List<TextInputFormatter>? inputFormatters;
+
+  /// The most characters the field takes, the same as the server accepts, so a person cannot type past it
+  /// and meet an error afterwards. No counter is drawn: the field simply stops.
+  final int? maxLength;
   final Iterable<String>? autofillHints;
 
   /// A small control at the end of the field, such as the show or hide eye of a password.
@@ -715,7 +720,7 @@ class BareField extends StatelessWidget {
         textInputAction: action,
         onSubmitted: onSubmitted,
         onChanged: onChanged,
-        inputFormatters: inputFormatters,
+        inputFormatters: [...?inputFormatters, if (maxLength != null) LengthLimitingTextInputFormatter(maxLength!)],
         autofillHints: autofillHints,
         maxLines: obscure ? 1 : maxLines,
         minLines: minLines,
@@ -739,13 +744,14 @@ class BareField extends StatelessWidget {
 /// A grouped-input row with a short muted name at its start, for fields that already hold
 /// a value (a placeholder alone would vanish). Not a label above the box.
 class NamedField extends StatelessWidget {
-  const NamedField({super.key, required this.name, required this.controller, this.placeholder = '', this.capitalization = TextCapitalization.none, this.obscure = false, this.keyboard});
+  const NamedField({super.key, required this.name, required this.controller, this.placeholder = '', this.capitalization = TextCapitalization.none, this.obscure = false, this.keyboard, this.maxLength});
   final String name;
   final TextEditingController controller;
   final String placeholder;
   final TextCapitalization capitalization;
   final bool obscure;
   final TextInputType? keyboard;
+  final int? maxLength;
 
   @override
   Widget build(BuildContext context) => Row(children: [
@@ -753,7 +759,7 @@ class NamedField extends StatelessWidget {
           padding: const EdgeInsets.only(left: 17),
           child: SizedBox(width: 92, child: Text(name, style: bodyStyle.copyWith(color: muted))),
         ),
-        Expanded(child: BareField(controller: controller, placeholder: placeholder, capitalization: capitalization, obscure: obscure, keyboard: keyboard)),
+        Expanded(child: BareField(controller: controller, placeholder: placeholder, capitalization: capitalization, obscure: obscure, keyboard: keyboard, maxLength: maxLength)),
       ]);
 }
 

@@ -866,6 +866,7 @@ class _ChatTestScreenState extends State<ChatTestScreen> {
               placeholder: 'What should the test cover? For example: easy and medium questions on quadratic equations',
               maxLines: null,
               minLines: 4,
+              maxLength: 1500,
               capitalization: TextCapitalization.sentences,
             ),
           ]),

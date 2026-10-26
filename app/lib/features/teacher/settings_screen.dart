@@ -105,8 +105,8 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
       subtitle: 'They log in with these, and see every group and student.',
       builder: (ctx) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         GroupedInputs(children: [
-          BareField(controller: name, placeholder: 'Name', capitalization: TextCapitalization.words),
-          BareField(controller: user, placeholder: 'Username, in lowercase letters'),
+          BareField(controller: name, placeholder: 'Name', maxLength: 60, capitalization: TextCapitalization.words),
+          BareField(controller: user, placeholder: 'Username, in lowercase letters', maxLength: 24),
           BareField(controller: pass, placeholder: 'Password, 8 or more characters', obscure: true),
         ]),
         const SizedBox(height: 16),
@@ -218,8 +218,8 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
         if (_notice != null) ...[const SizedBox(height: 16), InlineNotice(_notice!, tone: Tone.success, icon: Ph.checkCircle)],
         const SectionRule('Tuition', padding: rule),
         GroupedInputs(children: [
-          NamedField(name: 'Tuition', controller: _tuition, placeholder: 'Tuition name', capitalization: TextCapitalization.words),
-          NamedField(name: 'Your name', controller: _name, placeholder: 'As students see it', capitalization: TextCapitalization.words),
+          NamedField(name: 'Tuition', controller: _tuition, placeholder: 'Tuition name', capitalization: TextCapitalization.words, maxLength: 60),
+          NamedField(name: 'Your name', controller: _name, placeholder: 'As students see it', capitalization: TextCapitalization.words, maxLength: 60),
         ]),
         const SizedBox(height: 10),
         SecondaryButton('Save names', onTap: () => _run(() async {

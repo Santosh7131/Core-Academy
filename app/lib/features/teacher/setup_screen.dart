@@ -182,7 +182,7 @@ class _SetupScreenState extends State<SetupScreen> {
           Text('Your tuition', style: displayStyle),
           const SizedBox(height: 22),
           GroupedInputs(children: [
-            BareField(controller: _name, placeholder: 'Tuition name, e.g. Priya Maths Classes', capitalization: TextCapitalization.words),
+            BareField(controller: _name, placeholder: 'Tuition name, e.g. Priya Maths Classes', maxLength: 60, capitalization: TextCapitalization.words),
           ]),
           SectionRule('What you teach', count: _groups.length, padding: const EdgeInsets.fromLTRB(0, 28, 0, 11)),
           if (_groups.isNotEmpty)

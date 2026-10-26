@@ -195,7 +195,7 @@ class _QuestionEditorState extends State<QuestionEditor> {
       title: 'Add a chapter',
       builder: (ctx) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         GroupedInputs(children: [
-          BareField(controller: c, placeholder: 'Chapter name', autofocus: true, capitalization: TextCapitalization.words, onSubmitted: (v) => Navigator.of(ctx).pop(v)),
+          BareField(controller: c, placeholder: 'Chapter name', autofocus: true, maxLength: 80, capitalization: TextCapitalization.words, onSubmitted: (v) => Navigator.of(ctx).pop(v)),
         ]),
         const SizedBox(height: 16),
         PrimaryButton('Add', onTap: () => Navigator.of(ctx).pop(c.text)),
@@ -374,7 +374,7 @@ class _QuestionEditorState extends State<QuestionEditor> {
         ],
         const FormLabel('Question'),
         GroupedInputs(children: [
-          BareField(controller: _text, focusNode: _focus[0], placeholder: 'Type the question', maxLines: null, minLines: 2, capitalization: TextCapitalization.sentences),
+          BareField(controller: _text, focusNode: _focus[0], placeholder: 'Type the question', maxLines: null, minLines: 2, maxLength: 4000, capitalization: TextCapitalization.sentences),
         ]),
         const SizedBox(height: 10),
         MathToolbar(onInsert: (s) {
@@ -444,7 +444,7 @@ class _QuestionEditorState extends State<QuestionEditor> {
           SecondaryButton('Add a diagram', icon: Ph.image, onTap: _busy ? null : _pickImage),
         const FormLabel('Worked solution (optional)'),
         GroupedInputs(children: [
-          BareField(controller: _solution, focusNode: _focus[5], placeholder: 'Shown to students after they submit', maxLines: null, minLines: 2, capitalization: TextCapitalization.sentences),
+          BareField(controller: _solution, focusNode: _focus[5], placeholder: 'Shown to students after they submit', maxLines: null, minLines: 2, maxLength: 4000, capitalization: TextCapitalization.sentences),
         ]),
         const FormLabel('Marks'),
         ChipRow(padding: EdgeInsets.zero, children: [

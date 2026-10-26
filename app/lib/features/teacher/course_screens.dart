@@ -76,6 +76,7 @@ class _NewCourseCardState extends State<_NewCourseCard> {
             controller: _name,
             placeholder: 'e.g. Spoken English, Batch 1',
             autofocus: true,
+            maxLength: 60,
             capitalization: TextCapitalization.words,
             action: TextInputAction.done,
             onChanged: (_) => setState(() => _error = null),
@@ -664,6 +665,7 @@ class _AddPeopleScreenState extends State<AddPeopleScreen> {
           BareField(
             controller: _name,
             placeholder: 'Full name',
+            maxLength: 60,
             capitalization: TextCapitalization.words,
             action: TextInputAction.done,
             onChanged: _suggest,
@@ -674,6 +676,7 @@ class _AddPeopleScreenState extends State<AddPeopleScreen> {
           BareField(
             controller: _username,
             placeholder: 'Username',
+            maxLength: 24,
             keyboard: TextInputType.visiblePassword,
             onChanged: (_) => setState(() => _usernameEdited = true),
           ),

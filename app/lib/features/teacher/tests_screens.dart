@@ -292,7 +292,7 @@ class _TestEditorState extends State<TestEditor> {
       children: [
         const SizedBox(height: 22),
         GroupedInputs(children: [
-          BareField(controller: _title, placeholder: 'Test name, e.g. Unit test 3', capitalization: TextCapitalization.sentences),
+          BareField(controller: _title, placeholder: 'Test name, e.g. Unit test 3', maxLength: 100, capitalization: TextCapitalization.sentences),
         ]),
         if (isNew && !_isCourse) ...[
           const FormLabel('Class'),

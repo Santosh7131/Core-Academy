@@ -141,6 +141,7 @@ class _AddStudentScreenState extends State<AddStudentScreen> {
           BareField(
             controller: _name,
             placeholder: 'Full name',
+            maxLength: 60,
             capitalization: TextCapitalization.words,
             action: TextInputAction.done,
             onChanged: _suggest,
@@ -159,6 +160,7 @@ class _AddStudentScreenState extends State<AddStudentScreen> {
           BareField(
             controller: _username,
             placeholder: 'Username',
+            maxLength: 24,
             keyboard: TextInputType.visiblePassword,
             onChanged: (_) => setState(() => _usernameEdited = true),
           ),

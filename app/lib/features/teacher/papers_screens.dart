@@ -1355,7 +1355,7 @@ class _MissingDetailsState extends State<_MissingDetails> {
         const SizedBox(height: 6),
         const SizedBox(height: 14),
         GroupedInputs(children: [
-          BareField(controller: _name, placeholder: 'e.g. Half-yearly exam', capitalization: TextCapitalization.sentences),
+          BareField(controller: _name, placeholder: 'e.g. Half-yearly exam', maxLength: 80, capitalization: TextCapitalization.sentences),
         ]),
         const SizedBox(height: 18),
         PrimaryButton('Carry on', busy: _busy, onTap: gap == null ? _save : null, disabledReason: _busy ? null : gap),
@@ -1467,7 +1467,7 @@ class _PaperDetailsState extends State<_PaperDetails> {
       children: [
         const FormLabel('Name'),
         GroupedInputs(children: [
-          BareField(controller: _name, placeholder: 'Paper name, e.g. Half-yearly exam', capitalization: TextCapitalization.sentences),
+          BareField(controller: _name, placeholder: 'Paper name, e.g. Half-yearly exam', maxLength: 80, capitalization: TextCapitalization.sentences),
         ]),
         const SizedBox(height: 30),
         Center(child: TextAction('Delete this paper', color: danger, onTap: _delete)),
@@ -1845,7 +1845,7 @@ class _DraftEditorState extends State<DraftEditor> {
         ]),
         const FormLabel('Question'),
         GroupedInputs(children: [
-          BareField(controller: _text, focusNode: _focus[0], placeholder: 'Question', maxLines: null, minLines: 2, capitalization: TextCapitalization.sentences),
+          BareField(controller: _text, focusNode: _focus[0], placeholder: 'Question', maxLines: null, minLines: 2, maxLength: 4000, capitalization: TextCapitalization.sentences),
         ]),
         const SizedBox(height: 10),
         MathToolbar(onInsert: (s) {
