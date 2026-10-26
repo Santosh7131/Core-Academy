@@ -4,7 +4,7 @@
 //   node tools/min-build.ts [--env .env.local] status [build]    what is set, and how many phones a build would turn away
 //   node tools/min-build.ts [--env .env.local] set <build> --yes
 //   node tools/min-build.ts [--env .env.local] clear --yes
-// On main (--env .env.main) set and clear decide what real students can open: that needs Santosh's go-ahead first,
+// On main (--env .env.main) set and clear decide what real students can open: that needs the owner's go-ahead first,
 // after the release is out and the in-app update has been seen to work. Without --yes nothing is written.
 import pg from 'pg';
 
