@@ -26,14 +26,17 @@ class TestHero extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
       decoration: surface(radius: rHero, shadow: e3),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          Kicker(resume ? 'Under way' : 'Open now'),
-          const Spacer(),
-          if (resume && deadline != null)
-            TagChip('Ends ${f.time(deadline)}', tone: Tone.warning)
-          else if (closes != null)
-            TagChip('${f.left(closes)} left', tone: soon ? Tone.warning : Tone.neutral),
-        ]),
+        // A Wrap, not a Row: with large text the chip drops to its own line instead of running off the card.
+        SizedBox(
+          width: double.infinity,
+          child: Wrap(alignment: WrapAlignment.spaceBetween, crossAxisAlignment: WrapCrossAlignment.center, spacing: 10, runSpacing: 8, children: [
+            Kicker(resume ? 'Under way' : 'Open now'),
+            if (resume && deadline != null)
+              TagChip('Ends ${f.time(deadline)}', tone: Tone.warning)
+            else if (closes != null)
+              TagChip('${f.left(closes)} left', tone: soon ? Tone.warning : Tone.neutral),
+          ]),
+        ),
         const SizedBox(height: 14),
         Fig('${test['title']}', style: titleStyle, maxLines: 2),
         const SizedBox(height: 9),

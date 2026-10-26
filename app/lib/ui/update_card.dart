@@ -92,7 +92,7 @@ class UpdateCard extends StatelessWidget {
         title: 'Version ${r.version}',
         subtitle: 'What is new',
         builder: (ctx) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          Flexible(child: SingleChildScrollView(child: Fig(r.notes, style: bodyStyle))),
+          Fig(r.notes, style: bodyStyle),
           const SizedBox(height: 18),
           PrimaryButton('Update now', onTap: () {
             Navigator.of(ctx).pop();

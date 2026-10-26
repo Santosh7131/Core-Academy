@@ -62,16 +62,21 @@ class MathText extends StatelessWidget {
       spans.add(WidgetSpan(
         alignment: PlaceholderAlignment.baseline,
         baseline: TextBaseline.alphabetic,
-        child: Row(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.baseline, textBaseline: TextBaseline.alphabetic, children: [
-          if (lead.isNotEmpty) Text(lead, style: style),
-          Math.tex(
-            value,
-            mathStyle: display ? MathStyle.display : MathStyle.text,
-            textStyle: mathStyle,
-            onErrorFallback: (_) => Text(value, style: style),
-          ),
-          if (trail.isNotEmpty) Text(trail, style: style),
-        ]),
+        // A formula wider than the line (large text on a narrow phone) is shrunk to fit it, not cut off at the edge.
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Row(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.baseline, textBaseline: TextBaseline.alphabetic, children: [
+            if (lead.isNotEmpty) Text(lead, style: style),
+            Math.tex(
+              value,
+              mathStyle: display ? MathStyle.display : MathStyle.text,
+              textStyle: mathStyle,
+              onErrorFallback: (_) => Text(value, style: style),
+            ),
+            if (trail.isNotEmpty) Text(trail, style: style),
+          ]),
+        ),
       ));
     }
     return Text.rich(

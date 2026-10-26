@@ -541,7 +541,7 @@ class _MenuRow extends StatelessWidget {
         child: Row(children: [
           Icon(icon, size: 20, color: destructive ? danger : muted),
           const SizedBox(width: 14),
-          Text(label, style: rowTitleStyle.copyWith(color: tint)),
+          Expanded(child: Text(label, style: rowTitleStyle.copyWith(color: tint))),
         ]),
       ),
     );

@@ -332,12 +332,16 @@ class _TestScreenState extends State<TestScreen> {
                     label: 'Question ${_i + 1} of ${_qs.length}. All questions',
                     onTap: _openMap,
                     child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                      Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                        Text('${_i + 1}', style: numStyle(size: 13)),
-                        Text(' / ${_qs.length}', style: numStyle(size: 13, weight: FontWeight.w600, color: faint)),
-                        const SizedBox(width: 4),
-                        Icon(Ph.caretDown, size: 12, color: faint),
-                      ]),
+                      // Shrinks rather than overflows when the text size is large and the timer takes the room.
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                          Text('${_i + 1}', style: numStyle(size: 13)),
+                          Text(' / ${_qs.length}', style: numStyle(size: 13, weight: FontWeight.w600, color: faint)),
+                          const SizedBox(width: 4),
+                          Icon(Ph.caretDown, size: 12, color: faint),
+                        ]),
+                      ),
                       const SizedBox(height: 8),
                       Track((_i + 1) / _qs.length, height: 5),
                     ]),

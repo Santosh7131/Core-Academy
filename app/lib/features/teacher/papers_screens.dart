@@ -1624,11 +1624,13 @@ class _DraftCard extends StatelessWidget {
     return Surface(
       padding: const EdgeInsets.fromLTRB(17, 15, 17, 12),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          Kicker('$label · page ${d['page_no']}'),
-          const Spacer(),
-          TagChip(tagText, tone: tagTone),
-        ]),
+        SizedBox(
+          width: double.infinity,
+          child: Wrap(alignment: WrapAlignment.spaceBetween, crossAxisAlignment: WrapCrossAlignment.center, spacing: 10, runSpacing: 8, children: [
+            Kicker('$label · page ${d['page_no']}'),
+            TagChip(tagText, tone: tagTone),
+          ]),
+        ),
         const SizedBox(height: 11),
         MathText('${d['text']}', style: optionStyle.copyWith(fontWeight: FontWeight.w600, fontSize: 15)),
         if (d['image_url'] != null) ...[

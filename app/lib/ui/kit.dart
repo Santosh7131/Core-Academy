@@ -847,7 +847,8 @@ Future<T?> showCentredCard<T>(BuildContext context, {required String title, Stri
                   ]),
                   if (subtitle != null) Fig(subtitle, style: labelStyle),
                   const SizedBox(height: 14),
-                  Flexible(child: Padding(padding: const EdgeInsets.only(right: 6), child: builder(ctx))),
+                  // Scrolls when the text is large or the screen short, so the button at the bottom can always be reached.
+                  Flexible(child: SingleChildScrollView(padding: const EdgeInsets.only(right: 6), child: builder(ctx))),
                 ]),
               ),
             ),

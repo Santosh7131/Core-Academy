@@ -41,6 +41,13 @@ final _shots = Platform.environment['SHOTS'] == '1';
 
 /// LANDSCAPE=1 draws every screen on its side (a phone turned round), to find what no longer fits.
 final _landscape = Platform.environment['LANDSCAPE'] == '1';
+
+/// TEXTSCALE=2.0 draws every screen with the phone's text size at double, and WIDTH_DP=320 on a narrow phone: the two ways a
+/// screen that fits at the usual size stops fitting. Without them the screens draw at 1.0 on a 411 dp wide phone.
+final _textScale = double.tryParse(Platform.environment['TEXTSCALE'] ?? '') ?? 1.0;
+final _widthDp = double.tryParse(Platform.environment['WIDTH_DP'] ?? '') ?? 1080 / 2.625;
+Widget _scaled(BuildContext context, Widget? child) =>
+    MediaQuery(data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(_textScale)), child: child!);
 final _boundary = GlobalKey();
 const _ratio = 2.625;
 
@@ -70,12 +77,12 @@ Map<String, Object?> _tuition({int pending = 2, bool open = true, String role = 
 
 Future<void> _show(WidgetTester t, Widget screen, {bool dark = false, double height = 2400}) async {
   setResolvedDark(dark);
-  t.view.physicalSize = _landscape ? const Size(2400, 1080) : Size(1080, height);
+  t.view.physicalSize = _landscape ? const Size(2400, 1080) : Size(_widthDp * _ratio, height);
   t.view.devicePixelRatio = _ratio;
   addTearDown(t.view.reset);
   await t.pumpWidget(RepaintBoundary(
     key: _boundary,
-    child: MaterialApp(debugShowCheckedModeBanner: false, theme: buildTheme(dark ? Brightness.dark : Brightness.light), home: screen),
+    child: MaterialApp(debugShowCheckedModeBanner: false, theme: buildTheme(dark ? Brightness.dark : Brightness.light), builder: _scaled, home: screen),
   ));
   await _settle(t);
 }
