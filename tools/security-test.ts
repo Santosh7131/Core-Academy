@@ -555,6 +555,22 @@ try {
   const huge = await call('POST', ignored, T3, JSON.stringify({ x: 'a'.repeat(1_500_000) }));
   check('a body over a megabyte is refused, not parsed', huge.status === 413 && code(huge) === 'too_big', { status: huge.status, body: huge.body });
   check('and the request after it is answered', (await call('GET', '/auth/me', T3, undefined)).status === 200);
+  // Bodies sent in pieces, with no length stated, get the same care: a big one is refused, a small one is still read by the route that needs it.
+  const pieces = (size: number, byte = 97) => new ReadableStream<Uint8Array>({
+    start(ctl) {
+      const piece = new Uint8Array(65_536).fill(byte);
+      for (let sent = 0; sent < size; sent += piece.length) ctl.enqueue(piece.subarray(0, Math.min(piece.length, size - sent)));
+      ctl.close();
+    },
+  });
+  const streamed = (path: string, body: ReadableStream<Uint8Array>, token?: string) =>
+    fetch(BASE + path, { method: 'POST', headers: { 'x-app': APP, 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) }, body, duplex: 'half', signal: AbortSignal.timeout(60_000) } as RequestInit)
+      .then(async (r) => ({ status: r.status, code: (await r.json().catch(() => null))?.error?.code as string | undefined }), () => ({ status: 0, code: undefined }));
+  const hugePieces = await streamed(ignored, pieces(5_000_000), T3);
+  check('five megabytes sent in pieces are refused too', hugePieces.status === 413 && hugePieces.code === 'too_big', hugePieces);
+  check('and the request after it is answered, again', (await call('GET', '/auth/me', T3, undefined)).status === 200);
+  const smallPieces = await streamed('/auth/login', new ReadableStream<Uint8Array>({ start(ctl) { ctl.enqueue(new TextEncoder().encode(JSON.stringify({ username: `${tag}.nobody`, secret: 'x' }))); ctl.close(); } }));
+  check('a small login body sent in pieces is still read by the login', smallPieces.status === 401 && smallPieces.code === 'wrong_login', smallPieces);
 } catch (e) {
   fail++;
   console.log('FAIL  unexpected error:', e);

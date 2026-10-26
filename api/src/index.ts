@@ -22,16 +22,30 @@ const app = new Hono<AppEnv>();
 // before any route runs, and one over MAX_BODY (the app sends a few KB at most) is read away and refused.
 const MAX_BODY = 1_000_000;
 const tooBig = () => new HttpError(413, 'too_big', 'That is too much data to send at once.');
+async function readAway(stream: ReadableStream<Uint8Array>, each?: (bytes: number) => void) {
+  const reader = stream.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return;
+    each?.(value.byteLength);
+  }
+}
 app.use('*', async (c, next) => {
-  const body = c.req.raw.body;
-  if (!body) return next();
+  const raw = c.req.raw;
+  if (!raw.body) return next();
+  // A body that says it is too big is read away without being kept.
   if (Number(c.req.header('content-length')) > MAX_BODY) {
-    const reader = body.getReader();
-    while (!(await reader.read()).done) { /* read away, not kept */ }
+    await readAway(raw.body);
     throw tooBig();
   }
-  // A copy is read, so the route can still read the request itself (the notification trigger does).
-  if ((await c.req.raw.clone().arrayBuffer()).byteLength > MAX_BODY) throw tooBig();
+  // Any other is read from a copy, so the route can still read the request itself (the notification trigger does). A body with no length stated can
+  // be any size: once it passes MAX_BODY the route's copy is let go and the rest is only read away, so nothing past the cap is ever kept.
+  let size = 0;
+  await readAway(raw.clone().body!, (n) => {
+    size += n;
+    if (size > MAX_BODY && size - n <= MAX_BODY) raw.body!.cancel().catch(() => {});
+  });
+  if (size > MAX_BODY) throw tooBig();
   return next();
 });
 
