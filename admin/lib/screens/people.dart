@@ -191,7 +191,7 @@ class _PeopleScreenState extends State<PeopleScreen> with WidgetsBindingObserver
 
   Widget _row(Map<String, dynamic> p) {
     final phones = f.asInt(p['phones']);
-    final who = p['role'] == 'teacher' ? 'Teacher' : 'Class ${p['class_level']}';
+    final who = p['role'] == 'teacher' ? 'Teacher' : (p['class_level'] == null ? 'No class' : 'Class ${p['class_level']}');
     final version = p['app_version'] as String? ?? (p['on_old_app'] == true ? 'older' : null);
     final Widget flag;
     if (p['active'] != true) {

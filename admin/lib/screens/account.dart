@@ -96,7 +96,7 @@ class _AccountScreenState extends State<AccountScreen> {
     final subjects = (a['subjects'] as List? ?? const []).join(', ');
 
     return PushedPanel(
-      kicker: a['role'] == 'teacher' ? 'Teacher' : 'Student · Class ${a['class_level']}',
+      kicker: a['role'] == 'teacher' ? 'Teacher' : (a['class_level'] == null ? 'Student · No class' : 'Student · Class ${a['class_level']}'),
       title: name,
       children: [
         const SizedBox(height: 12),
@@ -154,6 +154,7 @@ class _AccountScreenState extends State<AccountScreen> {
                 'lockout' => 'Locked after 5 wrong tries',
                 'locked' => 'Tried while locked',
                 'inactive' => 'Tried while turned off',
+                'update_required' => 'Turned away: the app needs an update',
                 _ => '${e['outcome']}',
               },
               meta: [if (e['model'] != null) '${e['model']}', if (e['app_version'] != null) 'app ${e['app_version']}'].join(' · ').ifEmpty('Phone not known (app 1.2.0 or older)'),

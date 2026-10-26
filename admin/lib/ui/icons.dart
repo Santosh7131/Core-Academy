@@ -71,6 +71,9 @@ abstract final class Ph {
   static const clockCountdown = IconData(0xed2c, fontFamily: _family);
   static const caretLeft = IconData(0xe138, fontFamily: _family);
   static const warningCircle = IconData(0xe4e2, fontFamily: _family);
+  static const graduationCap = IconData(0xe62c, fontFamily: _family);
+  static const userMinus = IconData(0xe4ce, fontFamily: _family);
+  static const circle = IconData(0xe18a, fontFamily: _family);
   static const gauge = IconData(0xe628, fontFamily: _family);
   static const deviceMobile = IconData(0xe1e0, fontFamily: _family);
   static const hardDrives = IconData(0xe2a0, fontFamily: _family);
@@ -85,7 +88,6 @@ abstract final class Ph {
   static const bellSlash = IconData(0xe0d4, fontFamily: _family);
   static const bug = IconData(0xe5f4, fontFamily: _family);
   static const globe = IconData(0xe288, fontFamily: _family);
-  static const circle = IconData(0xe18a, fontFamily: _family);
   static const buildings = IconData(0xe102, fontFamily: _family);
   static const currencyInr = IconData(0xe558, fontFamily: _family);
   static const pulse = IconData(0xe000, fontFamily: _family);
