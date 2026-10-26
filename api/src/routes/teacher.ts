@@ -1,13 +1,13 @@
 import { waitUntil } from '@neon/functions';
 import { Hono } from 'hono';
 import {
-  checkPassword, checkPin, checkUsername, hashSecret, killSessions, newPin, tuitionOf, verifySecret, type AppEnv,
+  checkPassword, checkPin, checkUsername, hashSecret, killSessions, LOCK_MINUTES, lockedError, newPin, takeTry, tokenHash, tuitionOf, verifySecret, type AppEnv,
 } from '../lib/auth.ts';
 import { assignedCte, EVERYONE_DONE, releaseFinishedTests, resultPayload, TEST_COUNTS } from '../lib/attempts.ts';
 import { knowsCourses } from '../lib/client.ts';
 import { courseCards, ownCourse } from '../lib/courses.ts';
 import { pool, q, q1, tq, tq1, tx } from '../lib/db.ts';
-import { bad, bool, date, HttpError, int, notFound, str, uuid, uuidOpt } from '../lib/http.ts';
+import { bad, bool, date, hasNul, HttpError, int, notFound, optionList, str, uuid, uuidOpt } from '../lib/http.ts';
 import { assertLevel, CLASS_MIN, CUSTOM_MAX, levelIn, levelLabel, levelParam } from '../lib/levels.ts';
 import { afterTestChange } from '../lib/notify.ts';
 import { pushConfigured, pushToUsers } from '../lib/push.ts';
@@ -138,9 +138,13 @@ const STUDENT_COURSES = `coalesce((
  * The tuition's students. A person who is only in courses has no class: an app that knows courses is sent them
  * (class_level null, and the courses they are in); one that does not never is.
  */
+/** A class asked for in the query string: a whole number the database can hold, or none. A word or a huge number is a 400, not a server error. */
+const classQuery = (c: { req: { query(k: string): string | undefined } }) =>
+  int({ class: c.req.query('class') }, 'class', { min: CLASS_MIN, max: CUSTOM_MAX, optional: true }) ?? null;
+
 teacherRoutes.get('/students', async (c) => {
   const T = tuitionOf(c).id;
-  const cls = c.req.query('class');
+  const cls = classQuery(c);
   const subject = c.req.query('subject');
   const rows = await tq(
     T,
@@ -154,7 +158,7 @@ teacherRoutes.get('/students', async (c) => {
         and ($2::uuid is null or exists (select 1 from student_subjects ss where ss.tuition_id = @T and ss.student_id = u.id and ss.subject_id = $2))
         and ($3::boolean or m.class_level is not null)
       order by (m.status = 'active') desc, m.class_level, u.display_name`,
-    [cls ? Number(cls) : null, subject ? uuid(subject, 'subject') : null, knowsCourses(c)],
+    [cls, subject ? uuid(subject, 'subject') : null, knowsCourses(c)],
   );
   return c.json({ students: rows });
 });
@@ -690,7 +694,7 @@ teacherRoutes.post('/tutors/:id/active', async (c) => {
 });
 
 teacherRoutes.get('/chapters', async (c) => {
-  const cls = c.req.query('class');
+  const cls = classQuery(c);
   const subject = c.req.query('subject');
   const rows = await tq(
     tuitionOf(c).id,
@@ -699,7 +703,7 @@ teacherRoutes.get('/chapters', async (c) => {
        from chapters ch
       where ch.tuition_id = @T and ($1::smallint is null or ch.class_level = $1) and ($2::uuid is null or ch.subject_id = $2)
       order by ch.class_level, ch.sort_order, ch.name`,
-    [cls ? Number(cls) : null, subject ? uuid(subject, 'subject') : null],
+    [cls, subject ? uuid(subject, 'subject') : null],
   );
   return c.json({ chapters: rows });
 });
@@ -748,11 +752,7 @@ teacherRoutes.delete('/chapters/:id', async (c) => {
 
 /** What every question has, a group's or a course's: its text, options, answer, solution, marks and picture. */
 function readQuestionBody(b: Record<string, any>) {
-  const options = b.options;
-  if (!Array.isArray(options) || options.length !== 4 || options.some((o) => typeof o !== 'string' || !o.trim())) {
-    throw bad('A question needs exactly 4 filled-in options.');
-  }
-  const opts = options.map((o: string) => o.trim());
+  const opts = optionList(b.options);
   return {
     text: str(b, 'text', { max: 4000 })!,
     options: opts,
@@ -835,10 +835,11 @@ function groupFilter(group: string | undefined) {
 /** The questions of the tuition's groups, or with ?course=<id> the questions of that course (never both). */
 teacherRoutes.get('/questions', async (c) => {
   const T = tuitionOf(c).id;
-  const cls = c.req.query('class');
+  const cls = classQuery(c);
   const chapter = c.req.query('chapter');
   const subject = c.req.query('subject');
   const search = c.req.query('q');
+  if (search && hasNul(search)) throw bad('The search has a character that cannot be used.');
   const g = groupFilter(c.req.query('group'));
   const courseId = uuidOpt(c.req.query('course'), 'course');
   if (courseId) await ownCourse(T, courseId);
@@ -860,7 +861,7 @@ teacherRoutes.get('/questions', async (c) => {
         : `qq.class_level, (select sort_order from subjects where id = qq.subject_id), qq.subject_id,
                ch.sort_order nulls last, ch.name, qq.created_at desc`}
       limit ${g.source ? 1000 : 300}`,
-    [cls ? Number(cls) : null, chapter ? uuid(chapter, 'chapter') : null, search?.trim() || null, subject ? uuid(subject, 'subject') : null,
+    [cls, chapter ? uuid(chapter, 'chapter') : null, search?.trim() || null, subject ? uuid(subject, 'subject') : null,
       g.source, g.category, g.uncategorised, courseId],
   );
   return c.json({ questions: await Promise.all(rows.map(withImage)) });
@@ -1323,14 +1324,24 @@ teacherRoutes.patch('/settings', async (c) => {
   return c.json({ ok: true });
 });
 
+/**
+ * A new password. The current one has to be right, and wrong guesses count toward the same lock as at login, so a stolen
+ * phone's session cannot be used to guess the password at leisure. Every other phone is signed out: a password changed
+ * because a phone was lost must end the lost phone's session too.
+ */
 teacherRoutes.post('/password', async (c) => {
   const b = await readBody(c);
-  const me = await q1('select secret_hash, secret_salt from users where id = $1', [c.get('user').id]);
+  const id = c.get('user').id;
+  const me = await q1('select secret_hash, secret_salt from users where id = $1', [id]);
+  const t = await takeTry(id);
+  if (t.locked) throw lockedError(t.minutes);
   if (!(await verifySecret(String(b.current ?? ''), me.secret_hash, me.secret_salt))) {
+    if (t.lastTry) throw lockedError(LOCK_MINUTES);
     throw new HttpError(400, 'wrong_password', 'Your current password is not right.');
   }
   const { hash, salt } = await hashSecret(checkPassword(b.next));
-  await pool.query('update users set secret_hash = $2, secret_salt = $3 where id = $1', [c.get('user').id, hash, salt]);
+  await pool.query('update users set secret_hash = $2, secret_salt = $3, failed_count = 0, locked_until = null where id = $1', [id, hash, salt]);
+  await pool.query('delete from sessions where user_id = $1 and token_hash <> $2', [id, tokenHash((c.req.header('authorization') ?? '').slice(7).trim())]);
   return c.json({ ok: true });
 });
 

@@ -4,7 +4,7 @@ import { ownCourse } from '../lib/courses.ts';
 import { pool, q, q1, tq, tq1, tx, type Db } from '../lib/db.ts';
 import { isGemini } from '../lib/gemini.ts';
 import { CHECK_MODELS, chat, parseJson, SOLVE_MODELS, TIEBREAK_MODELS, VISION_MODELS, WRITE_MODELS } from '../lib/groq.ts';
-import { bad, HttpError, int, notFound, str, uuid, uuidOpt } from '../lib/http.ts';
+import { bad, hasNul, HttpError, int, MAX_OPTION_CHARS, notFound, str, uuid, uuidOpt } from '../lib/http.ts';
 import { customLevels, isClassNumber, levelIn, levelLabel, studyOf } from '../lib/levels.ts';
 import { wrapBareMath } from '../lib/latex-json.ts';
 import { verdict, type Pick } from '../lib/votes.ts';
@@ -257,9 +257,12 @@ ${written.length ? '' : '- name: at most 40 characters, e.g. "Quadratic equation
   return c.json({ paper: { id: paper.id, exam_name: name }, questions: items.length, total: first + items.length }, 201);
 });
 
+/** The page number in a path: a whole number from 1 to MAX_PAGES, else a 400 (a word would reach the database and end as a server error). */
+const pageNumber = (c: { req: { param(k: string): string } }) => int({ page: c.req.param('n') }, 'page', { min: 1, max: MAX_PAGES })!;
+
 paperRoutes.post('/papers/:id/pages/:n/uploaded', async (c) => {
   const id = uuid(c.req.param('id'), 'paper id');
-  const n = Number(c.req.param('n'));
+  const n = pageNumber(c);
   const page = await tq1(
     tuitionOf(c).id,
     `select pp.object_key from paper_pages pp join papers p on p.id = pp.paper_id
@@ -676,7 +679,7 @@ async function readPageWithAI(T: string, userId: string, prompt: string, dataUrl
 paperRoutes.post('/papers/:id/pages/:n/read', async (c) => {
   const T = tuitionOf(c).id;
   const id = uuid(c.req.param('id'), 'paper id');
-  const pageNo = Number(c.req.param('n'));
+  const pageNo = pageNumber(c);
   const page = await tq1(
     T,
     `select pp.*, p.class_level, p.subject_id, p.chapter_id as paper_chapter, (select name from subjects where id = p.subject_id) as subject
@@ -1079,7 +1082,11 @@ paperRoutes.patch('/drafts/:id', async (c) => {
   let options: string[] | null = d.options;
   if ('options' in b) {
     if (!Array.isArray(b.options) || b.options.some((o: unknown) => typeof o !== 'string')) throw bad('options must be a list of text.');
+    if (b.options.length > 12) throw bad('That is too many options.');
     options = b.options.map((o: string) => o.trim());
+    // A draft may still be half-read (fewer or more than four options, some empty), but what it holds must be storable and bounded.
+    if (options!.some((o) => hasNul(o))) throw bad('An option has a character that cannot be used.');
+    if (options!.some((o) => o.length > MAX_OPTION_CHARS)) throw bad(`An option is too long (max ${MAX_OPTION_CHARS} characters).`);
   }
   const kind = 'kind' in b ? (b.kind === 'mcq' ? 'mcq' : 'other') : d.kind;
   const marking = 'correct_option' in b;

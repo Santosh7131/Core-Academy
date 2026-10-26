@@ -30,6 +30,23 @@ const FIELD_NAMES: Record<string, string> = {
 const sentenceStart = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const fieldName = (key: string) => FIELD_NAMES[key] ?? sentenceStart(key.replace(/_/g, ' '));
 
+/** Postgres cannot store a NUL character in text, so a value that holds one would end as a server error. It is refused up front instead. */
+export const hasNul = (s: string) => s.includes('\u0000');
+
+/** The most characters one option of a question may have (the longest saved today is 111; the AI readers cut theirs at 500). */
+export const MAX_OPTION_CHARS = 1000;
+
+/** The four options of a question, each trimmed: filled in, free of NUL, and not longer than MAX_OPTION_CHARS. */
+export function optionList(options: unknown): string[] {
+  if (!Array.isArray(options) || options.length !== 4 || options.some((o) => typeof o !== 'string' || !o.trim())) {
+    throw bad('A question needs exactly 4 filled-in options.');
+  }
+  const opts = (options as string[]).map((o) => o.trim());
+  if (opts.some(hasNul)) throw bad('An option has a character that cannot be used.');
+  if (opts.some((o) => o.length > MAX_OPTION_CHARS)) throw bad(`An option is too long (max ${MAX_OPTION_CHARS} characters).`);
+  return opts;
+}
+
 export function str(b: Body, key: string, opts: { max?: number; optional?: boolean } = {}): string | undefined {
   const v = b[key];
   if (v === undefined || v === null || (typeof v === 'string' && v.trim() === '')) {
@@ -37,6 +54,7 @@ export function str(b: Body, key: string, opts: { max?: number; optional?: boole
     throw bad(`${fieldName(key)} is required.`);
   }
   if (typeof v !== 'string') throw bad(`${fieldName(key)} must be text.`);
+  if (hasNul(v)) throw bad(`${fieldName(key)} has a character that cannot be used.`);
   const s = v.trim();
   if (opts.max && s.length > opts.max) throw bad(`${fieldName(key)} is too long (max ${opts.max} characters).`);
   return s;

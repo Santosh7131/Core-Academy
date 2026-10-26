@@ -242,7 +242,8 @@ adminRoutes.get('/people/:id', async (c) => {
 adminRoutes.post('/people/:id/sign-out', async (c) => {
   const id = uuid(c.req.param('id'), 'account id');
   const b = await readBody(c);
-  const install = typeof b.install_id === 'string' ? b.install_id : null;
+  // An install id is what clientInfo accepts from a phone: 8 to 64 letters, digits and dashes.
+  const install = typeof b.install_id === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(b.install_id) ? b.install_id : null;
   const session = typeof b.session === 'string' && /^[0-9a-f]{12}$/.test(b.session) ? b.session : null;
   if (!install && !session) throw new HttpError(400, 'bad_request', 'Say which phone to sign out.');
   const r = install

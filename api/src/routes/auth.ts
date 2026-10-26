@@ -1,10 +1,10 @@
 import { Hono } from 'hono';
 import {
-  checkPassword, checkUsername, createSession, hashSecret, LOCK_MINUTES, MAX_FAILED, requireUser, tokenHash, verifySecret, type AppEnv,
+  checkPassword, checkUsername, clearTries, createSession, hashSecret, LOCK_MINUTES, lockedError, requireUser, takeTry, tokenHash, verifySecret, type AppEnv,
 } from '../lib/auth.ts';
 import { clientInfo, knowsCourses, minBuild, recordInstall, tooOld, updateRequired } from '../lib/client.ts';
-import { pool, q, q1, tx } from '../lib/db.ts';
-import { bad, HttpError, int, str, uuidOpt } from '../lib/http.ts';
+import { pool, q, q1, tx, type Db } from '../lib/db.ts';
+import { bad, hasNul, HttpError, int, str, uuidOpt } from '../lib/http.ts';
 import { addLevel, CLASS_MAX, CLASS_MIN, LEVELS_JSON } from '../lib/levels.ts';
 import { ensureGroup, freeJoinCode, showCode } from '../lib/tuition.ts';
 import { readBody } from './body.ts';
@@ -27,7 +27,8 @@ authRoutes.post('/login', async (c) => {
   const username = typeof b.username === 'string' ? b.username.trim().toLowerCase() : '';
   const secret = typeof b.secret === 'string' ? b.secret : '';
   const wrong = new HttpError(401, 'wrong_login', 'That username and PIN do not match.');
-  if (!username || !secret) throw wrong;
+  // A username is 3 to 24 plain characters: anything else cannot be one, and a NUL would not even reach the database.
+  if (!username || !secret || username.length > 64 || hasNul(username)) throw wrong;
   const ci = clientInfo(c);
   // Every attempt goes into the login history the admin app shows.
   const log = (outcome: string, userId: string | null = null) =>
@@ -37,8 +38,7 @@ authRoutes.post('/login', async (c) => {
     );
 
   const u = await q1(
-    `select id, role, username, display_name, class_level, secret_hash, secret_salt,
-            active, failed_count, locked_until, now() as now
+    `select id, role, username, display_name, class_level, secret_hash, secret_salt, active
        from users where username = $1`,
     [username],
   );
@@ -48,26 +48,24 @@ authRoutes.post('/login', async (c) => {
     await log('unknown_user');
     throw wrong;
   }
-  if (u.locked_until && u.locked_until > u.now) {
+  // The try is taken before the secret is looked at, in one statement, so a burst of guesses sent at once cannot all be
+  // checked before the lock shows.
+  const t = await takeTry(u.id);
+  if (t.locked) {
     await log('locked', u.id);
-    const mins = Math.max(1, Math.ceil((u.locked_until.getTime() - u.now.getTime()) / 60_000));
-    throw new HttpError(429, 'locked', `Too many wrong tries. Try again in ${mins} minute${mins === 1 ? '' : 's'}.`);
+    throw lockedError(t.minutes);
   }
   if (!(await verifySecret(secret, u.secret_hash, u.secret_salt))) {
-    const failed = u.failed_count + 1;
-    if (failed >= MAX_FAILED) {
-      await pool.query(
-        `update users set failed_count = 0, locked_until = now() + make_interval(mins => $2) where id = $1`,
-        [u.id, LOCK_MINUTES],
-      );
+    if (t.lastTry) {
       await log('lockout', u.id);
-      throw new HttpError(429, 'locked', `Too many wrong tries. Try again in ${LOCK_MINUTES} minutes.`);
+      throw lockedError(LOCK_MINUTES);
     }
-    await pool.query('update users set failed_count = $2 where id = $1', [u.id, failed]);
     await log('wrong_secret', u.id);
     if (u.role !== 'student') throw new HttpError(401, 'wrong_login', 'That username and password do not match.');
     throw wrong;
   }
+  // The right secret gives the tries back, whatever else stops this login below.
+  await clearTries(u.id);
 
   // A turned-off login is only said to be off to someone who knows its PIN, and every wrong guess at it counts
   // toward the lockout above like any other.
@@ -116,32 +114,44 @@ authRoutes.post('/signup-tutor', async (c) => {
   const username = checkUsername(b.username);
   const password = checkPassword(b.password);
   const ci = clientInfo(c);
-  const recent = await q1(
-    `select (select count(*) from users where role = 'teacher' and created_at > now() - interval '1 hour') as hour,
-            (select count(*) from auth_events where outcome = 'signup' and install_id = $1 and at > now() - interval '1 day') as phone_day`,
-    [ci.installId],
-  );
-  if (recent.hour >= MAX_SIGNUPS_PER_HOUR || (ci.installId && recent.phone_day >= MAX_SIGNUPS_PER_PHONE_PER_DAY)) {
-    throw new HttpError(429, 'too_many_signups', 'Too many new accounts were made just now. Please try again later.');
-  }
+  const tooMany = async (db: Db) => {
+    const recent = await q1(
+      `select (select count(*) from users where role = 'teacher' and created_at > now() - interval '1 hour') as hour,
+              (select count(*) from auth_events where outcome = 'signup' and install_id = $1 and at > now() - interval '1 day') as phone_day`,
+      [ci.installId],
+      db,
+    );
+    return recent.hour >= MAX_SIGNUPS_PER_HOUR || (ci.installId && recent.phone_day >= MAX_SIGNUPS_PER_PHONE_PER_DAY);
+  };
+  const full = new HttpError(429, 'too_many_signups', 'Too many new accounts were made just now. Please try again later.');
+  // A first look before the password is worked on, so a refused sign-up costs almost nothing.
+  if (await tooMany(pool)) throw full;
   const { hash, salt } = await hashSecret(password);
   let u: { id: string; role: string; username: string; display_name: string };
   try {
-    u = (await q1(
-      `insert into users (role, username, display_name, secret_hash, secret_salt) values ('teacher', $1, $2, $3, $4)
-       returning id, role, username, display_name`,
-      [username, displayName, hash, salt],
-    ))!;
+    u = await tx(async (cx) => {
+      // One at a time from here: the caps are counted again with every sign-up before this one in view, so a burst sent at once
+      // cannot all pass a count that was read before any of them was written.
+      await cx.query(`select pg_advisory_xact_lock(hashtext('signup-tutor'))`);
+      if (await tooMany(cx)) throw full;
+      const row = (await q1(
+        `insert into users (role, username, display_name, secret_hash, secret_salt) values ('teacher', $1, $2, $3, $4)
+         returning id, role, username, display_name`,
+        [username, displayName, hash, salt],
+        cx,
+      ))!;
+      await cx.query(
+        `insert into auth_events (username, user_id, outcome, install_id, app_version) values ($1, $2, 'signup', $3, $4)`,
+        [username, row.id, ci.installId, ci.appVersion],
+      );
+      return row;
+    });
   } catch (e: any) {
     if (e.code === '23505') throw new HttpError(409, 'username_taken', `The username ${username} is already taken.`);
     throw e;
   }
   await recordInstall(u.id, ci);
   const token = await createSession(u.id, ci.installId);
-  await pool.query(
-    `insert into auth_events (username, user_id, outcome, install_id, app_version) values ($1, $2, 'signup', $3, $4)`,
-    [username, u.id, ci.installId, ci.appVersion],
-  );
   return c.json({ token, user: { ...u, class_level: null }, tuitions: [] }, 201);
 });
 
@@ -171,10 +181,14 @@ authRoutes.post('/tuitions', requireUser('teacher', { tuition: 'none' }), async 
     const cls = levelName ? null : int(g, 'class_level', { min: CLASS_MIN, max: CLASS_MAX })!;
     return { cls, levelName, subjectId, subjectName };
   });
-  const owned = await q1(`select count(*) as n from memberships where user_id = $1 and role = 'owner'`, [me.id]);
-  if (owned.n >= MAX_OWNED) throw new HttpError(409, 'too_many_tuitions', `You already run ${MAX_OWNED} tuitions.`);
+  const ownedCount = async (db: Db) => (await q1(`select count(*) as n from memberships where user_id = $1 and role = 'owner'`, [me.id], db)).n;
+  const tooManyTuitions = new HttpError(409, 'too_many_tuitions', `You already run ${MAX_OWNED} tuitions.`);
+  if ((await ownedCount(pool)) >= MAX_OWNED) throw tooManyTuitions;
 
   const t = await tx(async (cx) => {
+    // Counted again with this tutor's other requests held back, so several sent at once cannot each pass the same count.
+    await cx.query('select pg_advisory_xact_lock(hashtextextended($1, 0))', [`owner:${me.id}`]);
+    if ((await ownedCount(cx)) >= MAX_OWNED) throw tooManyTuitions;
     const row = await q1<{ id: string; name: string; join_code: string }>(
       `insert into tuitions (name, join_code, created_by) values ($1, $2, $3) returning id, name, join_code`,
       [name, await freeJoinCode(cx), me.id],

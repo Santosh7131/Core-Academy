@@ -35,6 +35,35 @@ export async function verifySecret(secret: string, hash: string, salt: string) {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+export type Try = { locked: false; lastTry: boolean } | { locked: true; minutes: number };
+
+/**
+ * Takes one of an account's tries before its secret is looked at, in a single statement. Guesses sent all at once are
+ * counted one by one that way: a count read first and written after would let every one of them through. The try that
+ * is the last one locks the account for everybody behind it and is still judged itself, so `lastTry` tells the caller to
+ * answer "locked" if that guess turns out wrong. Whoever gets the secret right clears the count (see clearTries).
+ */
+export async function takeTry(userId: string, db: Db = pool): Promise<Try> {
+  const r = await db.query(
+    `update users set
+        failed_count = case when locked_until <= now() then 1 else failed_count + 1 end,
+        locked_until = case when (case when locked_until <= now() then 1 else failed_count + 1 end) >= $2
+                            then now() + make_interval(mins => $3) end
+      where id = $1 and (locked_until is null or locked_until <= now())
+      returning locked_until is not null as last_try`,
+    [userId, MAX_FAILED, LOCK_MINUTES],
+  );
+  if (r.rows[0]) return { locked: false, lastTry: r.rows[0].last_try };
+  const u = (await db.query('select locked_until, now() as now from users where id = $1', [userId])).rows[0];
+  const minutes = u?.locked_until ? Math.max(1, Math.ceil((u.locked_until.getTime() - u.now.getTime()) / 60_000)) : LOCK_MINUTES;
+  return { locked: true, minutes };
+}
+
+export const clearTries = (userId: string, db: Db = pool) => db.query('update users set failed_count = 0, locked_until = null where id = $1', [userId]);
+
+export const lockedError = (minutes: number) =>
+  new HttpError(429, 'locked', `Too many wrong tries. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`);
+
 export const tokenHash = (token: string) => createHash('sha256').update(token).digest('hex');
 export const newPin = () => String(randomInt(0, 10_000)).padStart(4, '0');
 

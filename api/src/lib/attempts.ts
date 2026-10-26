@@ -30,12 +30,17 @@ export function shuffle<T>(items: T[]): T[] {
 //
 // `tuition` is the SQL that holds one tuition's id ('@T' inside tq(), or a $n), or null for every
 // tuition at once (the scheduled notifications).
-export const assignedCte = (tuition: string | null) => `assigned as (
+export const assignedCte = (tuition: string | null, stillHeld = false) => {
+  // Only the tests whose marks are still held back and could still be opened early: not yet released and not yet closed
+  // (a closed test, or one with no closing time, has its marks open anyway). releaseFinishedTests asks only for these, because
+  // it runs for every student's refresh and would otherwise work out the students of every test the tuition ever posted.
+  const held = stillHeld ? ' and t.results_released_at is null and t.closes_at > now()' : '';
+  return `assigned as (
   select t.id as test_id, u.id as student_id
     from tests t
     join memberships m on m.tuition_id = t.tuition_id and m.role = 'student' and m.status = 'active' and m.class_level = t.class_level
     join users u on u.id = m.user_id and u.active
-   where t.status = 'published' and t.course_id is null${tuition ? ` and t.tuition_id = ${tuition}` : ''}
+   where t.status = 'published' and t.course_id is null${tuition ? ` and t.tuition_id = ${tuition}` : ''}${held}
      and (t.closes_at is null or m.joined_at < t.closes_at or exists (select 1 from attempts x where x.test_id = t.id and x.student_id = u.id))
      and (t.assign_all or t.assign_group)
      and exists (select 1 from student_subjects ss
@@ -46,7 +51,7 @@ export const assignedCte = (tuition: string | null) => `assigned as (
     join test_students ts on ts.test_id = t.id
     join memberships m on m.tuition_id = t.tuition_id and m.user_id = ts.student_id and m.role = 'student' and m.status = 'active'
     join users u on u.id = ts.student_id and u.active
-   where t.status = 'published' and t.course_id is null${tuition ? ` and t.tuition_id = ${tuition}` : ''} and not t.assign_all and not t.assign_group
+   where t.status = 'published' and t.course_id is null${tuition ? ` and t.tuition_id = ${tuition}` : ''}${held} and not t.assign_all and not t.assign_group
      and (t.closes_at is null or m.joined_at < t.closes_at or exists (select 1 from attempts x where x.test_id = t.id and x.student_id = u.id))
   union
   select t.id, cm.student_id
@@ -54,9 +59,10 @@ export const assignedCte = (tuition: string | null) => `assigned as (
     join course_members cm on cm.course_id = t.course_id
     join memberships m on m.tuition_id = t.tuition_id and m.user_id = cm.student_id and m.role = 'student' and m.status = 'active'
     join users u on u.id = cm.student_id and u.active
-   where t.status = 'published' and t.course_id is not null${tuition ? ` and t.tuition_id = ${tuition}` : ''}
+   where t.status = 'published' and t.course_id is not null${tuition ? ` and t.tuition_id = ${tuition}` : ''}${held}
      and (t.closes_at is null or cm.added_at < t.closes_at or exists (select 1 from attempts x where x.test_id = t.id and x.student_id = u.id))
 )`;
+};
 export const ASSIGNED_CTE = assignedCte(null);
 
 /**
@@ -93,7 +99,7 @@ export const resultsOpenFor = (holds: boolean) => (holds ? RESULTS_OPEN : 'true'
  */
 export async function releaseFinishedTests(tuitionId: string | null = null, db: Db = pool): Promise<number> {
   const r = await db.query(
-    `with ${assignedCte(tuitionId ? '$1' : null)}
+    `with ${assignedCte(tuitionId ? '$1' : null, true)}
      update tests t set results_released_at = now()
       where t.status = 'published' and t.results_released_at is null${tuitionId ? ' and t.tuition_id = $1' : ''}
         and exists (select 1 from assigned a where a.test_id = t.id)
@@ -250,11 +256,15 @@ export async function startOrResume(student: Student, testId: string, tuitionId:
 
 export type AnswerInput = { question_id: string; choice: number | null; flagged?: boolean };
 
+const UUID_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function parseAnswers(raw: unknown): AnswerInput[] {
   if (raw === undefined || raw === null) return [];
   if (!Array.isArray(raw) || raw.length > 200) throw new HttpError(400, 'invalid', 'answers must be a list.');
   return raw.map((r: any) => {
     if (typeof r?.question_id !== 'string') throw new HttpError(400, 'invalid', 'Each answer needs a question_id.');
+    // An id that is not a UUID can match nothing of the attempt (and a word like "constructor" would, in JavaScript).
+    if (!UUID_ID.test(r.question_id)) throw new HttpError(400, 'invalid', 'That question is not part of this test.');
     const choice = r.choice === null || r.choice === undefined ? null : Number(r.choice);
     if (choice !== null && !(Number.isInteger(choice) && choice >= 0 && choice <= 3)) {
       throw new HttpError(400, 'invalid', 'choice must be 0–3 or null.');
@@ -275,7 +285,7 @@ async function lockAttempt(c: pg.PoolClient, studentId: string, attemptId: strin
 
 async function writeAnswers(c: pg.PoolClient, a: AttemptRow, answers: AnswerInput[]) {
   for (const x of answers) {
-    const order = a.option_orders[x.question_id];
+    const order = Object.hasOwn(a.option_orders, x.question_id) ? a.option_orders[x.question_id] : undefined;
     if (!order) throw new HttpError(400, 'invalid', 'That question is not part of this test.');
     const original = x.choice === null ? null : order[x.choice];
     await c.query(

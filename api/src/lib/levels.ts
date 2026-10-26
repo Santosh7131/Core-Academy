@@ -86,6 +86,7 @@ export function cleanLabel(raw: unknown): string {
   const s = typeof raw === 'string' ? raw.trim().replace(/\s+/g, ' ') : '';
   if (!s) throw bad('Give the class a name.', 'invalid_level');
   if (s.length > 30) throw bad('Keep the name to 30 characters.', 'invalid_level');
+  if (s.includes('\u0000')) throw bad('That name has a character that cannot be used.', 'invalid_level');
   const m = /^(class|std|standard|grade)\.?\s*(\d{1,2})(st|nd|rd|th)?$/i.exec(s);
   if (m && isClassNumber(Number(m[2]))) throw bad(`Class ${Number(m[2])} is already in the list.`, 'level_exists');
   return s;
@@ -116,7 +117,7 @@ export async function addLevel(tuition: string, rawLabel: unknown, db: Db = pool
       return { ...row!, custom: true };
     } catch (e: any) {
       // Two tutors named levels at once and took the same number: look again.
-      if (e.code === '23505' && attempt < 3) continue;
+      if (e.code === '23505' && attempt < 8) continue;
       throw e;
     }
   }
