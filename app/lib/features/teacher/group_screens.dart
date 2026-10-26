@@ -12,7 +12,8 @@ import '../../ui/tokens.dart';
 import '../../ui/update_card.dart';
 import 'common.dart';
 import 'subjects.dart';
-import 'tests_screens.dart' show testState;
+import 'course_screens.dart' show coursePath;
+import 'tests_screens.dart' show TestListTile, testState;
 
 int _n(Object? v) => v is num ? v.toInt() : int.tryParse('$v') ?? 0;
 
@@ -37,7 +38,7 @@ class _TutorHomeState extends State<TutorHome> with WidgetsBindingObserver, Auto
   String? _error;
 
   @override
-  Set<Area> get refreshAreas => {Area.tests, Area.students, Area.papers};
+  Set<Area> get refreshAreas => {Area.tests, Area.students, Area.papers, Area.courses};
 
   // Students start and submit tests all the time: check every 30 s while this is on screen.
   @override
@@ -107,13 +108,17 @@ class _TutorHomeState extends State<TutorHome> with WidgetsBindingObserver, Auto
 
   List<Widget> _body(Map<String, dynamic> d) {
     final groups = (d['groups'] as List).cast<Map<String, dynamic>>();
+    // Courses come with an app that knows them; their tests are not in the groups' totals.
+    final courses = ((d['courses'] as List?) ?? const []).cast<Map<String, dynamic>>();
     final totals = Map<String, dynamic>.from(d['totals']);
-    final live = _n(totals['live']);
-    final writing = _n(totals['writing']);
-    final posted = groups.fold<int>(0, (s, g) => s + (g['posted'] as List).length);
+    int testsOf(Map<String, dynamic> c, String k) => (c[k] as List).length;
+    final live = _n(totals['live']) + courses.fold<int>(0, (s, c) => s + testsOf(c, 'live'));
+    final writing = _n(totals['writing']) +
+        courses.fold<int>(0, (s, c) => s + (c['live'] as List).fold<int>(0, (a, t) => a + _n((t as Map)['writing'])));
+    final posted = groups.fold<int>(0, (s, g) => s + (g['posted'] as List).length) + courses.fold<int>(0, (s, c) => s + testsOf(c, 'posted'));
     final pending = _n(d['pending_requests']);
     final code = '${d['tuition']?['join_code'] ?? ''}';
-    final noStudents = groups.every((g) => _n(g['students']) == 0);
+    final noStudents = groups.every((g) => _n(g['students']) == 0) && courses.every((c) => _n(c['people']) == 0);
     bool has(Map<String, dynamic> g, String k) => (g[k] as List).isNotEmpty;
     // Groups with something running come first (live before posted-only). The rest fold into one short list
     // so a tutor with a dozen groups still sees what matters without scrolling past empty cards.
@@ -122,10 +127,33 @@ class _TutorHomeState extends State<TutorHome> with WidgetsBindingObserver, Auto
       ...groups.where((g) => !has(g, 'live') && has(g, 'posted')),
     ];
     final quiet = groups.where((g) => !has(g, 'live') && !has(g, 'posted')).toList();
+    // The same for courses (the server lists the busy ones first already).
+    final busyCourses = [
+      ...courses.where((c) => has(c, 'live')),
+      ...courses.where((c) => !has(c, 'live') && has(c, 'posted')),
+    ];
+    final quietCourses = courses.where((c) => !has(c, 'live') && !has(c, 'posted')).toList();
     final summary = [
       live == 0 ? 'No test is live right now' : '${f.count(live, 'test')} live now · ${f.count(writing, 'student')} writing',
       if (posted > 0) '$posted posted',
     ].join(' · ');
+
+    Widget cards(List<Widget> list) => Padding(
+          padding: const EdgeInsets.symmetric(horizontal: gutter),
+          child: Column(children: [
+            for (final (i, w) in list.indexed) ...[if (i > 0) const SizedBox(height: gapRow), w],
+          ]),
+        );
+    Widget quietRows(List<Widget> list) => Padding(
+          padding: const EdgeInsets.symmetric(horizontal: gutter),
+          child: Surface(
+            shadow: e1,
+            padding: const EdgeInsets.symmetric(horizontal: 17),
+            child: Column(children: [
+              for (final (i, w) in list.indexed) ...[if (i > 0) Container(height: 1, color: hairline), w],
+            ]),
+          ),
+        );
     return [
       if (_error != null) Padding(padding: const EdgeInsets.fromLTRB(gutter, 16, gutter, 0), child: InlineNotice(_error!, icon: Ph.warning)),
       // Students waiting to be let in come first; a tuition with no students yet shows how to invite them.
@@ -155,33 +183,28 @@ class _TutorHomeState extends State<TutorHome> with WidgetsBindingObserver, Auto
         padding: const EdgeInsets.fromLTRB(gutter, 14, gutter, 18),
         child: Fig(summary, style: bodyStyle.copyWith(color: muted)),
       ),
-      if (groups.isEmpty)
+      if (groups.isEmpty && courses.isEmpty)
         const EmptyState(icon: Ph.users, title: 'No groups yet', body: 'Open Groups and add your first group.')
-      else ...[
+      else if (courses.isEmpty) ...[
+        // Until there is a course, Home is the list of groups it always was.
         // With nothing live or posted, the summary line above already says so.
-        if (busy.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: gutter),
-            child: Column(children: [
-              for (final (i, g) in busy.indexed) ...[if (i > 0) const SizedBox(height: gapRow), _GroupCard(g: g)],
-            ]),
-          ),
+        if (busy.isNotEmpty) cards([for (final g in busy) _GroupCard(g: g)]),
         if (quiet.isNotEmpty) ...[
           SectionRule(busy.isEmpty ? 'Your groups' : 'No test running', count: quiet.length),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: gutter),
-            child: Surface(
-              shadow: e1,
-              padding: const EdgeInsets.symmetric(horizontal: 17),
-              child: Column(children: [
-                for (final (i, g) in quiet.indexed) ...[
-                  if (i > 0) Container(height: 1, color: hairline),
-                  _QuietGroup(g: g),
-                ],
-              ]),
-            ),
-          ),
+          quietRows([for (final g in quiet) _QuietGroup(g: g)]),
         ],
+      ] else ...[
+        // With courses, Home has two sections, each listing what is running first and the rest in one short list.
+        if (groups.isNotEmpty) ...[
+          SectionRule('Groups', count: groups.length, padding: const EdgeInsets.fromLTRB(gutter, 4, gutter, 11)),
+          if (busy.isNotEmpty) cards([for (final g in busy) _GroupCard(g: g)]),
+          if (busy.isNotEmpty && quiet.isNotEmpty) const SizedBox(height: gapRow),
+          if (quiet.isNotEmpty) quietRows([for (final g in quiet) _QuietGroup(g: g)]),
+        ],
+        SectionRule('Courses', count: courses.length, padding: EdgeInsets.fromLTRB(gutter, groups.isEmpty ? 4 : 26, gutter, 11)),
+        if (busyCourses.isNotEmpty) cards([for (final c in busyCourses) _CourseCard(c: c)]),
+        if (busyCourses.isNotEmpty && quietCourses.isNotEmpty) const SizedBox(height: gapRow),
+        if (quietCourses.isNotEmpty) quietRows([for (final c in quietCourses) _QuietCourse(c: c)]),
       ],
     ];
   }
@@ -257,10 +280,93 @@ class _GroupCard extends StatelessWidget {
   }
 }
 
+/// One line for a course with nothing live or posted: name and people count, tap to open it.
+class _QuietCourse extends StatelessWidget {
+  const _QuietCourse({required this.c});
+  final Map<String, dynamic> c;
+
+  @override
+  Widget build(BuildContext context) => Pressable(
+        label: 'Open ${c['name']}',
+        onTap: () => context.push(coursePath(c)),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          child: Row(children: [
+            Expanded(child: Fig('${c['name']}', style: rowTitleStyle, maxLines: 1)),
+            const SizedBox(width: 12),
+            Fig(f.count(_n(c['people']), 'person', 'people'), style: labelStyle),
+            const SizedBox(width: 8),
+            Icon(Ph.caretRight, size: 16, color: faint),
+          ]),
+        ),
+      );
+}
+
+/// A course with a test running or posted: its name, how many people it has, and those tests, as a group's card does.
+class _CourseCard extends StatelessWidget {
+  const _CourseCard({required this.c});
+  final Map<String, dynamic> c;
+
+  @override
+  Widget build(BuildContext context) {
+    final live = (c['live'] as List).cast<Map<String, dynamic>>();
+    final posted = (c['posted'] as List).cast<Map<String, dynamic>>();
+
+    Widget block(String label, Tone tone, List<Map<String, dynamic>> tests, {required bool isLive}) =>
+        Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          const SizedBox(height: 14),
+          Align(alignment: Alignment.centerLeft, child: TagChip(label, tone: tone)),
+          for (final t in tests) ...[
+            Container(height: 1, margin: const EdgeInsets.only(top: 8), color: hairline),
+            _MiniTest(t: t, live: isLive, course: true),
+          ],
+        ]);
+
+    return Surface(
+      shadow: e1,
+      padding: const EdgeInsets.fromLTRB(17, 15, 17, 6),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Pressable(
+          label: 'Open ${c['name']}',
+          onTap: () => context.push(coursePath(c)),
+          child: Row(children: [
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Fig('${c['name']}', style: titleStyle.copyWith(fontSize: 20, letterSpacing: -0.6), maxLines: 1),
+                const SizedBox(height: 6),
+                Row(children: [
+                  Container(
+                    height: 22,
+                    padding: const EdgeInsets.symmetric(horizontal: 9),
+                    decoration: BoxDecoration(color: fill, borderRadius: BorderRadius.circular(rPill)),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(Ph.graduationCap, size: 13, color: muted),
+                      const SizedBox(width: 5),
+                      Text('Course', style: tagStyle.copyWith(color: muted)),
+                    ]),
+                  ),
+                  const SizedBox(width: 10),
+                  Fig(f.count(_n(c['people']), 'person', 'people'), style: labelStyle),
+                ]),
+              ]),
+            ),
+            Icon(Ph.caretRight, size: 18, color: faint),
+          ]),
+        ),
+        if (live.isNotEmpty) block('Live now', Tone.success, live, isLive: true),
+        if (posted.isNotEmpty) block('Posted', Tone.neutral, posted, isLive: false),
+      ]),
+    );
+  }
+}
+
 class _MiniTest extends StatelessWidget {
-  const _MiniTest({required this.t, required this.live});
+  const _MiniTest({required this.t, required this.live, this.course = false});
   final Map<String, dynamic> t;
   final bool live;
+
+  /// Counts people, not students.
+  final bool course;
 
   @override
   Widget build(BuildContext context) {
@@ -291,7 +397,7 @@ class _MiniTest extends StatelessWidget {
               Fig(writing > 0 ? '$writing writing now' : 'submitted', style: labelStyle.copyWith(color: writing > 0 ? warning : null)),
             ])
           else
-            Fig(f.count(_n(t['assigned']), 'student'), style: labelStyle),
+            Fig(course ? f.count(_n(t['assigned']), 'person', 'people') : f.count(_n(t['assigned']), 'student'), style: labelStyle),
         ]),
       ),
     );
@@ -549,35 +655,10 @@ class _GroupScreenState extends State<GroupScreen> with WidgetsBindingObserver, 
     }
   }
 
-  String _meta(Map<String, dynamic> t) {
-    final closes = f.parseTime(t['closes_at']);
-    final opens = f.parseTime(t['opens_at']);
-    final q = f.count(_n(t['question_count']), 'question');
-    return switch (testState(t)) {
-      'open' => '$q · ${closes == null ? 'open' : 'closes ${f.when(closes)}'}',
-      'upcoming' => '$q · opens ${opens == null ? 'later' : f.when(opens)}',
-      'closed' => '$q · closed ${closes == null ? '' : f.when(closes)}',
-      'done' => '$q · all submitted',
-      _ => '$q · not posted yet',
-    };
-  }
-
-  Widget _tile(Map<String, dynamic> t) {
-    final published = t['status'] == 'published';
-    final writing = _n(t['writing']);
-    return RowTile(
-      title: '${t['title']}',
-      meta: _meta(t),
-      trailing: !published
-          ? const TagChip('Draft')
-          : Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-              Text('${_n(t['submitted'])}/${_n(t['assigned'])}', style: numStyle(size: 15)),
-              const SizedBox(height: 2),
-              Fig(writing > 0 ? '$writing writing' : 'submitted', style: labelStyle.copyWith(color: writing > 0 ? warning : null)),
-            ]),
-      onTap: () => _go(published ? '/t/tests/${t['id']}' : '/t/tests/${t['id']}/edit'),
-    );
-  }
+  Widget _tile(Map<String, dynamic> t) => TestListTile(
+        t: t,
+        onTap: () => _go(t['status'] == 'published' ? '/t/tests/${t['id']}' : '/t/tests/${t['id']}/edit'),
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -656,10 +737,12 @@ class _GroupScreenState extends State<GroupScreen> with WidgetsBindingObserver, 
 /// Describe the test you want and AI writes it. The questions open in the same review screen as an
 /// uploaded paper, with their answers marked where two other AI models agree.
 class ChatTestScreen extends StatefulWidget {
-  const ChatTestScreen({super.key, required this.classLevel, required this.subjectId, required this.subjectName});
-  final int classLevel;
-  final String subjectId;
+  /// For a group: its class and subject. For a course: [courseId], and [subjectName] holds the course's name.
+  const ChatTestScreen({super.key, this.classLevel, this.subjectId, required this.subjectName, this.courseId});
+  final int? classLevel;
+  final String? subjectId;
   final String subjectName;
+  final String? courseId;
 
   @override
   State<ChatTestScreen> createState() => _ChatTestScreenState();
@@ -731,8 +814,7 @@ class _ChatTestScreenState extends State<ChatTestScreen> {
       for (var calls = 0; _written < total && calls < total + 5; calls++) {
         final left = total - _written;
         final r = await _ask({
-          'class_level': widget.classLevel,
-          'subject_id': widget.subjectId,
+          if (widget.courseId != null) 'course_id': widget.courseId else ...{'class_level': widget.classLevel, 'subject_id': widget.subjectId},
           'request': _text.text.trim(),
           'count': left < 20 ? left : 20,
           'paper_id': ?paperId,
@@ -767,7 +849,7 @@ class _ChatTestScreenState extends State<ChatTestScreen> {
 
   @override
   Widget build(BuildContext context) => PushedPanel(
-        kicker: groupName(widget.classLevel, widget.subjectName),
+        kicker: widget.courseId != null ? widget.subjectName : groupName(widget.classLevel!, widget.subjectName),
         title: 'Describe your test',
         footer: PrimaryButton(
           _busy ? 'Writing the questions' : 'Write the questions',

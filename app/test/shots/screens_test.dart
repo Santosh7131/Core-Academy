@@ -9,14 +9,18 @@ import 'dart:ui' as ui;
 
 import 'package:core_academy/core/api.dart';
 import 'package:core_academy/core/session.dart';
+import 'package:core_academy/core/updater.dart';
 import 'package:core_academy/features/auth/login_screen.dart';
 import 'package:core_academy/features/auth/start_screen.dart';
 import 'package:core_academy/features/auth/signup_screen.dart';
+import 'package:core_academy/features/auth/update_required_screen.dart';
+import 'package:core_academy/features/student/course_screen.dart';
 import 'package:core_academy/features/student/home_screen.dart';
 import 'package:core_academy/features/student/join_screen.dart';
 import 'package:core_academy/features/student/profile_screen.dart';
 import 'package:core_academy/features/student/result_screen.dart';
 import 'package:core_academy/features/student/test_screen.dart';
+import 'package:core_academy/features/teacher/course_screens.dart';
 import 'package:core_academy/features/teacher/group_screens.dart';
 import 'package:core_academy/features/teacher/join_requests_screen.dart';
 import 'package:core_academy/features/teacher/papers_screens.dart';
@@ -514,5 +518,227 @@ void main() {
       {'id': 't-3', 'name': 'Meena Hindi Classes', 'role': 'student', 'status': 'pending', 'class_level': 9},
     ]);
     await _both(t, 'student-profile', () => const ProfileScreen(), height: 3000);
+  });
+
+  // ---- courses (design/comps/c1-*.html)
+  final tutorTuition = [
+    {'id': 't-1', 'name': 'Priya Maths Classes', 'role': 'owner', 'status': 'active'},
+  ];
+  const people = [
+    'Aarav Kumar', 'Diya Nair', 'Ishaan Rao', 'Meera Pillai', 'Rohan Krishnan', 'Sana Sheikh', 'Tara Menon',
+    'Vikram Iyer', 'Yash Gupta', 'Zoya Ali', 'Kabir Das', 'Leela Reddy', 'Nikhil Varma', 'Pooja Shetty',
+  ];
+
+  Map<String, Object?> courseTest(String id, String title, {String status = 'published', Duration? opens, Duration? closes, int assigned = 14, int submitted = 0, int writing = 0}) => {
+        'id': id, 'title': title, 'status': status, 'opens_at': opens == null ? null : _iso(opens), 'closes_at': closes == null ? null : _iso(closes),
+        'results_released_at': null, 'time_limit_min': 15, 'question_count': 10, 'assigned': assigned, 'submitted': submitted, 'writing': writing,
+        'everyone_done': false,
+      };
+
+  final springEnglish = <String, Object?>{
+    'id': 'c-1', 'name': 'Spoken English, Batch 1', 'created_at': _iso(const Duration(days: -9)), 'people': 14,
+    'live': [
+      {'id': 'y1', 'title': 'Unit 1 quiz', 'closes_at': _iso(const Duration(hours: 3)), 'opens_at': null, 'time_limit_min': 15, 'submitted': 6, 'assigned': 14, 'writing': 3},
+    ],
+    'posted': <Object?>[],
+  };
+  final olympiad = <String, Object?>{'id': 'c-2', 'name': 'Olympiad Prep', 'created_at': _iso(const Duration(days: -20)), 'people': 8, 'live': <Object?>[], 'posted': <Object?>[]};
+
+  shotTest('courses: tutor home with a course', (t) async {
+    _sessionAs(role: 'teacher', tuitions: tutorTuition);
+    Map<String, Object?> group(int cls, String subject, int students, {List<Object?> live = const [], List<Object?> posted = const []}) =>
+        {'class_level': cls, 'subject_id': 'sub-$subject', 'subject': subject, 'students': students, 'live': live, 'posted': posted};
+    routes['/teacher/home'] = (_) => {
+          'server_now': _iso(Duration.zero),
+          'tuition': {'id': 't-1', 'name': 'Priya Maths Classes', 'join_code': 'KR74MQ'},
+          'pending_requests': 0,
+          'groups': [
+            group(10, 'Maths', 12, live: [
+              {'id': 'x1', 'title': 'Practice Paper 2', 'closes_at': _iso(const Duration(hours: 3)), 'opens_at': null, 'time_limit_min': 30, 'submitted': 7, 'assigned': 12, 'writing': 0}
+            ]),
+            group(9, 'Science', 9),
+            group(11, 'Physics', 6),
+          ],
+          'totals': {'live': 1, 'writing': 0},
+          'courses': [springEnglish, olympiad],
+        };
+    await _both(t, 'courses-home', () => const Scaffold(body: TutorHome()));
+    // The same Home when no course exists yet: it is the list of groups it always was.
+    routes['/teacher/home'] = (_) => {
+          'server_now': _iso(Duration.zero),
+          'tuition': {'id': 't-1', 'name': 'Priya Maths Classes', 'join_code': 'KR74MQ'},
+          'pending_requests': 0,
+          'groups': [group(10, 'Maths', 12), group(9, 'Science', 9)],
+          'totals': {'live': 0, 'writing': 0},
+          'courses': <Object?>[],
+        };
+    await _both(t, 'courses-home-none', () => const Scaffold(body: TutorHome()));
+  });
+
+  shotTest('courses: the Courses tab', (t) async {
+    _sessionAs(role: 'teacher', tuitions: tutorTuition);
+    routes['/teacher/courses'] = (_) => {'courses': <Object?>[]};
+    await _both(t, 'courses-tab-empty', () => const Scaffold(body: CoursesScreen()));
+    await _both(t, 'courses-new', () => const Scaffold(body: CoursesScreen()), then: (t) async {
+      await t.tap(find.text('Create a course'));
+      await _settle(t);
+    });
+    routes['/teacher/courses'] = (_) => {
+          'courses': [
+            springEnglish,
+            {...olympiad, 'posted': [{'id': 'y9', 'title': 'Mock test', 'opens_at': _iso(const Duration(days: 1)), 'closes_at': _iso(const Duration(days: 1, hours: 4)), 'assigned': 8, 'submitted': 0, 'writing': 0}]},
+            {'id': 'c-3', 'name': 'Handwriting, Summer', 'created_at': _iso(const Duration(days: -30)), 'people': 6, 'live': <Object?>[], 'posted': <Object?>[]},
+          ],
+        };
+    await _both(t, 'courses-tab', () => const Scaffold(body: CoursesScreen()));
+  });
+
+  shotTest('courses: a course page', (t) async {
+    _sessionAs(role: 'teacher', tuitions: tutorTuition);
+    routes['/teacher/courses/c-1'] = (_) => {
+          'course': {'id': 'c-1', 'name': 'Spoken English, Batch 1', 'people': 14},
+          'people': [
+            for (final (i, n) in people.indexed)
+              {
+                'id': 'p$i', 'display_name': n, 'username': 'u$i', 'active': i != 13, 'last_seen_at': _iso(Duration(hours: -i)), 'added_at': _iso(const Duration(days: -8)),
+                'avg_pct': i < 5 ? null : 0.5 + i / 40, 'tests_done': i < 5 ? 0 : 2,
+              },
+          ],
+          'tests': [
+            courseTest('y1', 'Unit 1 quiz', closes: const Duration(hours: 3), submitted: 6, writing: 3),
+            courseTest('y2', 'Unit 2 quiz', opens: const Duration(days: 2), closes: const Duration(days: 2, hours: 3)),
+            courseTest('y3', 'Unit 3 quiz', status: 'draft'),
+            courseTest('y0', 'Greetings', closes: const Duration(days: -3), submitted: 12),
+          ],
+        };
+    await _both(t, 'course-page', () => const CourseScreen(id: 'c-1', name: 'Spoken English, Batch 1'), height: 3600);
+    await _both(t, 'course-make-test', () => const CourseScreen(id: 'c-1', name: 'Spoken English, Batch 1'), then: (t) async {
+      await t.tap(find.text('Make a test'));
+      await _settle(t);
+    });
+    await _both(t, 'course-delete', () => const CourseScreen(id: 'c-1', name: 'Spoken English, Batch 1'), height: 3600, then: (t) async {
+      await t.scrollUntilVisible(find.text('Delete this course'), 300, scrollable: find.byType(Scrollable).first);
+      await t.tap(find.text('Delete this course'));
+      await _settle(t);
+    });
+  });
+
+  shotTest('courses: adding people', (t) async {
+    _sessionAs(role: 'teacher', tuitions: tutorTuition);
+    Map<String, Object?> student(String id, String name, int? cls, List<String> subjects, {bool inCourse = false}) => {
+          'id': id, 'display_name': name, 'username': id, 'class_level': cls, 'active': true,
+          'subjects': [for (final s in subjects) {'id': 'sub-$s', 'name': s}],
+          'courses': [if (inCourse) {'id': 'c-1', 'name': 'Spoken English, Batch 1'}],
+        };
+    routes['/teacher/students'] = (_) => {
+          'students': [
+            student('s1', 'Aarav Kumar', 10, ['Maths', 'Science']),
+            student('s2', 'Diya Nair', 10, ['Maths']),
+            student('s3', 'Ishaan Rao', 9, ['Science'], inCourse: true),
+            student('s4', 'Meera Pillai', 9, ['Maths', 'Science']),
+            student('s5', 'Rohan Krishnan', null, [], inCourse: false),
+            student('s6', 'Sana Sheikh', 11, ['Physics']),
+          ],
+        };
+    await _both(t, 'courses-add', () => const AddPeopleScreen(courseId: 'c-1', courseName: 'Spoken English, Batch 1'), then: (t) async {
+      await t.tap(find.text('Aarav Kumar'));
+      await t.tap(find.text('Diya Nair'));
+      await _settle(t);
+    });
+    await _both(t, 'courses-add-filter', () => const AddPeopleScreen(courseId: 'c-1', courseName: 'Spoken English, Batch 1'), then: (t) async {
+      await t.tap(find.text('All students').first);
+      await _settle(t);
+    });
+    await _both(t, 'courses-add-new', () => const AddPeopleScreen(courseId: 'c-1', courseName: 'Spoken English, Batch 1'), then: (t) async {
+      await t.tap(find.text('New person'));
+      await _settle(t);
+      await t.enterText(find.byType(TextField).first, 'Harini Venkatesh');
+      await _settle(t);
+    });
+  });
+
+  shotTest('courses: a person in a course', (t) async {
+    _sessionAs(role: 'teacher', tuitions: tutorTuition);
+    routes['/teacher/students/s-9'] = (_) => {
+          'student': {
+            'id': 's-9', 'display_name': 'Aarav Kumar', 'username': 'aarav.k', 'class_level': 10, 'active': true,
+            'last_seen_at': _iso(const Duration(hours: -2)), 'subjects': [{'id': 'm', 'name': 'Maths'}, {'id': 's', 'name': 'Science'}],
+            'courses': [{'id': 'c-1', 'name': 'Spoken English, Batch 1'}],
+          },
+          'attempts': [
+            {'id': 'at-1', 'title': 'Greetings', 'attempt_no': 1, 'score': 8, 'max_score': 10, 'started_at': _iso(const Duration(days: -3, hours: -3)), 'submitted_at': _iso(const Duration(days: -3, hours: -3, minutes: 12))},
+            {'id': 'at-2', 'title': 'Everyday phrases', 'attempt_no': 1, 'score': 6, 'max_score': 10, 'started_at': _iso(const Duration(days: -8, hours: -3)), 'submitted_at': _iso(const Duration(days: -8, hours: -3, minutes: 14))},
+          ],
+          'chapters': <Object?>[],
+          'missed': <Object?>[],
+        };
+    await _both(t, 'course-person', () => const StudentDetailScreen(id: 's-9', courseId: 'c-1', courseName: 'Spoken English, Batch 1'), height: 2200);
+    await _both(t, 'course-person-menu', () => const StudentDetailScreen(id: 's-9', courseId: 'c-1', courseName: 'Spoken English, Batch 1'), then: (t) async {
+      await t.tap(find.bySemanticsLabel('More'));
+      await _settle(t);
+    });
+  });
+
+  shotTest('courses: the student app', (t) async {
+    Map<String, Object?> test(String id, String title, String state, {Duration? closes, Duration? opens, int? score}) => {
+          'id': id, 'course_id': 'c-1', 'title': title, 'class_level': null, 'time_limit_min': 15, 'opens_at': opens == null ? null : _iso(opens),
+          'closes_at': closes == null ? null : _iso(closes), 'question_count': 10, 'max_marks': 10, 'state': state, 'retake': false, 'results_open': state == 'done',
+          'attempt': state == 'done'
+              ? {'id': 'att-$id', 'attempt_no': 1, 'submitted_at': _iso(const Duration(days: -3)), 'deadline_at': null, 'score': score, 'max_score': 10}
+              : null,
+        };
+    final classTests = [
+      {
+        'id': 'a', 'title': 'Linear equations', 'course_id': null, 'class_level': 9, 'time_limit_min': 20, 'opens_at': null, 'closes_at': _iso(const Duration(hours: 3, minutes: 10)),
+        'question_count': 12, 'max_marks': 12, 'state': 'open', 'retake': false, 'results_open': false, 'attempt': null,
+      },
+    ];
+    routes['/student/home'] = (_) => {'server_now': _iso(Duration.zero), 'tuition': {'id': 't-1', 'name': 'Priya Maths Classes'}, 'tests': classTests, 'courses': 2};
+    routes['/student/courses'] = (_) => {
+          'courses': [
+            {'id': 'c-1', 'name': 'Spoken English, Batch 1', 'open': 1, 'closes_at': _iso(const Duration(hours: 9))},
+            {'id': 'c-2', 'name': 'Olympiad Prep', 'open': 0, 'closes_at': null},
+          ],
+        };
+    routes['/student/courses/c-1'] = (_) => {
+          'server_now': _iso(Duration.zero),
+          'course': {'id': 'c-1', 'name': 'Spoken English, Batch 1'},
+          'tests': [
+            test('y1', 'Unit 1 quiz', 'open', closes: const Duration(hours: 3, minutes: 10)),
+            test('y0', 'Greetings', 'done', score: 8),
+            test('yb', 'Everyday phrases', 'done', score: 6),
+            test('y2', 'Unit 2 quiz', 'upcoming', opens: const Duration(days: 2)),
+          ],
+        };
+    // A student in a class and a course: two tabs, Tests and Courses.
+    _sessionAs(role: 'student', tuitions: [{'id': 't-1', 'name': 'Priya Maths Classes', 'role': 'student', 'status': 'active', 'class_level': 9}]);
+    await _both(t, 'courses-student-tests', () => const StudentHome());
+    await _both(t, 'courses-student-courses', () => const StudentHome(), then: (t) async {
+      await t.tap(find.text('Courses'));
+      await _settle(t);
+    });
+    await _both(t, 'courses-student-course', () => const StudentCourseScreen(id: 'c-1', name: 'Spoken English, Batch 1'), height: 2400);
+    // Someone who is only in courses has no class: their home is the list of courses.
+    _sessionAs(role: 'student', tuitions: [{'id': 't-1', 'name': 'Priya Maths Classes', 'role': 'student', 'status': 'active', 'class_level': null}]);
+    session.user = {...session.user!, 'display_name': 'Rohan Krishnan', 'class_level': null};
+    routes['/student/home'] = (_) => {'server_now': _iso(Duration.zero), 'tuition': {'id': 't-1', 'name': 'Priya Maths Classes'}, 'tests': <Object?>[], 'courses': 2};
+    await _both(t, 'courses-student-only', () => const StudentHome());
+    // ... and who has been taken out of every course has nothing yet.
+    routes['/student/home'] = (_) => {'server_now': _iso(Duration.zero), 'tuition': {'id': 't-1', 'name': 'Priya Maths Classes'}, 'tests': <Object?>[], 'courses': 0};
+    await _both(t, 'courses-student-nothing', () => const StudentHome());
+  });
+
+  shotTest('courses: the update screen', (t) async {
+    _sessionAs(role: 'student', tuitions: [{'id': 't-1', 'name': 'Priya Maths Classes', 'role': 'student', 'status': 'active', 'class_level': 9}]);
+    updater.available = Release.fromJson({'version': '1.6.0', 'build': 8, 'apk': 'https://example.test/core-academy.apk', 'sha256': 'ab', 'size': 39 * 1024 * 1024, 'notes': ''});
+    updater.step = UpdateStep.ready;
+    await _both(t, 'update-needed', () => const UpdateRequiredScreen());
+    updater.step = UpdateStep.allow;
+    await _both(t, 'update-allow', () => const UpdateRequiredScreen());
+    updater.step = UpdateStep.downloading;
+    updater.progress = 0.42;
+    await _both(t, 'update-downloading', () => const UpdateRequiredScreen());
+    updater.available = null;
+    updater.step = UpdateStep.ready;
   });
 }

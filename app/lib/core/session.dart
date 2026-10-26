@@ -26,6 +26,10 @@ class Session extends ChangeNotifier {
   /// The opening animation has played (or was skipped). The router leaves the start screen once this and [restored] are both true.
   bool splashDone = false;
 
+  /// The server refused this version of the app (a major update is out). The router shows the update screen
+  /// and nothing else until the app is replaced by the new version.
+  bool updateRequired = false;
+
   /// The tuitions the person is in or waiting to join: {id, name, role, status, class_level, join_code?}.
   List<Map<String, dynamic>> tuitions = [];
 
@@ -69,6 +73,7 @@ class Session extends ChangeNotifier {
   Future<void> restore() async {
     api.onSignedOut = _signedOutByServer;
     api.onTuitionGone = _tuitionGone;
+    api.onUpdateRequired = _updateRequiredByServer;
     api.token = await _storage.read(key: 'token');
     if (api.token != null) {
       final cached = _prefs.getString('user');
@@ -215,6 +220,12 @@ class Session extends ChangeNotifier {
 
   void _signedOutByServer() {
     _clear().then((_) => notifyListeners());
+  }
+
+  void _updateRequiredByServer() {
+    if (updateRequired) return;
+    updateRequired = true;
+    notifyListeners();
   }
 
   /// The server says the person is not in the tuition on screen any more: look at what they have now.

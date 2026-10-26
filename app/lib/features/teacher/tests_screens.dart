@@ -26,11 +26,55 @@ String testState(Map<String, dynamic> t) {
   return 'open';
 }
 
+int _count(Object? v) => v is num ? v.toInt() : int.tryParse('$v') ?? 0;
+
+/// What a test row says under its name on a group's or a course's page.
+String testMeta(Map<String, dynamic> t) {
+  final closes = f.parseTime(t['closes_at']);
+  final opens = f.parseTime(t['opens_at']);
+  final q = f.count(_count(t['question_count']), 'question');
+  return switch (testState(t)) {
+    'open' => '$q · ${closes == null ? 'open' : 'closes ${f.when(closes)}'}',
+    'upcoming' => '$q · opens ${opens == null ? 'later' : f.when(opens)}',
+    'closed' => '$q · closed ${closes == null ? '' : f.when(closes)}',
+    'done' => '$q · all submitted',
+    _ => '$q · not posted yet',
+  };
+}
+
+/// One test on a group's or a course's page: its name, its state and how many people have handed it in.
+class TestListTile extends StatelessWidget {
+  const TestListTile({super.key, required this.t, required this.onTap});
+  final Map<String, dynamic> t;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final published = t['status'] == 'published';
+    final writing = _count(t['writing']);
+    return RowTile(
+      title: '${t['title']}',
+      meta: testMeta(t),
+      trailing: !published
+          ? const TagChip('Draft')
+          : Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+              Text('${_count(t['submitted'])}/${_count(t['assigned'])}', style: numStyle(size: 15)),
+              const SizedBox(height: 2),
+              Fig(writing > 0 ? '$writing writing' : 'submitted', style: labelStyle.copyWith(color: writing > 0 ? warning : null)),
+            ]),
+      onTap: onTap,
+    );
+  }
+}
+
 // ---------------------------------------------------------------- editor
 
 class TestEditor extends StatefulWidget {
-  const TestEditor({super.key, this.id});
+  /// [courseId] and [courseName] are for a new test of a course (an existing test says which it is itself).
+  const TestEditor({super.key, this.id, this.courseId, this.courseName});
   final String? id;
+  final String? courseId;
+  final String? courseName;
 
   @override
   State<TestEditor> createState() => _TestEditorState();
@@ -40,6 +84,12 @@ class _TestEditorState extends State<TestEditor> {
   final _title = TextEditingController();
   int? _class;
   String? _subjectId;
+
+  /// A course's test has no class and no subject: it goes to the people of its course.
+  String? _courseId;
+  String? _courseName;
+  int? _courseSize;
+  bool get _isCourse => _courseId != null;
   List<Subject> _subjects = [];
   List<Map<String, dynamic>> _questions = [];
   int? _limit = 20;
@@ -61,6 +111,9 @@ class _TestEditorState extends State<TestEditor> {
   void initState() {
     super.initState();
     _title.addListener(() => setState(() {}));
+    _courseId = widget.courseId;
+    _courseName = widget.courseName;
+    if (_isCourse) _loadCourseSize();
     _loadSubjects();
     // Every test closes: a new one starts with a closing time.
     if (widget.id == null) _closes = defaultClosing();
@@ -73,11 +126,26 @@ class _TestEditorState extends State<TestEditor> {
       if (!mounted) return;
       setState(() {
         _subjects = subjects;
-        // New tests start in Maths; an existing test keeps its subject from _load.
-        _subjectId ??= subjects.where((x) => x.isDefault).map((x) => x.id).firstOrNull;
+        // New tests start in Maths; an existing test keeps its subject from _load. A course's test has none.
+        if (!_isCourse) _subjectId ??= subjects.where((x) => x.isDefault).map((x) => x.id).firstOrNull;
       });
     } on ApiException catch (e) {
       if (mounted) showProblem(context, e);
+    }
+  }
+
+  /// How many people the course has now: they are who the test goes to.
+  Future<void> _loadCourseSize() async {
+    try {
+      final r = await api.get('/teacher/courses/$_courseId');
+      if (mounted) {
+        setState(() {
+          _courseSize = _count(r['course']['people']);
+          _courseName = '${r['course']['name']}';
+        });
+      }
+    } on ApiException {
+      // The size is only a warning; the test can still be saved.
     }
   }
 
@@ -106,7 +174,9 @@ class _TestEditorState extends State<TestEditor> {
       final r = await api.get('/teacher/tests/${widget.id}');
       final t = Map<String, dynamic>.from(r['test']);
       _title.text = '${t['title']}';
-      _class = t['class_level'] as int;
+      _courseId = t['course_id'] as String?;
+      _courseName = t['course'] as String?;
+      _class = t['class_level'] as int?;
       _subjectId = t['subject_id'] as String?;
       _limit = t['time_limit_min'] as int?;
       _opens = f.parseTime(t['opens_at']);
@@ -120,7 +190,11 @@ class _TestEditorState extends State<TestEditor> {
       _attempts = t['attempts'] as int;
       _questions = (r['questions'] as List).cast<Map<String, dynamic>>();
       _studentIds = {for (final s in (r['students'] as List)) '${s['id']}'};
-      await _loadStudents();
+      if (_isCourse) {
+        await _loadCourseSize();
+      } else {
+        await _loadStudents();
+      }
     } on ApiException catch (e) {
       if (mounted) showProblem(context, e);
     } finally {
@@ -137,39 +211,47 @@ class _TestEditorState extends State<TestEditor> {
   }
 
   Future<void> _pickQuestions() async {
-    if (_class == null || _subjectId == null) return;
+    if (!_isCourse && (_class == null || _subjectId == null)) return;
     final picked = await Navigator.of(context).push<List<Map<String, dynamic>>>(MaterialPageRoute(
-      builder: (_) => QuestionPicker(classLevel: _class!, subjectId: _subjectId!, subjectName: _subjectName ?? '', selected: _questions),
+      builder: (_) => _isCourse
+          ? QuestionPicker(courseId: _courseId, courseName: _courseName, selected: _questions)
+          : QuestionPicker(classLevel: _class, subjectId: _subjectId, subjectName: _subjectName ?? '', selected: _questions),
     ));
     if (picked != null) setState(() => _questions = picked);
   }
 
   String? get _missing {
     if (_title.text.trim().isEmpty) return 'Give the test a name.';
-    if (_class == null) return 'Choose a class.';
-    if (_subjectId == null) return 'Choose a subject.';
+    if (!_isCourse && _class == null) return 'Choose a class.';
+    if (!_isCourse && _subjectId == null) return 'Choose a subject.';
     if (_questions.isEmpty) return 'Choose at least one question.';
     if (_closes == null) return 'Choose when the test closes.';
     if (_opens != null && !_closes!.isAfter(_opens!)) return 'The closing time must be after the opening time.';
-    if (_audience == 'students' && !_group.any((s) => _studentIds.contains(s['id']))) return 'Choose at least one student.';
+    if (!_isCourse && _audience == 'students' && !_group.any((s) => _studentIds.contains(s['id']))) return 'Choose at least one student.';
     return null;
   }
 
   Future<void> _save({required bool publish}) async {
     setState(() => _busy = true);
-    final body = {
+    final shared = {
       'title': _title.text.trim(),
-      'class_level': _class,
       'question_ids': [for (final q in _questions) q['id']],
       'time_limit_min': _limit,
       'opens_at': _opens?.toUtc().toIso8601String(),
       'closes_at': _closes?.toUtc().toIso8601String(),
       'shuffle': _shuffle,
-      'subject_id': _subjectId,
-      'assign_all': false,
-      'assign_group': _audience == 'group',
-      'student_ids': _audience == 'students' ? [for (final s in _group) if (_studentIds.contains(s['id'])) s['id']] : <String>[],
     };
+    // A course's test goes to the people of its course; a group's to its class, or to students chosen from it.
+    final body = _isCourse
+        ? {...shared, 'course_id': _courseId}
+        : {
+            ...shared,
+            'class_level': _class,
+            'subject_id': _subjectId,
+            'assign_all': false,
+            'assign_group': _audience == 'group',
+            'student_ids': _audience == 'students' ? [for (final s in _group) if (_studentIds.contains(s['id'])) s['id']] : <String>[],
+          };
     try {
       final id = widget.id ?? '${(await api.post('/teacher/tests', body))['id']}';
       if (widget.id != null) await api.patch('/teacher/tests/$id', body);
@@ -192,8 +274,10 @@ class _TestEditorState extends State<TestEditor> {
     final shown = _allQuestions ? _questions : _questions.take(2).toList();
     return PushedPanel(
       kicker: isNew
-          ? 'New test'
-          : '${_class != null && _subjectName != null ? '${groupName(_class!, _subjectName!)} · ' : ''}${_published ? 'Posted' : 'Draft'}',
+          ? (_isCourse && _courseName != null ? 'New test · $_courseName' : 'New test')
+          : _isCourse
+              ? '${_courseName == null ? '' : '$_courseName · '}${_published ? 'Posted' : 'Draft'}'
+              : '${_class != null && _subjectName != null ? '${groupName(_class!, _subjectName!)} · ' : ''}${_published ? 'Posted' : 'Draft'}',
       title: isNew ? 'New test' : 'Test settings',
       footer: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         PrimaryButton(
@@ -210,7 +294,7 @@ class _TestEditorState extends State<TestEditor> {
         GroupedInputs(children: [
           BareField(controller: _title, placeholder: 'Test name, e.g. Unit test 3', capitalization: TextCapitalization.sentences),
         ]),
-        if (isNew) ...[
+        if (isNew && !_isCourse) ...[
           const FormLabel('Class'),
           ClassField(
             value: _class,
@@ -273,41 +357,53 @@ class _TestEditorState extends State<TestEditor> {
           SegChip('Same order for all', selected: !_shuffle, onTap: () => setState(() => _shuffle = false)),
         ]),
         const FormLabel('Who writes it'),
-        ChipRow(padding: EdgeInsets.zero, children: [
-          SegChip(
-            _class == null || _subjectName == null ? 'The group' : '${groupName(_class!, _subjectName!)} group',
-            count: _class == null ? null : _groupSize,
-            selected: _audience == 'group',
-            onTap: () => setState(() => _audience = 'group'),
-          ),
-          SegChip('Some of them', selected: _audience == 'students', onTap: () => setState(() => _audience = 'students')),
-        ]),
-        if (_audience == 'group' && _class != null && _subjectName != null && _groupSize == 0) ...[
+        if (_isCourse) ...[
+          // A course's test goes to everyone in the course: there is no one to choose.
+          ChipRow(padding: EdgeInsets.zero, children: [
+            SegChip(_courseName == null ? 'Everyone in the course' : 'Everyone in $_courseName', count: _courseSize, selected: true),
+          ]),
           const SizedBox(height: 10),
-          InlineNotice(
-            'No Class $_class student takes $_subjectName yet, so nobody will see this test. Add students to the group first.',
-            icon: Ph.warning,
-          ),
-        ],
-        if (_audience == 'students') ...[
-          const SizedBox(height: 10),
-          if (_group.isEmpty)
-            Text(
-              _class == null || _subjectName == null ? 'Choose a class and subject first.' : 'No Class $_class student takes $_subjectName yet.',
-              style: labelStyle,
-            )
+          if (_courseSize == 0)
+            InlineNotice('No one is in this course yet, so nobody will see this test. Add people to the course first.', icon: Ph.warning)
           else
-            for (final (i, s) in _group.indexed) ...[
-              if (i > 0) const SizedBox(height: 8),
-              RowTile(
-                leading: _Tick(on: _studentIds.contains(s['id'])),
-                title: '${s['display_name']}',
-                onTap: () => setState(() {
-                  final id = '${s['id']}';
-                  _studentIds.contains(id) ? _studentIds.remove(id) : _studentIds.add(id);
-                }),
-              ),
-            ],
+            Fig('People added to the course before it closes get the test too.', style: labelStyle),
+        ] else ...[
+          ChipRow(padding: EdgeInsets.zero, children: [
+            SegChip(
+              _class == null || _subjectName == null ? 'The group' : '${groupName(_class!, _subjectName!)} group',
+              count: _class == null ? null : _groupSize,
+              selected: _audience == 'group',
+              onTap: () => setState(() => _audience = 'group'),
+            ),
+            SegChip('Some of them', selected: _audience == 'students', onTap: () => setState(() => _audience = 'students')),
+          ]),
+          if (_audience == 'group' && _class != null && _subjectName != null && _groupSize == 0) ...[
+            const SizedBox(height: 10),
+            InlineNotice(
+              'No ${className(_class)} student takes $_subjectName yet, so nobody will see this test. Add students to the group first.',
+              icon: Ph.warning,
+            ),
+          ],
+          if (_audience == 'students') ...[
+            const SizedBox(height: 10),
+            if (_group.isEmpty)
+              Text(
+                _class == null || _subjectName == null ? 'Choose a class and subject first.' : 'No ${className(_class)} student takes $_subjectName yet.',
+                style: labelStyle,
+              )
+            else
+              for (final (i, s) in _group.indexed) ...[
+                if (i > 0) const SizedBox(height: 8),
+                RowTile(
+                  leading: Tick(on: _studentIds.contains(s['id'])),
+                  title: '${s['display_name']}',
+                  onTap: () => setState(() {
+                    final id = '${s['id']}';
+                    _studentIds.contains(id) ? _studentIds.remove(id) : _studentIds.add(id);
+                  }),
+                ),
+              ],
+          ],
         ],
         FormLabel(_questions.isEmpty ? 'Questions' : 'Questions · ${_questions.length}', top: 30),
         if (locked)
@@ -335,9 +431,9 @@ class _TestEditorState extends State<TestEditor> {
           SecondaryButton(
             _questions.isEmpty ? 'Choose questions' : 'Change questions',
             icon: Ph.listChecks,
-            onTap: _class == null || _subjectId == null ? null : _pickQuestions,
+            onTap: !_isCourse && (_class == null || _subjectId == null) ? null : _pickQuestions,
           ),
-          if (_class == null) Padding(padding: const EdgeInsets.only(top: 8), child: Text('Choose a class first.', style: labelStyle)),
+          if (!_isCourse && _class == null) Padding(padding: const EdgeInsets.only(top: 8), child: Text('Choose a class first.', style: labelStyle)),
         ],
         if (widget.id != null) ...[
           const SizedBox(height: 30),
@@ -370,8 +466,8 @@ class _TestEditorState extends State<TestEditor> {
 }
 
 /// Completion ring used as a checkbox: idle ring, or filled with a tick.
-class _Tick extends StatelessWidget {
-  const _Tick({required this.on});
+class Tick extends StatelessWidget {
+  const Tick({super.key, required this.on});
   final bool on;
 
   @override
@@ -388,12 +484,18 @@ class _Tick extends StatelessWidget {
       );
 }
 
+/// The questions a test can use: a group's (its class and subject), or a course's own.
 class QuestionPicker extends StatefulWidget {
-  const QuestionPicker({super.key, required this.classLevel, required this.subjectId, required this.subjectName, required this.selected});
-  final int classLevel;
-  final String subjectId;
+  const QuestionPicker({super.key, this.classLevel, this.subjectId, this.subjectName = '', this.courseId, this.courseName, required this.selected});
+  final int? classLevel;
+  final String? subjectId;
   final String subjectName;
+  final String? courseId;
+  final String? courseName;
   final List<Map<String, dynamic>> selected;
+
+  /// What the questions belong to, for the headings: "10th Maths" or the course's name.
+  String get title => courseId != null ? (courseName ?? 'Course') : groupName(classLevel!, subjectName);
 
   @override
   State<QuestionPicker> createState() => _QuestionPickerState();
@@ -413,7 +515,9 @@ class _QuestionPickerState extends State<QuestionPicker> {
 
   Future<void> _load() async {
     try {
-      final r = await api.get('/teacher/questions?class=${widget.classLevel}&subject=${widget.subjectId}');
+      final r = await api.get(widget.courseId != null
+          ? '/teacher/questions?course=${widget.courseId}'
+          : '/teacher/questions?class=${widget.classLevel}&subject=${widget.subjectId}');
       // The ready-made library is not offered anywhere in the app.
       final all = (r['questions'] as List).cast<Map<String, dynamic>>();
       if (mounted) setState(() => _all = [for (final x in all) if (x['source'] != 'library') x]);
@@ -435,7 +539,7 @@ class _QuestionPickerState extends State<QuestionPicker> {
     final shown = all?.where((q) => _chapter == null || q['chapter'] == _chapter).toList();
     final notPicked = shown?.where((q) => !_has(q)).toList() ?? const [];
     return PushedPanel(
-      kicker: groupName(widget.classLevel, widget.subjectName),
+      kicker: widget.title,
       title: 'Choose questions',
       footer: PrimaryButton(
         _picked.isEmpty ? 'Choose questions' : 'Use ${_picked.length} question${_picked.length == 1 ? '' : 's'}',
@@ -453,7 +557,7 @@ class _QuestionPickerState extends State<QuestionPicker> {
                 final c = await showChoices<String>(
                   context,
                   title: 'Chapter',
-                  subtitle: groupName(widget.classLevel, widget.subjectName),
+                  subtitle: widget.title,
                   options: [const Choice(null, 'All chapters'), for (final e in chapterCounts.entries) Choice(e.key, e.key, count: e.value)],
                   selected: _chapter,
                 );
@@ -472,12 +576,14 @@ class _QuestionPickerState extends State<QuestionPicker> {
         else if (all == null)
           const LoadingState()
         else if (shown!.isEmpty)
-          EmptyState(icon: Ph.books, title: 'No ${groupName(widget.classLevel, widget.subjectName)} questions', body: 'Add some in Questions or from a question paper first.')
+          widget.courseId != null
+              ? const EmptyState(icon: Ph.books, title: 'No questions in this course yet', body: 'Upload a paper or describe a test to AI first. Its questions are kept in the course.')
+              : EmptyState(icon: Ph.books, title: 'No ${widget.title} questions', body: 'Add some in Questions or from a question paper first.')
         else
           for (final (i, q) in shown.indexed) ...[
             if (i > 0) const SizedBox(height: 8),
             RowTile(
-              leading: _Tick(on: _has(q)),
+              leading: Tick(on: _has(q)),
               titleWidget: MathText('${q['text']}', style: rowTitleStyle, maxLines: 3),
               meta: q['chapter'] == null ? null : '${q['chapter']}',
               onTap: () => setState(() => _has(q) ? _picked.removeWhere((p) => p['id'] == q['id']) : _picked.add(q)),
@@ -584,7 +690,9 @@ class _TestResultsScreenState extends State<TestResultsScreen> with WidgetsBindi
     final ok = await confirmCard(
       context,
       title: published ? 'Unpublish this test?' : 'Publish this test?',
-      body: published ? 'Students will no longer see it. Results already written are kept.' : 'Students in the class will see it.',
+      body: published
+          ? 'Students will no longer see it. Results already written are kept.'
+          : (_d?['test']?['course_id'] != null ? 'The people in the course will see it.' : 'Students in the class will see it.'),
       confirm: published ? 'Unpublish' : 'Publish',
       destructive: published,
     );
@@ -636,7 +744,16 @@ class _TestResultsScreenState extends State<TestResultsScreen> with WidgetsBindi
     final published = t['status'] == 'published';
     final closes = f.parseTime(t['closes_at']);
     final opens = f.parseTime(t['opens_at']);
-    final kicker =[t['subject'] == null ? className(t['class_level']) : groupName(t['class_level'] as int, '${t['subject']}'), if (!published) 'unpublished' else if (closes != null) (closes.isAfter(DateTime.now()) ? 'closes ${f.when(closes)}' : 'closed ${f.when(closes)}')].join(' · ');
+    final isCourse = t['course_id'] != null;
+    final kicker = [
+      if (isCourse)
+        '${t['course'] ?? 'Course'}'
+      else if (t['subject'] == null)
+        className(t['class_level'])
+      else
+        groupName(t['class_level'] as int, '${t['subject']}'),
+      if (!published) 'unpublished' else if (closes != null) (closes.isAfter(DateTime.now()) ? 'closes ${f.when(closes)}' : 'closed ${f.when(closes)}'),
+    ].join(' · ');
 
     return PushedPanel(
       onRefresh: _load,

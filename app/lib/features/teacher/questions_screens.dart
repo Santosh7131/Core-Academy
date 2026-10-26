@@ -92,6 +92,9 @@ class _QuestionEditorState extends State<QuestionEditor> {
   int _lastFocus = 0;
   int? _class;
   String? _subjectId;
+
+  /// A question of a course has no class, subject or chapter: it belongs to the course.
+  bool _inCourse = false;
   List<Subject> _subjects = [];
   String? _chapterId;
   int? _correct;
@@ -125,8 +128,8 @@ class _QuestionEditorState extends State<QuestionEditor> {
       if (!mounted) return;
       setState(() {
         _subjects = subjects;
-        // New questions start in Maths; an existing one keeps its subject from _load.
-        _subjectId ??= subjects.where((x) => x.isDefault).map((x) => x.id).firstOrNull;
+        // New questions start in Maths; an existing one keeps its subject from _load (a course's has none).
+        if (widget.id == null) _subjectId ??= subjects.where((x) => x.isDefault).map((x) => x.id).firstOrNull;
       });
       _loadChapters();
     } on ApiException catch (e) {
@@ -156,7 +159,8 @@ class _QuestionEditorState extends State<QuestionEditor> {
         _options[i].text = opts[i];
       }
       _solution.text = '${q['solution'] ?? ''}';
-      _class = q['class_level'] as int;
+      _inCourse = q['course_id'] != null;
+      _class = q['class_level'] as int?;
       _subjectId = q['subject_id'] as String?;
       _chapterId = q['chapter_id'] as String?;
       _correct = q['correct_option'] as int;
@@ -236,8 +240,8 @@ class _QuestionEditorState extends State<QuestionEditor> {
   }
 
   String? get _missing {
-    if (_class == null) return 'Choose a class.';
-    if (_subjectId == null) return 'Choose a subject.';
+    if (!_inCourse && _class == null) return 'Choose a class.';
+    if (!_inCourse && _subjectId == null) return 'Choose a subject.';
     if (_text.text.trim().isEmpty) return 'Type the question.';
     if (_options.any((o) => o.text.trim().isEmpty)) return 'Fill in all four options.';
     if (_correct == null) return 'Tap the circle next to the right answer.';
@@ -247,9 +251,7 @@ class _QuestionEditorState extends State<QuestionEditor> {
   Future<void> _save() async {
     setState(() => _busy = true);
     final body = {
-      'class_level': _class,
-      'subject_id': _subjectId,
-      'chapter_id': _chapterId,
+      if (!_inCourse) ...{'class_level': _class, 'subject_id': _subjectId, 'chapter_id': _chapterId},
       'text': _text.text.trim(),
       'options': [for (final o in _options) o.text.trim()],
       'correct_option': _correct,

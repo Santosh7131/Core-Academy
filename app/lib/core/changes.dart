@@ -4,14 +4,16 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
 /// What a screen shows, so a change elsewhere in the app can tell it to load again.
-enum Area { tests, students, questions, papers, settings, student }
+enum Area { tests, students, questions, papers, settings, student, courses }
 
 /// The areas a successful write to [path] changes.
 Set<Area> areasOf(String path) {
   final p = path.split('?').first;
   if (p.startsWith('/student')) return {Area.student};
   if (p.startsWith('/teacher/tests') || p.startsWith('/teacher/attempts')) return {Area.tests};
-  if (p.startsWith('/teacher/students')) return {Area.students};
+  // A course's people are students too; its tests, papers and questions have their own writes above.
+  if (p.startsWith('/teacher/courses')) return {Area.courses, Area.students, Area.tests};
+  if (p.startsWith('/teacher/students')) return {Area.students, Area.courses};
   if (p.startsWith('/teacher/questions') || p.startsWith('/teacher/uploads')) return {Area.questions};
   // Saving a paper puts its questions in the bank.
   if (p.startsWith('/teacher/papers') || p.startsWith('/teacher/drafts')) return {Area.papers, if (p.endsWith('/save')) Area.questions};

@@ -12,6 +12,16 @@ import 'common.dart';
 import 'subjects.dart';
 import '../../core/levels.dart';
 
+/// A new login's PIN: four random digits.
+String randomPin() => Random.secure().nextInt(10000).toString().padLeft(4, '0');
+
+/// "Harini Venkatesh" -> "harini.v": the login to suggest on the phone while the server works out the final one.
+/// A name in Tamil or Hindi has no suggestion here, the server spells it in English letters.
+String usernameGuess(String name) {
+  final parts = name.toLowerCase().replaceAll(RegExp(r'[^a-z\s]'), '').trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+  return parts.isEmpty ? '' : (parts.length == 1 ? parts.first : '${parts.first}.${parts.last[0]}');
+}
+
 // ---------------------------------------------------------------- add
 
 class AddStudentScreen extends StatefulWidget {
@@ -31,10 +41,8 @@ class _AddStudentScreenState extends State<AddStudentScreen> {
   int? _class;
   List<Subject> _subjects = [];
   Set<String> _subjectIds = {};
-  String _pin = _randomPin();
+  String _pin = randomPin();
   bool _busy = false;
-
-  static String _randomPin() => Random.secure().nextInt(10000).toString().padLeft(4, '0');
 
   @override
   void initState() {
@@ -71,12 +79,9 @@ class _AddStudentScreenState extends State<AddStudentScreen> {
   /// has the last word a moment after the typing stops. The tutor never has to think of a login.
   void _suggest(String name) {
     if (_usernameEdited) return;
-    final parts = name.toLowerCase().replaceAll(RegExp(r'[^a-z\s]'), '').trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
-    final s = parts.isEmpty ? '' : (parts.length == 1 ? parts.first : '${parts.first}.${parts.last[0]}');
-    _username.text = s;
+    _username.text = usernameGuess(name);
     setState(() {});
     final seq = ++_suggestSeq;
-    // A name in Tamil or Hindi has no suggestion on the phone: the server spells it in English letters.
     if (name.trim().isEmpty) return;
     Future<void>.delayed(const Duration(milliseconds: 350), () async {
       if (!mounted || seq != _suggestSeq || _usernameEdited) return;
@@ -167,7 +172,7 @@ class _AddStudentScreenState extends State<AddStudentScreen> {
             const Spacer(),
             Text(_pin, style: numStyle(size: 22, weight: FontWeight.w600).copyWith(letterSpacing: 5)),
             const SizedBox(width: 10),
-            CircleBtn(icon: Ph.arrowsClockwise, label: 'New PIN', ground: fill, onTap: () => setState(() => _pin = _randomPin())),
+            CircleBtn(icon: Ph.arrowsClockwise, label: 'New PIN', ground: fill, onTap: () => setState(() => _pin = randomPin())),
           ]),
         ),
       ],
@@ -178,8 +183,13 @@ class _AddStudentScreenState extends State<AddStudentScreen> {
 // ---------------------------------------------------------------- detail
 
 class StudentDetailScreen extends StatefulWidget {
-  const StudentDetailScreen({super.key, required this.id});
+  const StudentDetailScreen({super.key, required this.id, this.courseId, this.courseName});
   final String id;
+
+  /// Opened from a course's page: the person is shown as that course sees them (its tests only), and can be
+  /// taken out of it.
+  final String? courseId;
+  final String? courseName;
 
   @override
   State<StudentDetailScreen> createState() => _StudentDetailScreenState();
@@ -204,7 +214,7 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> with WidgetsB
   Future<void> _load() async {
     markLoaded();
     try {
-      final d = await api.get('/teacher/students/${widget.id}');
+      final d = await api.get('/teacher/students/${widget.id}${widget.courseId == null ? '' : '?course=${widget.courseId}'}');
       if (mounted) {
         setState(() {
         _d = Map<String, dynamic>.from(d);
@@ -289,12 +299,33 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> with WidgetsB
     }
   }
 
+  /// Takes the person out of the course this page was opened from. They stay a student with their login and groups.
+  Future<void> _leaveCourse(Map<String, dynamic> s) async {
+    final course = widget.courseName ?? 'this course';
+    final ok = await confirmCard(
+      context,
+      title: 'Remove ${s['display_name']} from $course?',
+      body: 'They stay a student with their login and their groups. What they wrote in the course stays in its results.',
+      confirm: 'Remove',
+      destructive: true,
+    );
+    if (!ok) return;
+    try {
+      await api.delete('/teacher/courses/${widget.courseId}/people/${widget.id}');
+      if (mounted) context.pop(true);
+    } on ApiException catch (e) {
+      if (mounted) showProblem(context, e);
+    }
+  }
+
   Future<void> _delete(Map<String, dynamic> s, int written) async {
+    final inCourses = (s['courses'] as List? ?? const []).length;
     final ok = await confirmCard(
       context,
       title: 'Delete ${s['display_name']}?',
       body: [
         'Their login${written > 0 ? ' and ${written == 1 ? 'their 1 test result' : 'all $written test results'}' : ''} will be deleted for good.',
+        if (inCourses > 0) 'They are taken out of ${f.count(inCourses, 'course')} too.',
         if (written > 0) 'To keep the results, turn the login off instead.',
       ].join(' '),
       confirm: 'Delete',
@@ -312,12 +343,15 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> with WidgetsB
   /// The student's actions, kept off the page: change subjects, reset the PIN, turn the login off, delete.
   Future<void> _menu(Map<String, dynamic> s, int written) async {
     final active = s['active'] == true;
+    final inCourses = (s['courses'] as List? ?? const []).length;
     final pick = await showCentredCard<String>(
       context,
       title: '${s['display_name']}',
-      subtitle: 'Login ${s['username']}',
+      subtitle: 'Login ${s['username']}${inCourses > 0 ? ' · in ${f.count(inCourses, 'course')}' : ''}',
       builder: (ctx) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        _MenuRow(icon: Ph.pencilSimple, label: 'Change subjects', onTap: () => Navigator.of(ctx).pop('subjects')),
+        if (widget.courseId != null) _MenuRow(icon: Ph.userMinus, label: 'Remove from this course', onTap: () => Navigator.of(ctx).pop('leave')),
+        // Subjects decide a person's groups: someone with no class (only in courses) has none to change.
+        if (s['class_level'] != null) _MenuRow(icon: Ph.pencilSimple, label: 'Change subjects', onTap: () => Navigator.of(ctx).pop('subjects')),
         _MenuRow(icon: Ph.key, label: 'Reset PIN', onTap: () => Navigator.of(ctx).pop('pin')),
         _MenuRow(
           icon: active ? Ph.prohibit : Ph.checkCircle,
@@ -329,6 +363,8 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> with WidgetsB
     );
     if (!mounted) return;
     switch (pick) {
+      case 'leave':
+        await _leaveCourse(s);
       case 'subjects':
         await _editSubjects(s);
       case 'pin':
@@ -402,7 +438,9 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> with WidgetsB
 
     return PushedPanel(
       onRefresh: _load,
-      kicker: [className(s['class_level']), ...subjects, if (s['active'] != true) 'login off'].join(' · '),
+      kicker: widget.courseId != null
+          ? ['Course', if (widget.courseName != null && widget.courseName!.isNotEmpty) widget.courseName!, if (s['active'] != true) 'login off'].join(' · ')
+          : [className(s['class_level']), ...subjects, if (s['active'] != true) 'login off'].where((p) => p.isNotEmpty).join(' · '),
       title: '${s['display_name']}',
       headerTrailing: CircleBtn(icon: Ph.dotsThreeVertical, label: 'More', onTap: () => _menu(s, done.length)),
       children: [

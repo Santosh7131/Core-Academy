@@ -71,4 +71,7 @@ abstract final class Ph {
   static const clockCountdown = IconData(0xed2c, fontFamily: _family);
   static const caretLeft = IconData(0xe138, fontFamily: _family);
   static const warningCircle = IconData(0xe4e2, fontFamily: _family);
+  static const graduationCap = IconData(0xe62c, fontFamily: _family);
+  static const userMinus = IconData(0xe4ce, fontFamily: _family);
+  static const circle = IconData(0xe18a, fontFamily: _family);
 }

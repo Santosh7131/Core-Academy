@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../student/profile_screen.dart';
 import '../student/result_screen.dart';
 import '../student/review_screen.dart';
+import 'course_screens.dart';
 import 'group_screens.dart';
 import 'join_requests_screen.dart';
 import 'papers_screens.dart';
@@ -24,15 +25,25 @@ GoRoute _page(String path, Widget Function(GoRouterState s) build) =>
 
 int? _int(GoRouterState s, String key) => int.tryParse(s.uri.queryParameters[key] ?? '');
 
-/// Two tabs inside the shell, Home and Groups; everything else is pushed full-screen above it.
-/// Students, tests, uploads and test questions all live inside a group.
+/// Three tabs inside the shell, Home, Courses and Groups; everything else is pushed full-screen above it.
+/// Students, tests, uploads and test questions all live inside a group or a course.
 final teacherRoutes = <RouteBase>[
   StatefulShellRoute.indexedStack(
     builder: (context, state, shell) => TeacherShell(shell: shell),
     branches: [
       StatefulShellBranch(routes: [_tab('/t', (_) => const TutorHome())]),
+      StatefulShellBranch(routes: [_tab('/t/courses', (_) => const CoursesScreen())]),
       StatefulShellBranch(routes: [_tab('/t/groups', (_) => const GroupsScreen())]),
     ],
+  ),
+  _page('/t/courses/:id', (s) => CourseScreen(id: s.pathParameters['id']!, name: s.uri.queryParameters['name'] ?? 'Course')),
+  _page(
+    '/t/courses/:id/add',
+    (s) => AddPeopleScreen(courseId: s.pathParameters['id']!, courseName: s.uri.queryParameters['name'] ?? 'Course'),
+  ),
+  _page(
+    '/t/courses/:id/chat',
+    (s) => ChatTestScreen(courseId: s.pathParameters['id']!, subjectName: s.uri.queryParameters['name'] ?? 'Course'),
   ),
   _page(
     '/t/groups/:cls/:subject',
@@ -51,10 +62,16 @@ final teacherRoutes = <RouteBase>[
     ),
   ),
   _page('/t/students/new', (s) => AddStudentScreen(classLevel: _int(s, 'class'), subjectId: s.uri.queryParameters['subject'])),
-  _page('/t/students/:id', (s) => StudentDetailScreen(id: s.pathParameters['id']!)),
+  // From a course's page the person is shown as that course sees them: only its tests.
+  _page('/t/students/:id', (s) => StudentDetailScreen(id: s.pathParameters['id']!, courseId: s.uri.queryParameters['course'], courseName: s.uri.queryParameters['name'])),
   _page(
     '/t/papers/new',
-    (s) => UploadPaperScreen(classLevel: _int(s, 'class'), subjectId: s.uri.queryParameters['subject'], subjectName: s.uri.queryParameters['name']),
+    (s) => UploadPaperScreen(
+      classLevel: _int(s, 'class'),
+      subjectId: s.uri.queryParameters['subject'],
+      subjectName: s.uri.queryParameters['name'],
+      courseId: s.uri.queryParameters['course'],
+    ),
   ),
   _page('/t/papers/:id', (s) => PaperReviewScreen(id: s.pathParameters['id']!, autoRead: s.uri.queryParameters['read'] == '1')),
   // A question opens only from a test or a paper, to fix its answer.

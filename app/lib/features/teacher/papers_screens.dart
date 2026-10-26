@@ -22,8 +22,9 @@ import '../../core/levels.dart';
 /// A paper's name, as AI found it or the teacher typed it.
 String paperName(Map<String, dynamic> p) => '${p['exam_name']}';
 
-/// "10th Science", or what is still unknown about a paper.
+/// "10th Science", the course's name for a course's paper, or what is still unknown about a paper.
 String paperGroup(Map<String, dynamic> p) {
+  if (p['course_id'] != null) return '${p['course'] ?? 'Course'}';
   final cls = p['class_level'] as int?;
   if (cls == null) return 'Class not set';
   return p['subject'] == null ? className(cls) : groupName(cls, '${p['subject']}');
@@ -37,11 +38,12 @@ const _unnamed = 'New paper';
 
 /// Pages first: AI works out the rest once they are uploaded.
 class UploadPaperScreen extends StatefulWidget {
-  /// From a group's page: the paper's class and subject are the group's.
-  const UploadPaperScreen({super.key, this.classLevel, this.subjectId, this.subjectName});
+  /// From a group's page: the paper's class and subject are the group's. From a course's page: the paper is the course's.
+  const UploadPaperScreen({super.key, this.classLevel, this.subjectId, this.subjectName, this.courseId});
   final int? classLevel;
   final String? subjectId;
   final String? subjectName;
+  final String? courseId;
 
   @override
   State<UploadPaperScreen> createState() => _UploadPaperScreenState();
@@ -116,8 +118,9 @@ class _UploadPaperScreenState extends State<UploadPaperScreen> {
         'pages': _pages.length,
         // Each page's size, so storage takes exactly that many bytes for it.
         'sizes': [for (final p in _pages) p.length],
-        if (widget.classLevel != null) 'class_level': widget.classLevel,
-        if (widget.subjectId != null) 'subject_id': widget.subjectId,
+        if (widget.courseId != null) 'course_id': widget.courseId,
+        if (widget.courseId == null && widget.classLevel != null) 'class_level': widget.classLevel,
+        if (widget.courseId == null && widget.subjectId != null) 'subject_id': widget.subjectId,
       });
       final id = '${r['paper']['id']}';
       final uploads = (r['uploads'] as List).cast<Map<String, dynamic>>();
@@ -145,7 +148,11 @@ class _UploadPaperScreenState extends State<UploadPaperScreen> {
     final locked = _busy || _pages.length >= 20;
     final subject = widget.subjectName;
     return PushedPanel(
-      kicker: widget.classLevel != null && subject != null && subject.isNotEmpty ? groupName(widget.classLevel!, subject) : 'Question paper',
+      kicker: widget.courseId != null
+          ? (subject != null && subject.isNotEmpty ? subject : 'Course')
+          : widget.classLevel != null && subject != null && subject.isNotEmpty
+              ? groupName(widget.classLevel!, subject)
+              : 'Question paper',
       title: 'Add the paper',
       footer: PrimaryButton(
         _status ?? (_pages.isEmpty ? 'Read with AI' : 'Read ${f.count(_pages.length, 'page')} with AI'),
@@ -736,19 +743,27 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
   Future<void> _offerPublish(Map<String, dynamic> p) async {
     final n = _questions.length;
     final group = paperGroup(p);
-    // How many students the group has, so the teacher sees who gets it.
+    final courseId = p['course_id'] as String?;
+    // How many students the group (or the people of the course) has, so the teacher sees who gets it.
     int? students;
     try {
-      final g = await api.get('/teacher/groups');
-      students = 0;
-      for (final x in (g['groups'] as List)) {
-        if (x['class_level'] == p['class_level'] && x['subject_id'] == p['subject_id']) students = x['students'] as int;
+      if (courseId != null) {
+        final c = await api.get('/teacher/courses/$courseId');
+        students = (c['course']['people'] as num).toInt();
+      } else {
+        final g = await api.get('/teacher/groups');
+        students = 0;
+        for (final x in (g['groups'] as List)) {
+          if (x['class_level'] == p['class_level'] && x['subject_id'] == p['subject_id']) students = x['students'] as int;
+        }
       }
     } on ApiException {
       students = null;
     }
     if (!mounted) return;
-    final who = students == null ? 'the students in $group' : (students == 1 ? 'the 1 student in $group' : 'the $students students in $group');
+    final who = courseId != null
+        ? (students == null ? 'the people in $group' : (students == 1 ? 'the 1 person in $group' : 'the $students people in $group'))
+        : (students == null ? 'the students in $group' : (students == 1 ? 'the 1 student in $group' : 'the $students students in $group'));
     final choice = await showCentredCard<String>(
       context,
       title: 'Publish it as a test?',
@@ -758,7 +773,12 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
         Fig('Goes to $who. Students see their marks after it closes, or once everyone has finished.', style: bodyStyle.copyWith(color: muted)),
         if (students == 0) ...[
           const SizedBox(height: 12),
-          InlineNotice('No student is in $group yet, so nobody would see it. Add students to the group first.', icon: Ph.warning),
+          InlineNotice(
+            courseId != null
+                ? 'No one is in $group yet, so nobody would see it. Add people to the course first.'
+                : 'No student is in $group yet, so nobody would see it. Add students to the group first.',
+            icon: Ph.warning,
+          ),
         ],
         const SizedBox(height: 18),
         PrimaryButton(students == null ? 'Publish now' : 'Publish for all of $group', leadingIcon: Ph.exam, onTap: () => Navigator.of(ctx).pop('publish')),
@@ -780,16 +800,22 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
     setState(() => _making = true);
     try {
       final closes = defaultClosing();
+      // A course's paper makes a course's test, which goes to the people of the course.
+      final courseId = p['course_id'] as String?;
       final r = await api.post('/teacher/tests', {
         'title': paperName(p),
-        'class_level': p['class_level'],
-        'subject_id': p['subject_id'],
+        if (courseId != null)
+          'course_id': courseId
+        else ...{
+          'class_level': p['class_level'],
+          'subject_id': p['subject_id'],
+          'assign_all': false,
+          'assign_group': true,
+        },
         'question_ids': [for (final q in _questions) q['id']],
         'time_limit_min': _limitFor(_questions.length),
         'closes_at': closes.toUtc().toIso8601String(),
         'shuffle': true,
-        'assign_all': false,
-        'assign_group': true,
         'paper_id': p['id'],
       });
       final id = '${r['id']}';

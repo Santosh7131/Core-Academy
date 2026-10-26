@@ -44,6 +44,9 @@ class Api {
   /// Called when the server says the person is no longer in the tuition the app was showing.
   void Function()? onTuitionGone;
 
+  /// Called when the server says this version of the app can no longer be used (a major update is out).
+  void Function()? onUpdateRequired;
+
   Future<dynamic> get(String path) => _send('GET', path);
   Future<dynamic> post(String path, [Object? body, Duration? timeout]) => _send('POST', path, body: body, timeout: timeout);
   Future<dynamic> put(String path, [Object? body]) => _send('PUT', path, body: body);
@@ -88,6 +91,7 @@ class Api {
     );
     if (e.status == 401 && e.code == 'signed_out' && token != null) onSignedOut?.call();
     if (e.status == 403 && e.code == 'not_a_member') onTuitionGone?.call();
+    if (e.status == 426 && e.code == 'update_required') onUpdateRequired?.call();
     throw e;
   }
 

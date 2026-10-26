@@ -6,6 +6,8 @@ import 'dart:convert';
 
 import 'package:core_academy/core/api.dart';
 import 'package:core_academy/core/session.dart';
+import 'package:core_academy/features/student/home_screen.dart';
+import 'package:core_academy/features/teacher/course_screens.dart';
 import 'package:core_academy/features/teacher/group_screens.dart';
 import 'package:core_academy/theme.dart';
 import 'package:core_academy/ui/motion.dart';
@@ -185,5 +187,116 @@ void main() {
     await _advance(t, 800);
     expect(_opacity(t, find.text('Student 15')), closeTo(1, 0.001));
     await t.pumpWidget(const SizedBox.shrink()); // stops the screen's refresh timers
+  });
+
+  /// A tutor signed in to one tuition, for the screens that read the session.
+  void tutorSession() {
+    api.token = 'test';
+    session.user = {'id': 'u-1', 'role': 'teacher', 'username': 'priya', 'display_name': 'Priya', 'class_level': null};
+    session.tuitions = [
+      {'id': 't-1', 'name': 'Priya Maths Classes', 'role': 'owner', 'status': 'active'},
+    ];
+    session.tuitionId = 't-1';
+  }
+
+  testWidgets('the course page: every person row comes in, not only the first few', (t) async {
+    tutorSession();
+    final closes = DateTime.now().add(const Duration(hours: 3)).toUtc().toIso8601String();
+    _routes['/teacher/courses/c-1'] = () => {
+          'course': {'id': 'c-1', 'name': 'Spoken English, Batch 1', 'people': 16},
+          'tests': [
+            {'id': 'y1', 'title': 'Unit 1 quiz', 'status': 'published', 'opens_at': null, 'closes_at': closes, 'question_count': 10, 'submitted': 6, 'assigned': 16, 'writing': 2},
+          ],
+          'people': [
+            for (var i = 0; i < 16; i++) {'id': 'p$i', 'display_name': 'Person $i', 'active': true, 'tests_done': i % 3, 'avg_pct': i % 3 == 0 ? null : 0.6},
+          ],
+        };
+    _screen(t, 411, 914);
+    await t.pumpWidget(MaterialApp(
+      theme: buildTheme(Brightness.light),
+      home: const CourseScreen(id: 'c-1', name: 'Spoken English, Batch 1'),
+    ));
+    for (var i = 0; i < 20 && find.text('Person 0').evaluate().isEmpty; i++) {
+      await t.pump(const Duration(milliseconds: 16));
+    }
+    expect(find.text('Person 0'), findsOneWidget, reason: 'the course page never loaded');
+    // The people whose rows are well inside the screen (a row with only a sliver showing waits to be scrolled to).
+    final built = [for (var i = 0; i < 16; i++) if (find.text('Person $i').evaluate().isNotEmpty && t.getTopLeft(find.text('Person $i')).dy < 914 - 60) i];
+    expect(built.length, greaterThan(2), reason: 'the first screenful should show several people');
+    for (final i in built) {
+      expect(_revealAround(find.text('Person $i')), findsOneWidget, reason: 'person $i has no reveal around it');
+    }
+    await _advance(t, 2500);
+    for (final i in built) {
+      expect(_opacity(t, find.text('Person $i')), closeTo(1, 0.001), reason: 'person $i never came in');
+    }
+    // The ones further down come in as the list is scrolled to them.
+    await t.scrollUntilVisible(find.text('Person 15'), 120, scrollable: find.byType(Scrollable).first);
+    await _advance(t, 100);
+    expect(_revealAround(find.text('Person 15')), findsOneWidget);
+    expect(_opacity(t, find.text('Person 15')), lessThan(1), reason: 'the last person should be coming in');
+    await _advance(t, 800);
+    expect(_opacity(t, find.text('Person 15')), closeTo(1, 0.001));
+    await t.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('the Courses tab: each course comes in one after another', (t) async {
+    tutorSession();
+    _routes['/teacher/courses'] = () => {
+          'courses': [
+            for (var i = 0; i < 12; i++) {'id': 'c$i', 'name': 'Course $i', 'people': 5 + i, 'live': <Object?>[], 'posted': <Object?>[]},
+          ],
+        };
+    _screen(t, 411, 914);
+    await t.pumpWidget(MaterialApp(theme: buildTheme(Brightness.light), home: const Scaffold(body: CoursesScreen())));
+    for (var i = 0; i < 20 && find.text('Course 0').evaluate().isEmpty; i++) {
+      await t.pump(const Duration(milliseconds: 16));
+    }
+    expect(find.text('Course 0'), findsOneWidget, reason: 'the Courses tab never loaded');
+    final built = [for (var i = 0; i < 12; i++) if (find.text('Course $i').evaluate().isNotEmpty) i];
+    expect(built.length, greaterThan(4));
+    for (final i in built) {
+      expect(_revealAround(find.text('Course $i')), findsOneWidget, reason: 'course $i has no reveal around it');
+    }
+    await _advance(t, 60);
+    expect(_opacity(t, find.text('Course 4')), 0, reason: 'a later course waits for its turn');
+    await _advance(t, 400);
+    expect(_opacity(t, find.text('Course 0')), greaterThan(0.3));
+    await _advance(t, 2500);
+    for (final i in built) {
+      expect(_opacity(t, find.text('Course $i')), closeTo(1, 0.001), reason: 'course $i never came in');
+    }
+    await t.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('a student who is only in courses: each course comes in', (t) async {
+    api.token = 'test';
+    session.user = {'id': 'u-2', 'role': 'student', 'username': 'rohan.k', 'display_name': 'Rohan Krishnan', 'class_level': null};
+    session.tuitions = [
+      {'id': 't-1', 'name': 'Priya Maths Classes', 'role': 'student', 'status': 'active', 'class_level': null},
+    ];
+    session.tuitionId = 't-1';
+    _routes['/student/home'] = () => {'server_now': DateTime.now().toUtc().toIso8601String(), 'tuition': {'id': 't-1', 'name': 'Priya Maths Classes'}, 'tests': <Object?>[], 'courses': 9};
+    _routes['/student/courses'] = () => {
+          'courses': [
+            for (var i = 0; i < 9; i++) {'id': 'c$i', 'name': 'Course $i', 'open': i % 2, 'closes_at': null},
+          ],
+        };
+    _screen(t, 411, 914);
+    await t.pumpWidget(MaterialApp(theme: buildTheme(Brightness.light), home: const StudentHome()));
+    for (var i = 0; i < 20 && find.text('Course 0').evaluate().isEmpty; i++) {
+      await t.pump(const Duration(milliseconds: 16));
+    }
+    expect(find.text('Course 0'), findsOneWidget, reason: 'the home never loaded');
+    expect(find.text('Tests'), findsNothing, reason: 'a person with no class has no class tests, so no Tests tab');
+    final built = [for (var i = 0; i < 9; i++) if (find.text('Course $i').evaluate().isNotEmpty) i];
+    for (final i in built) {
+      expect(_revealAround(find.text('Course $i')), findsOneWidget, reason: 'course $i has no reveal around it');
+    }
+    await _advance(t, 2500);
+    for (final i in built) {
+      expect(_opacity(t, find.text('Course $i')), closeTo(1, 0.001), reason: 'course $i never came in');
+    }
+    await t.pumpWidget(const SizedBox.shrink());
   });
 }
