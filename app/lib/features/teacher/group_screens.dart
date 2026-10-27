@@ -1,18 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:intl/intl.dart';
 
 import '../../core/api.dart';
 import '../../core/changes.dart';
 import '../../core/format.dart' as f;
-import '../../core/session.dart';
 import '../../theme.dart';
 import '../../ui/kit.dart';
-import '../../ui/tokens.dart';
-import '../../ui/update_card.dart';
 import 'common.dart';
+import 'make_test.dart';
 import 'subjects.dart';
-import 'course_screens.dart' show coursePath;
 import 'tests_screens.dart' show TestListTile, testState;
 
 int _n(Object? v) => v is num ? v.toInt() : int.tryParse('$v') ?? 0;
@@ -22,530 +18,59 @@ String _enc(String s) => Uri.encodeComponent(s);
 /// The page of one group, e.g. 10th Maths.
 String groupPath(Map<String, dynamic> g) => '/t/groups/${g['class_level']}/${g['subject_id']}?name=${_enc('${g['subject']}')}';
 
-// ---------------------------------------------------------------- home
+// ---------------------------------------------------------------- a new group
 
-/// The tutor's home: every group, with the tests students can write now (live) and the tests
-/// posted for later, and how many students have submitted or are writing.
-class TutorHome extends StatefulWidget {
-  const TutorHome({super.key});
-
-  @override
-  State<TutorHome> createState() => _TutorHomeState();
-}
-
-class _TutorHomeState extends State<TutorHome> with WidgetsBindingObserver, AutoRefresh<TutorHome> {
-  Map<String, dynamic>? _d;
-  String? _error;
-
-  @override
-  Set<Area> get refreshAreas => {Area.tests, Area.students, Area.papers, Area.courses};
-
-  // Students start and submit tests all the time: check every 30 s while this is on screen.
-  @override
-  Duration? get pollEvery => const Duration(seconds: 30);
-
-  @override
-  Future<void> refreshQuietly() => _load(quiet: true);
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
+/// Starts a group: asks for its class and subject, makes it on the server and opens it, so its first students can be added.
+/// The screen that asked loads its list again when this is over.
+Future<void> startNewGroup(BuildContext context) async {
+  List<Subject> subjects;
+  try {
+    subjects = await loadSubjects();
+  } on ApiException catch (e) {
+    if (context.mounted) showProblem(context, e);
+    return;
   }
-
-  Future<void> _load({bool quiet = false}) async {
-    markLoaded();
-    try {
-      final d = await api.get('/teacher/home');
-      if (mounted) {
-        setState(() {
-          _d = Map<String, dynamic>.from(d);
-          _error = null;
-        });
-      }
-    } on ApiException catch (e) {
-      if (mounted && !quiet) setState(() => _error = e.message);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final d = _d;
-    return SafeArea(
-      bottom: false,
-      child: PullToRefresh(
-        onRefresh: _load,
-        child: ListView(padding: EdgeInsets.zero, physics: const AlwaysScrollableScrollPhysics(), children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(gutter, 22, gutter, 0),
-            child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-              Expanded(
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Kicker('${session.tuitionName} · ${DateFormat('d MMMM').format(DateTime.now())}'),
-                  const SizedBox(height: 6),
-                  Text('Home', style: displayStyle),
-                ]),
-              ),
-              Pressable(
-                label: 'Settings',
-                onTap: () => context.push('/t/settings'),
-                child: AppAvatar(name: '${session.user?['display_name'] ?? ''}', seed: '${session.user?['id'] ?? ''}', size: 42),
-              ),
-            ]),
-          ),
-          const UpdateBanner(),
-          if (d == null && _error != null)
-            ErrorState(message: _error!, onRetry: _load)
-          else if (d == null)
-            const LoadingState(inset: true, rows: 3)
-          else
-            ...staggered(_body(d), scope: this, prefix: 'home', stepMs: 60),
-          navClearance,
-        ]),
-      ),
-    );
-  }
-
-  List<Widget> _body(Map<String, dynamic> d) {
-    final groups = (d['groups'] as List).cast<Map<String, dynamic>>();
-    // Courses come with an app that knows them; their tests are not in the groups' totals.
-    final courses = ((d['courses'] as List?) ?? const []).cast<Map<String, dynamic>>();
-    final totals = Map<String, dynamic>.from(d['totals']);
-    int testsOf(Map<String, dynamic> c, String k) => (c[k] as List).length;
-    final live = _n(totals['live']) + courses.fold<int>(0, (s, c) => s + testsOf(c, 'live'));
-    final writing = _n(totals['writing']) +
-        courses.fold<int>(0, (s, c) => s + (c['live'] as List).fold<int>(0, (a, t) => a + _n((t as Map)['writing'])));
-    final posted = groups.fold<int>(0, (s, g) => s + (g['posted'] as List).length) + courses.fold<int>(0, (s, c) => s + testsOf(c, 'posted'));
-    final pending = _n(d['pending_requests']);
-    final code = '${d['tuition']?['join_code'] ?? ''}';
-    final noStudents = groups.every((g) => _n(g['students']) == 0) && courses.every((c) => _n(c['people']) == 0);
-    bool has(Map<String, dynamic> g, String k) => (g[k] as List).isNotEmpty;
-    // Groups with something running come first (live before posted-only). The rest fold into one short list
-    // so a tutor with a dozen groups still sees what matters without scrolling past empty cards.
-    final busy = [
-      ...groups.where((g) => has(g, 'live')),
-      ...groups.where((g) => !has(g, 'live') && has(g, 'posted')),
-    ];
-    final quiet = groups.where((g) => !has(g, 'live') && !has(g, 'posted')).toList();
-    // The same for courses (the server lists the busy ones first already).
-    final busyCourses = [
-      ...courses.where((c) => has(c, 'live')),
-      ...courses.where((c) => !has(c, 'live') && has(c, 'posted')),
-    ];
-    final quietCourses = courses.where((c) => !has(c, 'live') && !has(c, 'posted')).toList();
-    final summary = [
-      live == 0 ? 'No test is live right now' : '${f.count(live, 'test')} live now · ${f.count(writing, 'student')} writing',
-      if (posted > 0) '$posted posted',
-    ].join(' · ');
-
-    Widget cards(List<Widget> list) => Padding(
-          padding: const EdgeInsets.symmetric(horizontal: gutter),
-          child: Column(children: [
-            for (final (i, w) in list.indexed) ...[if (i > 0) const SizedBox(height: gapRow), w],
-          ]),
-        );
-    Widget quietRows(List<Widget> list) => Padding(
-          padding: const EdgeInsets.symmetric(horizontal: gutter),
-          child: Surface(
-            shadow: e1,
-            padding: const EdgeInsets.symmetric(horizontal: 17),
-            child: Column(children: [
-              for (final (i, w) in list.indexed) ...[if (i > 0) Container(height: 1, color: hairline), w],
-            ]),
-          ),
-        );
-    return [
-      if (_error != null) Padding(padding: const EdgeInsets.fromLTRB(gutter, 16, gutter, 0), child: InlineNotice(_error!, icon: Ph.warning)),
-      // Students waiting to be let in come first; a tuition with no students yet shows how to invite them.
-      if (pending > 0)
-        Padding(
-          padding: const EdgeInsets.fromLTRB(gutter, 16, gutter, 0),
-          child: RowTile(
-            leading: Icon(Ph.userPlus, size: 22, color: ink),
-            title: pending == 1 ? '1 student wants to join' : '$pending students want to join',
-            meta: 'Choose their class and subjects',
-            chevron: true,
-            onTap: () => context.push('/t/requests'),
-          ),
-        )
-      else if (noStudents && code.length == 6)
-        Padding(
-          padding: const EdgeInsets.fromLTRB(gutter, 16, gutter, 0),
-          child: RowTile(
-            leading: Icon(Ph.shareNetwork, size: 22, color: ink),
-            title: 'Invite your students',
-            meta: 'Join code ${code.substring(0, 3)}-${code.substring(3)}',
-            chevron: true,
-            onTap: () => context.push('/t/code'),
-          ),
+  if (!context.mounted) return;
+  int? cls;
+  String? subjectId;
+  final ok = await showCentredCard<bool>(
+    context,
+    title: 'New group',
+    subtitle: 'A class and a subject, like 10th Maths',
+    builder: (ctx) => StatefulBuilder(
+      builder: (ctx, set) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        const FormLabel('Class', top: 4),
+        ClassField(value: cls, onChanged: (c) => set(() => cls = c)),
+        const FormLabel('Subject'),
+        SubjectField(
+          subjects: subjects,
+          value: subjectId,
+          onChanged: (v) => set(() => subjectId = v),
+          onAdded: (s) => set(() {
+            subjects.add(s);
+            subjectId = s.id;
+          }),
         ),
-      Padding(
-        padding: const EdgeInsets.fromLTRB(gutter, 14, gutter, 18),
-        child: Fig(summary, style: bodyStyle.copyWith(color: muted)),
-      ),
-      if (groups.isEmpty && courses.isEmpty)
-        const EmptyState(icon: Ph.users, title: 'No groups yet', body: 'Open Groups and add your first group.')
-      else if (courses.isEmpty) ...[
-        // Until there is a course, Home is the list of groups it always was.
-        // With nothing live or posted, the summary line above already says so.
-        if (busy.isNotEmpty) cards([for (final g in busy) _GroupCard(g: g)]),
-        if (quiet.isNotEmpty) ...[
-          SectionRule(busy.isEmpty ? 'Your groups' : 'No test running', count: quiet.length),
-          quietRows([for (final g in quiet) _QuietGroup(g: g)]),
-        ],
-      ] else ...[
-        // With courses, Home has two sections, each listing what is running first and the rest in one short list.
-        if (groups.isNotEmpty) ...[
-          SectionRule('Groups', count: groups.length, padding: const EdgeInsets.fromLTRB(gutter, 4, gutter, 11)),
-          if (busy.isNotEmpty) cards([for (final g in busy) _GroupCard(g: g)]),
-          if (busy.isNotEmpty && quiet.isNotEmpty) const SizedBox(height: gapRow),
-          if (quiet.isNotEmpty) quietRows([for (final g in quiet) _QuietGroup(g: g)]),
-        ],
-        SectionRule('Courses', count: courses.length, padding: EdgeInsets.fromLTRB(gutter, groups.isEmpty ? 4 : 26, gutter, 11)),
-        if (busyCourses.isNotEmpty) cards([for (final c in busyCourses) _CourseCard(c: c)]),
-        if (busyCourses.isNotEmpty && quietCourses.isNotEmpty) const SizedBox(height: gapRow),
-        if (quietCourses.isNotEmpty) quietRows([for (final c in quietCourses) _QuietCourse(c: c)]),
-      ],
-    ];
-  }
-}
-
-/// One line for a group with nothing live or posted: name and student count, tap to open it.
-class _QuietGroup extends StatelessWidget {
-  const _QuietGroup({required this.g});
-  final Map<String, dynamic> g;
-
-  @override
-  Widget build(BuildContext context) {
-    final name = groupName(g['class_level'] as int, '${g['subject']}');
-    return Pressable(
-      label: 'Open $name',
-      onTap: () => context.push(groupPath(g)),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 14),
-        child: Row(children: [
-          Expanded(child: Fig(name, style: rowTitleStyle, maxLines: 1)),
-          const SizedBox(width: 12),
-          Fig(f.count(_n(g['students']), 'student'), style: labelStyle),
-          const SizedBox(width: 8),
-          Icon(Ph.caretRight, size: 16, color: faint),
-        ]),
-      ),
-    );
-  }
-}
-
-class _GroupCard extends StatelessWidget {
-  const _GroupCard({required this.g});
-  final Map<String, dynamic> g;
-
-  @override
-  Widget build(BuildContext context) {
-    final name = groupName(g['class_level'] as int, '${g['subject']}');
-    final live = (g['live'] as List).cast<Map<String, dynamic>>();
-    final posted = (g['posted'] as List).cast<Map<String, dynamic>>();
-
-    Widget block(String label, Tone tone, List<Map<String, dynamic>> tests, {required bool isLive}) =>
-        Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          const SizedBox(height: 14),
-          Align(alignment: Alignment.centerLeft, child: TagChip(label, tone: tone)),
-          for (final t in tests) ...[
-            Container(height: 1, margin: const EdgeInsets.only(top: 8), color: hairline),
-            _MiniTest(t: t, live: isLive),
-          ],
-        ]);
-
-    return Surface(
-      shadow: e1,
-      padding: const EdgeInsets.fromLTRB(17, 15, 17, 6),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Pressable(
-          label: 'Open $name',
-          onTap: () => context.push(groupPath(g)),
-          child: Row(children: [
-            Expanded(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Fig(name, style: titleStyle.copyWith(fontSize: 20, letterSpacing: -0.6), maxLines: 1),
-                const SizedBox(height: 3),
-                Fig(f.count(_n(g['students']), 'student'), style: labelStyle),
-              ]),
-            ),
-            Icon(Ph.caretRight, size: 18, color: faint),
-          ]),
+        const SizedBox(height: 18),
+        PrimaryButton(
+          'Open the group',
+          onTap: cls == null || subjectId == null ? null : () => Navigator.of(ctx).pop(true),
+          disabledReason: cls == null || subjectId == null ? 'Choose a class and a subject.' : null,
         ),
-        if (live.isNotEmpty) block('Live now', Tone.success, live, isLive: true),
-        if (posted.isNotEmpty) block('Posted', Tone.neutral, posted, isLive: false),
       ]),
-    );
+    ),
+  );
+  if (ok != true || cls == null || subjectId == null || !context.mounted) return;
+  final name = subjects.firstWhere((x) => x.id == subjectId).name;
+  // The group exists from now on, even before its first student.
+  try {
+    await api.post('/teacher/groups', {'class_level': cls, 'subject_id': subjectId});
+  } on ApiException catch (e) {
+    if (context.mounted) showProblem(context, e);
+    return;
   }
-}
-
-/// One line for a course with nothing live or posted: name and people count, tap to open it.
-class _QuietCourse extends StatelessWidget {
-  const _QuietCourse({required this.c});
-  final Map<String, dynamic> c;
-
-  @override
-  Widget build(BuildContext context) => Pressable(
-        label: 'Open ${c['name']}',
-        onTap: () => context.push(coursePath(c)),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 14),
-          child: Row(children: [
-            Expanded(child: Fig('${c['name']}', style: rowTitleStyle, maxLines: 1)),
-            const SizedBox(width: 12),
-            Fig(f.count(_n(c['people']), 'person', 'people'), style: labelStyle),
-            const SizedBox(width: 8),
-            Icon(Ph.caretRight, size: 16, color: faint),
-          ]),
-        ),
-      );
-}
-
-/// A course with a test running or posted: its name, how many people it has, and those tests, as a group's card does.
-class _CourseCard extends StatelessWidget {
-  const _CourseCard({required this.c});
-  final Map<String, dynamic> c;
-
-  @override
-  Widget build(BuildContext context) {
-    final live = (c['live'] as List).cast<Map<String, dynamic>>();
-    final posted = (c['posted'] as List).cast<Map<String, dynamic>>();
-
-    Widget block(String label, Tone tone, List<Map<String, dynamic>> tests, {required bool isLive}) =>
-        Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          const SizedBox(height: 14),
-          Align(alignment: Alignment.centerLeft, child: TagChip(label, tone: tone)),
-          for (final t in tests) ...[
-            Container(height: 1, margin: const EdgeInsets.only(top: 8), color: hairline),
-            _MiniTest(t: t, live: isLive, course: true),
-          ],
-        ]);
-
-    return Surface(
-      shadow: e1,
-      padding: const EdgeInsets.fromLTRB(17, 15, 17, 6),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Pressable(
-          label: 'Open ${c['name']}',
-          onTap: () => context.push(coursePath(c)),
-          child: Row(children: [
-            Expanded(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Fig('${c['name']}', style: titleStyle.copyWith(fontSize: 20, letterSpacing: -0.6), maxLines: 1),
-                const SizedBox(height: 6),
-                Row(children: [
-                  Container(
-                    height: 22,
-                    padding: const EdgeInsets.symmetric(horizontal: 9),
-                    decoration: BoxDecoration(color: fill, borderRadius: BorderRadius.circular(rPill)),
-                    child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      Icon(Ph.graduationCap, size: 13, color: muted),
-                      const SizedBox(width: 5),
-                      Text('Course', style: tagStyle.copyWith(color: muted)),
-                    ]),
-                  ),
-                  const SizedBox(width: 10),
-                  Fig(f.count(_n(c['people']), 'person', 'people'), style: labelStyle),
-                ]),
-              ]),
-            ),
-            Icon(Ph.caretRight, size: 18, color: faint),
-          ]),
-        ),
-        if (live.isNotEmpty) block('Live now', Tone.success, live, isLive: true),
-        if (posted.isNotEmpty) block('Posted', Tone.neutral, posted, isLive: false),
-      ]),
-    );
-  }
-}
-
-class _MiniTest extends StatelessWidget {
-  const _MiniTest({required this.t, required this.live, this.course = false});
-  final Map<String, dynamic> t;
-  final bool live;
-
-  /// Counts people, not students.
-  final bool course;
-
-  @override
-  Widget build(BuildContext context) {
-    final closes = f.parseTime(t['closes_at']);
-    final opens = f.parseTime(t['opens_at']);
-    final writing = _n(t['writing']);
-    final meta = live
-        ? (closes == null ? 'Open' : 'Closes ${f.when(closes)}')
-        : (opens == null ? 'Posted' : 'Opens ${f.when(opens)}${closes == null ? '' : ' · closes ${f.when(closes)}'}');
-    return Pressable(
-      label: '${t['title']}',
-      onTap: () => context.push('/t/tests/${t['id']}'),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 11),
-        child: Row(children: [
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Fig('${t['title']}', style: rowTitleStyle, maxLines: 1),
-              const SizedBox(height: 2),
-              Fig(meta, style: labelStyle, maxLines: 1),
-            ]),
-          ),
-          const SizedBox(width: 12),
-          if (live)
-            Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-              Text('${_n(t['submitted'])}/${_n(t['assigned'])}', style: numStyle(size: 15)),
-              const SizedBox(height: 2),
-              Fig(writing > 0 ? '$writing writing now' : 'submitted', style: labelStyle.copyWith(color: writing > 0 ? warning : null)),
-            ])
-          else
-            Fig(course ? f.count(_n(t['assigned']), 'person', 'people') : f.count(_n(t['assigned']), 'student'), style: labelStyle),
-        ]),
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------- groups
-
-class GroupsScreen extends StatefulWidget {
-  const GroupsScreen({super.key});
-
-  @override
-  State<GroupsScreen> createState() => _GroupsScreenState();
-}
-
-class _GroupsScreenState extends State<GroupsScreen> with WidgetsBindingObserver, AutoRefresh<GroupsScreen> {
-  List<Map<String, dynamic>>? _groups;
-  String? _error;
-
-  @override
-  Set<Area> get refreshAreas => {Area.tests, Area.students};
-
-  @override
-  Future<void> refreshQuietly() => _load();
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    markLoaded();
-    try {
-      final d = await api.get('/teacher/home');
-      if (mounted) {
-        setState(() {
-          _groups = (d['groups'] as List).cast<Map<String, dynamic>>();
-          _error = null;
-        });
-      }
-    } on ApiException catch (e) {
-      if (mounted) setState(() => _error = e.message);
-    }
-  }
-
-  Future<void> _newGroup() async {
-    List<Subject> subjects;
-    try {
-      subjects = await loadSubjects();
-    } on ApiException catch (e) {
-      if (mounted) showProblem(context, e);
-      return;
-    }
-    if (!mounted) return;
-    int? cls;
-    String? subjectId;
-    final ok = await showCentredCard<bool>(
-      context,
-      title: 'New group',
-            builder: (ctx) => StatefulBuilder(
-        builder: (ctx, set) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          const FormLabel('Class', top: 4),
-          ClassField(value: cls, onChanged: (c) => set(() => cls = c)),
-          const FormLabel('Subject'),
-          SubjectField(
-            subjects: subjects,
-            value: subjectId,
-            onChanged: (v) => set(() => subjectId = v),
-            onAdded: (s) => set(() {
-              subjects.add(s);
-              subjectId = s.id;
-            }),
-          ),
-          const SizedBox(height: 18),
-          PrimaryButton(
-            'Open the group',
-            onTap: cls == null || subjectId == null ? null : () => Navigator.of(ctx).pop(true),
-            disabledReason: cls == null || subjectId == null ? 'Choose a class and a subject.' : null,
-          ),
-        ]),
-      ),
-    );
-    if (ok != true || cls == null || subjectId == null || !mounted) return;
-    final name = subjects.firstWhere((x) => x.id == subjectId).name;
-    // The group exists from now on, even before its first student.
-    try {
-      await api.post('/teacher/groups', {'class_level': cls, 'subject_id': subjectId});
-    } on ApiException catch (e) {
-      if (mounted) showProblem(context, e);
-      return;
-    }
-    if (!mounted) return;
-    await context.push('/t/groups/$cls/$subjectId?name=${_enc(name)}');
-    _load();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final groups = _groups;
-    return SafeArea(
-      bottom: false,
-      child: PullToRefresh(
-        onRefresh: _load,
-        child: ListView(padding: EdgeInsets.zero, physics: const AlwaysScrollableScrollPhysics(), children: [
-          TabHeader(
-            kicker: groups == null ? 'Your classes' : f.count(groups.length, 'group'),
-            title: 'Groups',
-            // At the top, where it stays in reach however many groups there are.
-            actions: [CircleBtn(icon: Ph.plus, label: 'New group', onTap: _newGroup)],
-          ),
-          const SizedBox(height: 18),
-          if (groups == null && _error != null)
-            ErrorState(message: _error!, onRetry: _load)
-          else if (groups == null)
-            const LoadingState(inset: true, rows: 3)
-          else ...[
-            if (groups.isEmpty)
-              const EmptyState(icon: Ph.users, title: 'No groups yet', body: 'Add a group, then add your first student.')
-            else
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: gutter),
-                child: Column(children: [
-                  for (final (i, g) in groups.indexed) ...[
-                    if (i > 0) const SizedBox(height: gapRow),
-                    Builder(builder: (context) {
-                      final live = (g['live'] as List).length;
-                      final posted = (g['posted'] as List).length;
-                      return RowTile(
-                        title: groupName(g['class_level'] as int, '${g['subject']}'),
-                        meta: [f.count(_n(g['students']), 'student'), if (posted > 0) '$posted posted'].join(' · '),
-                        trailing: live > 0 ? TagChip('$live live', tone: Tone.success) : null,
-                        chevron: true,
-                        onTap: () async {
-                          await context.push(groupPath(g));
-                          _load();
-                        },
-                      );
-                    }),
-                  ],
-                ]),
-              ),
-          ],
-          navClearance,
-        ]),
-      ),
-    );
-  }
+  if (!context.mounted) return;
+  await context.push('/t/groups/$cls/$subjectId?name=${_enc(name)}');
 }
 
 // ---------------------------------------------------------------- one group
@@ -605,35 +130,8 @@ class _GroupScreenState extends State<GroupScreen> with WidgetsBindingObserver, 
   String get _query => 'class=${widget.classLevel}&subject=${widget.subjectId}&name=${_enc(widget.subjectName)}';
 
   Future<void> _makeTest() async {
-    final choice = await showCentredCard<String>(
-      context,
-      title: 'Make a test',
-      subtitle: 'For $_name',
-      builder: (ctx) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        RowTile(
-          leading: Icon(Ph.fileArrowUp, size: 22, color: ink),
-          title: 'Upload a PDF or photos',
-          meta: 'AI reads the questions',
-          chevron: true,
-          onTap: () => Navigator.of(ctx).pop('upload'),
-        ),
-        const SizedBox(height: 10),
-        RowTile(
-          leading: Icon(Ph.scan, size: 22, color: aiAccentInk),
-          title: 'Describe it to AI',
-          meta: 'AI writes the questions',
-          chevron: true,
-          onTap: () => Navigator.of(ctx).pop('chat'),
-        ),
-      ]),
-    );
-    if (choice == null || !mounted) return;
-    switch (choice) {
-      case 'upload':
-        _go('/t/papers/new?$_query');
-      case 'chat':
-        _go('/t/groups/${widget.classLevel}/${widget.subjectId}/chat?name=${_enc(widget.subjectName)}');
-    }
+    final target = TestTarget.group(classLevel: widget.classLevel, subjectId: widget.subjectId, subjectName: widget.subjectName);
+    if (await makeTestFor(context, target) && mounted) _load();
   }
 
   /// Only an empty group can go (no students, no tests): the server refuses any other.

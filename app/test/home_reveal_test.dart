@@ -7,7 +7,7 @@ import 'dart:convert';
 
 import 'package:core_academy/core/api.dart';
 import 'package:core_academy/core/session.dart';
-import 'package:core_academy/features/teacher/group_screens.dart';
+import 'package:core_academy/features/teacher/home_screen.dart';
 import 'package:core_academy/theme.dart';
 import 'package:core_academy/ui/motion.dart';
 import 'package:flutter/material.dart';

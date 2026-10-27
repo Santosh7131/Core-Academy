@@ -7,6 +7,7 @@ import 'dart:convert';
 import 'package:core_academy/core/api.dart';
 import 'package:core_academy/core/session.dart';
 import 'package:core_academy/features/student/home_screen.dart';
+import 'package:core_academy/features/teacher/classes_screen.dart';
 import 'package:core_academy/features/teacher/course_screens.dart';
 import 'package:core_academy/features/teacher/group_screens.dart';
 import 'package:core_academy/theme.dart';
@@ -240,19 +241,24 @@ void main() {
     await t.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('the Courses tab: each course comes in one after another', (t) async {
+  testWidgets('the Classes tab: each class comes in one after another', (t) async {
     tutorSession();
-    _routes['/teacher/courses'] = () => {
+    _routes['/teacher/home'] = () => {
+          'server_now': DateTime.now().toUtc().toIso8601String(),
+          'tuition': {'id': 't-1', 'name': 'Core Academy', 'join_code': 'KR74MQ'},
+          'pending_requests': 0,
+          'groups': <Object?>[],
+          'totals': {'live': 0, 'writing': 0},
           'courses': [
             for (var i = 0; i < 12; i++) {'id': 'c$i', 'name': 'Course $i', 'people': 5 + i, 'live': <Object?>[], 'posted': <Object?>[]},
           ],
         };
     _screen(t, 411, 914);
-    await t.pumpWidget(MaterialApp(theme: buildTheme(Brightness.light), home: const Scaffold(body: CoursesScreen())));
+    await t.pumpWidget(MaterialApp(theme: buildTheme(Brightness.light), home: const Scaffold(body: ClassesScreen())));
     for (var i = 0; i < 20 && find.text('Course 0').evaluate().isEmpty; i++) {
       await t.pump(const Duration(milliseconds: 16));
     }
-    expect(find.text('Course 0'), findsOneWidget, reason: 'the Courses tab never loaded');
+    expect(find.text('Course 0'), findsOneWidget, reason: 'the Classes tab never loaded');
     final built = [for (var i = 0; i < 12; i++) if (find.text('Course $i').evaluate().isNotEmpty) i];
     expect(built.length, greaterThan(4));
     for (final i in built) {

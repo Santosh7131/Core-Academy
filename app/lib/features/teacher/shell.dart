@@ -5,15 +5,14 @@ import '../../ui/floating_tabs.dart';
 import '../../ui/kit.dart';
 
 /// Teacher tabs with a floating navigation surface (solid, no blur).
-/// Home, Courses and Groups: everything else (students, tests, uploads) is inside a group or a course.
+/// Home and Classes: everything else (students, tests, uploads) is inside a group or a course.
 class TeacherShell extends StatelessWidget {
   const TeacherShell({super.key, required this.shell});
   final StatefulNavigationShell shell;
 
   static const _items = [
     (Ph.house, 'Home'),
-    (Ph.graduationCap, 'Courses'),
-    (Ph.users, 'Groups'),
+    (Ph.users, 'Classes'),
   ];
 
   @override

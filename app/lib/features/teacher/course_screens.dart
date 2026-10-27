@@ -7,8 +7,8 @@ import '../../core/format.dart' as f;
 import '../../core/levels.dart';
 import '../../theme.dart';
 import '../../ui/kit.dart';
-import '../../ui/tokens.dart';
 import 'common.dart';
+import 'make_test.dart';
 import 'students_screens.dart' show randomPin, usernameGuess;
 import 'tests_screens.dart' show TestListTile, Tick, testState;
 
@@ -109,123 +109,6 @@ class _CourseNameCardState extends State<_CourseNameCard> {
       ]);
 }
 
-// ---------------------------------------------------------------- the tab
-
-/// The Courses tab: every course of the tuition, with a way to start one.
-class CoursesScreen extends StatefulWidget {
-  const CoursesScreen({super.key});
-
-  @override
-  State<CoursesScreen> createState() => _CoursesScreenState();
-}
-
-class _CoursesScreenState extends State<CoursesScreen> with WidgetsBindingObserver, AutoRefresh<CoursesScreen> {
-  List<Map<String, dynamic>>? _courses;
-  String? _error;
-
-  @override
-  Set<Area> get refreshAreas => {Area.courses, Area.tests, Area.students};
-
-  @override
-  Future<void> refreshQuietly() => _load();
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    markLoaded();
-    try {
-      final d = await api.get('/teacher/courses');
-      if (mounted) {
-        setState(() {
-          _courses = (d['courses'] as List).cast<Map<String, dynamic>>();
-          _error = null;
-        });
-      }
-    } on ApiException catch (e) {
-      if (mounted) setState(() => _error = e.message);
-    }
-  }
-
-  /// A new course opens at once, so the people can be added.
-  Future<void> _new() async {
-    final c = await newCourse(context);
-    if (c == null || !mounted) return;
-    await context.push(coursePath(c));
-    if (mounted) _load();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final courses = _courses;
-    return SafeArea(
-      bottom: false,
-      child: PullToRefresh(
-        onRefresh: _load,
-        child: ListView(padding: EdgeInsets.zero, physics: const AlwaysScrollableScrollPhysics(), children: [
-          TabHeader(
-            kicker: courses == null || courses.isEmpty ? 'Your courses' : f.count(courses.length, 'course'),
-            title: 'Courses',
-            actions: [CircleBtn(icon: Ph.plus, label: 'New course', onTap: _new)],
-          ),
-          const SizedBox(height: 18),
-          if (courses == null && _error != null)
-            ErrorState(message: _error!, onRetry: _load)
-          else if (courses == null)
-            const LoadingState(inset: true, rows: 3)
-          else if (courses.isEmpty)
-            EmptyState(
-              icon: Ph.graduationCap,
-              title: 'No courses yet',
-              body: 'A course is for people you teach apart from your groups. Create one, then add the people who join it.',
-              action: PrimaryButton('Create a course', leadingIcon: Ph.plus, onTap: _new),
-            )
-          else
-            ...staggered(
-              [
-                for (final (i, c) in courses.indexed) ...[
-                  if (i > 0) const SizedBox(height: gapRow),
-                  Padding(padding: const EdgeInsets.symmetric(horizontal: gutter), child: _CourseRow(course: c, onOpen: () => _open(c))),
-                ],
-              ],
-              scope: this,
-              prefix: 'course',
-              stepMs: 50,
-            ),
-          navClearance,
-        ]),
-      ),
-    );
-  }
-
-  Future<void> _open(Map<String, dynamic> c) async {
-    await context.push(coursePath(c));
-    if (mounted) _load();
-  }
-}
-
-class _CourseRow extends StatelessWidget {
-  const _CourseRow({required this.course, required this.onOpen});
-  final Map<String, dynamic> course;
-  final VoidCallback onOpen;
-
-  @override
-  Widget build(BuildContext context) {
-    final live = (course['live'] as List? ?? const []).length;
-    final posted = (course['posted'] as List? ?? const []).length;
-    return RowTile(
-      title: '${course['name']}',
-      meta: [f.count(_n(course['people']), 'person', 'people'), if (posted > 0) '$posted posted'].join(' · '),
-      trailing: live > 0 ? TagChip('$live live', tone: Tone.success) : null,
-      chevron: true,
-      onTap: onOpen,
-    );
-  }
-}
-
 // ---------------------------------------------------------------- one course
 
 /// One course: its tests, like a group's page, and its people.
@@ -282,35 +165,7 @@ class _CourseScreenState extends State<CourseScreen> with WidgetsBindingObserver
   }
 
   Future<void> _makeTest() async {
-    final choice = await showCentredCard<String>(
-      context,
-      title: 'Make a test',
-      subtitle: 'For $_name',
-      builder: (ctx) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        RowTile(
-          leading: Icon(Ph.fileArrowUp, size: 22, color: ink),
-          title: 'Upload a PDF or photos',
-          meta: 'AI reads the questions',
-          chevron: true,
-          onTap: () => Navigator.of(ctx).pop('upload'),
-        ),
-        const SizedBox(height: 10),
-        RowTile(
-          leading: Icon(Ph.scan, size: 22, color: aiAccentInk),
-          title: 'Describe it to AI',
-          meta: 'AI writes the questions',
-          chevron: true,
-          onTap: () => Navigator.of(ctx).pop('chat'),
-        ),
-      ]),
-    );
-    if (choice == null || !mounted) return;
-    switch (choice) {
-      case 'upload':
-        _go('/t/papers/new?course=${widget.id}&name=${_enc(_name)}');
-      case 'chat':
-        _go('/t/courses/${widget.id}/chat?name=${_enc(_name)}');
-    }
+    if (await makeTestFor(context, TestTarget.course(id: widget.id, name: _name)) && mounted) _load();
   }
 
   /// A new name for the course. The page loads again to show it; the Courses tab and Home hear of the change by themselves.

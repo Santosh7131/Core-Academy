@@ -11,6 +11,7 @@ import 'dart:ui' as ui;
 
 import 'package:core_academy/core/api.dart';
 import 'package:core_academy/core/session.dart';
+import 'package:core_academy/features/teacher/classes_screen.dart';
 import 'package:core_academy/features/teacher/course_screens.dart';
 import 'package:core_academy/theme.dart';
 import 'package:core_academy/ui/kit.dart';
@@ -30,8 +31,11 @@ const _ratio = 2.5;
 String _iso(Duration from) => DateTime.now().add(from).toUtc().toIso8601String();
 
 Future<http.Response> _answer(http.Request r) async {
-  if (r.url.path == '/teacher/courses') {
+  if (r.url.path == '/teacher/courses' || r.url.path == '/teacher/home') {
     final body = {
+      'groups': <Object?>[],
+      'tuition': {'id': 't-1', 'name': 'Core Academy', 'join_code': 'KR74MQ'},
+      'pending_requests': 0,
       'courses': [
         {
           'id': 'c-1', 'name': 'Maths Mock Test Series', 'created_at': _iso(const Duration(days: -9)), 'people': 3,
@@ -196,11 +200,11 @@ void main() {
             if (up) Positioned(left: 0, right: 0, bottom: 0, height: p.keyboard, child: _KeyboardStandIn(dark: dark)),
           ]),
         ),
-        home: const Scaffold(body: CoursesScreen()),
+        home: const Scaffold(body: ClassesScreen()),
       ),
     ));
     await _settle(t);
-    final page = t.element(find.byType(CoursesScreen));
+    final page = t.element(find.byType(ClassesScreen));
     if (fixed) {
       unawaited(newCourse(page));
     } else {

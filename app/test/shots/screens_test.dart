@@ -20,8 +20,9 @@ import 'package:core_academy/features/student/join_screen.dart';
 import 'package:core_academy/features/student/profile_screen.dart';
 import 'package:core_academy/features/student/result_screen.dart';
 import 'package:core_academy/features/student/test_screen.dart';
+import 'package:core_academy/features/teacher/classes_screen.dart';
 import 'package:core_academy/features/teacher/course_screens.dart';
-import 'package:core_academy/features/teacher/group_screens.dart';
+import 'package:core_academy/features/teacher/home_screen.dart';
 import 'package:core_academy/features/teacher/join_requests_screen.dart';
 import 'package:core_academy/features/teacher/papers_screens.dart';
 import 'package:core_academy/features/teacher/settings_screen.dart';
@@ -285,38 +286,6 @@ void main() {
       await _shot(t, 'requests-dialog-${dark ? 'dark' : 'light'}');
       await t.pumpWidget(const SizedBox.shrink());
     }
-  });
-
-  shotTest('tutor home', (t) async {
-    _sessionAs(role: 'teacher', tuitions: [{'id': 't-1', 'name': 'Priya Maths Classes', 'role': 'owner', 'status': 'active'}]);
-    Map<String, Object?> group(int cls, String subject, int students, {List<Object?> live = const [], List<Object?> posted = const []}) =>
-        {'class_level': cls, 'subject_id': 'sub-$subject', 'subject': subject, 'students': students, 'live': live, 'posted': posted};
-    routes['/teacher/home'] = (_) => {
-          'server_now': _iso(Duration.zero),
-          'tuition': {'id': 't-1', 'name': 'Priya Maths Classes', 'join_code': 'KR74MQ'},
-          'pending_requests': 2,
-          'groups': [
-            group(10, 'Maths', 12, live: [
-              {'id': 'x1', 'title': 'Quadratic equations', 'closes_at': _iso(const Duration(hours: 3)), 'opens_at': null, 'time_limit_min': 30, 'submitted': 7, 'assigned': 12, 'writing': 2}
-            ]),
-            group(9, 'Science', 9, posted: [
-              {'id': 'x2', 'title': 'Life processes', 'opens_at': _iso(const Duration(days: 1)), 'closes_at': _iso(const Duration(days: 1, hours: 2)), 'assigned': 9, 'submitted': 0, 'writing': 0}
-            ]),
-            group(10, 'Physics', 6),
-          ],
-          'totals': {'live': 1, 'writing': 2},
-        };
-    // Home is a tab inside the tutor shell, which supplies the Scaffold.
-    await _both(t, 'home-requests', () => const Scaffold(body: TutorHome()));
-    // A tuition that is just starting: no students yet, so Home shows how to invite them.
-    routes['/teacher/home'] = (_) => {
-          'server_now': _iso(Duration.zero),
-          'tuition': {'id': 't-1', 'name': 'Priya Maths Classes', 'join_code': 'KR74MQ'},
-          'pending_requests': 0,
-          'groups': [group(10, 'Maths', 0), group(9, 'Science', 0)],
-          'totals': {'live': 0, 'writing': 0},
-        };
-    await _both(t, 'home-new', () => const Scaffold(body: TutorHome()));
   });
 
   shotTest('settings', (t) async {
@@ -659,53 +628,121 @@ void main() {
   };
   final olympiad = <String, Object?>{'id': 'c-2', 'name': 'Olympiad Prep', 'created_at': _iso(const Duration(days: -20)), 'people': 8, 'live': <Object?>[], 'posted': <Object?>[]};
 
-  shotTest('courses: tutor home with a course', (t) async {
-    _sessionAs(role: 'teacher', tuitions: tutorTuition);
-    Map<String, Object?> group(int cls, String subject, int students, {List<Object?> live = const [], List<Object?> posted = const []}) =>
-        {'class_level': cls, 'subject_id': 'sub-$subject', 'subject': subject, 'students': students, 'live': live, 'posted': posted};
-    routes['/teacher/home'] = (_) => {
-          'server_now': _iso(Duration.zero),
-          'tuition': {'id': 't-1', 'name': 'Priya Maths Classes', 'join_code': 'KR74MQ'},
-          'pending_requests': 0,
-          'groups': [
-            group(10, 'Maths', 12, live: [
-              {'id': 'x1', 'title': 'Practice Paper 2', 'closes_at': _iso(const Duration(hours: 3)), 'opens_at': null, 'time_limit_min': 30, 'submitted': 7, 'assigned': 12, 'writing': 0}
-            ]),
-            group(9, 'Science', 9),
-            group(11, 'Physics', 6),
-          ],
-          'totals': {'live': 1, 'writing': 0},
-          'courses': [springEnglish, olympiad],
-        };
-    await _both(t, 'courses-home', () => const Scaffold(body: TutorHome()));
-    // The same Home when no course exists yet: it is the list of groups it always was.
-    routes['/teacher/home'] = (_) => {
-          'server_now': _iso(Duration.zero),
-          'tuition': {'id': 't-1', 'name': 'Priya Maths Classes', 'join_code': 'KR74MQ'},
-          'pending_requests': 0,
-          'groups': [group(10, 'Maths', 12), group(9, 'Science', 9)],
-          'totals': {'live': 0, 'writing': 0},
-          'courses': <Object?>[],
-        };
-    await _both(t, 'courses-home-none', () => const Scaffold(body: TutorHome()));
-  });
+  // ---- the tutor's Home, the Classes tab and the papers waiting (design/comps/w2-*.html)
+  Map<String, Object?> group(int cls, String subject, int students, {List<Object?> live = const [], List<Object?> posted = const []}) =>
+      {'class_level': cls, 'subject_id': 'sub-$subject', 'subject': subject, 'students': students, 'live': live, 'posted': posted};
+  Map<String, Object?> openTest(String id, String title, {Duration? opens, Duration? closes, int assigned = 12, int submitted = 0, int writing = 0}) => {
+        'id': id, 'title': title, 'opens_at': opens == null ? null : _iso(opens), 'closes_at': closes == null ? null : _iso(closes),
+        'time_limit_min': 30, 'assigned': assigned, 'submitted': submitted, 'writing': writing,
+      };
+  Map<String, Object?> finishedTest(String id, String title, {int? cls, String? subject, String? course, required Duration closed, int assigned = 12, int submitted = 11}) => {
+        'id': id, 'title': title, 'class_level': cls, 'subject_id': subject == null ? null : 'sub-$subject', 'subject': subject,
+        'course_id': course == null ? null : 'c-1', 'course': course, 'closes_at': _iso(closed), 'everyone_done': false,
+        'assigned': assigned, 'submitted': submitted, 'writing': 0,
+      };
+  Map<String, Object?> waitingPaper(String id, String name, {int? cls, String? subject, String? course, int pages = 2, int read = 2, int toCheck = 0, int saved = 0}) => {
+        'id': id, 'exam_name': name, 'class_level': cls, 'subject_id': subject == null ? null : 'sub-$subject', 'subject': subject,
+        'course_id': course == null ? null : 'c-1', 'course': course, 'page_count': pages, 'pages_read': read, 'to_check': toCheck, 'saved': saved,
+        'has_test': false, 'created_at': _iso(const Duration(hours: -3)),
+      };
+  Map<String, Object?> home({
+    int pending = 0,
+    List<Object?>? groups,
+    List<Object?>? courses,
+    List<Object?> finished = const [],
+    List<Object?> papers = const [],
+  }) =>
+      {
+        'server_now': _iso(Duration.zero),
+        'tuition': {'id': 't-1', 'name': 'Priya Maths Classes', 'join_code': 'KR74MQ'},
+        'pending_requests': pending,
+        'groups': groups ?? [],
+        'totals': {'live': 0, 'writing': 0},
+        'courses': courses ?? [],
+        'finished': finished,
+        'papers': papers,
+      };
+  Map<String, Object?> busyHome({bool open = true}) => home(
+        pending: 1,
+        groups: [
+          group(10, 'Maths', 12, live: open ? [openTest('x1', 'Practice Paper 2', closes: const Duration(hours: 3), submitted: 7)] : const [], posted: [
+            openTest('x3', 'Real Numbers test', opens: const Duration(days: 5), closes: const Duration(days: 5, hours: 13)),
+          ]),
+          group(9, 'Science', 9, posted: [openTest('x2', 'Linear equations', opens: const Duration(days: 3), closes: const Duration(days: 3, hours: 13), assigned: 9)]),
+          group(11, 'Physics', 6),
+        ],
+        courses: [
+          {
+            ...springEnglish,
+            'live': open ? springEnglish['live'] : <Object?>[],
+            'posted': [openTest('y2', 'Unit 2 quiz', opens: const Duration(days: 1), closes: const Duration(days: 1, hours: 13), assigned: 14)],
+          },
+          olympiad,
+        ],
+        finished: [
+          finishedTest('f1', 'Greetings', course: 'Spoken English, Batch 1', closed: const Duration(days: -3), assigned: 14, submitted: 12),
+          finishedTest('f2', 'Number systems', cls: 9, subject: 'Science', closed: const Duration(days: -5), assigned: 9, submitted: 8),
+        ],
+        papers: [
+          waitingPaper('p1', 'Quadratic equations', cls: 10, subject: 'Maths', toCheck: 4, saved: 12),
+          waitingPaper('p2', 'Triangles, unit test', cls: 9, subject: 'Maths', pages: 3, read: 1),
+        ],
+      );
 
-  shotTest('courses: the Courses tab', (t) async {
+  shotTest('tutor home', (t) async {
     _sessionAs(role: 'teacher', tuitions: tutorTuition);
-    routes['/teacher/courses'] = (_) => {'courses': <Object?>[]};
-    await _both(t, 'courses-tab-empty', () => const Scaffold(body: CoursesScreen()));
-    await _both(t, 'courses-new', () => const Scaffold(body: CoursesScreen()), then: (t) async {
-      await t.tap(find.text('Create a course'));
+    routes['/teacher/home'] = (_) => busyHome();
+    await _both(t, 'home-full', () => const Scaffold(body: TutorHome()), height: 3200);
+    // The make-a-test button asks which class, then how.
+    await _both(t, 'home-which-class', () => const Scaffold(body: TutorHome()), then: (t) async {
+      await t.tap(find.text('Make a test'));
       await _settle(t);
     });
-    routes['/teacher/courses'] = (_) => {
-          'courses': [
-            springEnglish,
-            {...olympiad, 'posted': [{'id': 'y9', 'title': 'Mock test', 'opens_at': _iso(const Duration(days: 1)), 'closes_at': _iso(const Duration(days: 1, hours: 4)), 'assigned': 8, 'submitted': 0, 'writing': 0}]},
-            {'id': 'c-3', 'name': 'Handwriting, Summer', 'created_at': _iso(const Duration(days: -30)), 'people': 6, 'live': <Object?>[], 'posted': <Object?>[]},
-          ],
-        };
-    await _both(t, 'courses-tab', () => const Scaffold(body: CoursesScreen()));
+    // Nothing open right now.
+    routes['/teacher/home'] = (_) => busyHome(open: false);
+    await _both(t, 'home-quiet', () => const Scaffold(body: TutorHome()), height: 3000);
+    // One student waiting and one paper: a short "Needs you".
+    routes['/teacher/home'] = (_) => home(
+          pending: 2,
+          groups: [group(10, 'Maths', 12), group(9, 'Science', 9)],
+          papers: [waitingPaper('p1', 'Quadratic equations', cls: 10, subject: 'Maths', toCheck: 4)],
+        );
+    await _both(t, 'home-needs-you', () => const Scaffold(body: TutorHome()));
+    // Classes exist but no test has been made yet.
+    routes['/teacher/home'] = (_) => home(groups: [group(10, 'Maths', 12), group(9, 'Science', 9)]);
+    await _both(t, 'home-no-tests', () => const Scaffold(body: TutorHome()));
+    // A tuition that is just starting: no students yet, so Home shows how to invite them.
+    routes['/teacher/home'] = (_) => home(groups: [group(10, 'Maths', 0), group(9, 'Science', 0)]);
+    await _both(t, 'home-new', () => const Scaffold(body: TutorHome()));
+    // The first day: no class at all.
+    routes['/teacher/home'] = (_) => home();
+    await _both(t, 'home-first-day', () => const Scaffold(body: TutorHome()));
+  });
+
+  shotTest('tutor: the Classes tab', (t) async {
+    _sessionAs(role: 'teacher', tuitions: tutorTuition);
+    routes['/teacher/home'] = (_) => home();
+    await _both(t, 'classes-empty', () => const Scaffold(body: ClassesScreen()));
+    await _both(t, 'classes-add', () => const Scaffold(body: ClassesScreen()), then: (t) async {
+      await t.tap(find.text('Add a class').last);
+      await _settle(t);
+    });
+    await _both(t, 'classes-new-course', () => const Scaffold(body: ClassesScreen()), then: (t) async {
+      await t.tap(find.text('Add a class').last);
+      await _settle(t);
+      await t.tap(find.text('A course'));
+      await _settle(t);
+    });
+    routes['/teacher/home'] = (_) => busyHome();
+    await _both(t, 'classes-full', () => const Scaffold(body: ClassesScreen()));
+  });
+
+  shotTest('tutor: papers to finish', (t) async {
+    _sessionAs(role: 'teacher', tuitions: tutorTuition);
+    routes['/teacher/home'] = (_) => busyHome();
+    await _both(t, 'papers-to-finish', () => const PapersToFinishScreen());
+    routes['/teacher/home'] = (_) => home(groups: [group(10, 'Maths', 12)]);
+    await _both(t, 'papers-to-finish-none', () => const PapersToFinishScreen());
   });
 
   shotTest('courses: a course page', (t) async {

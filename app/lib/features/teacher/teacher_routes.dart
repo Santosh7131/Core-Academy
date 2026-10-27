@@ -4,8 +4,10 @@ import 'package:go_router/go_router.dart';
 import '../student/profile_screen.dart';
 import '../student/result_screen.dart';
 import '../student/review_screen.dart';
+import 'classes_screen.dart';
 import 'course_screens.dart';
 import 'group_screens.dart';
+import 'home_screen.dart';
 import 'join_requests_screen.dart';
 import 'papers_screens.dart';
 import 'questions_screens.dart';
@@ -25,17 +27,20 @@ GoRoute _page(String path, Widget Function(GoRouterState s) build) =>
 
 int? _int(GoRouterState s, String key) => int.tryParse(s.uri.queryParameters[key] ?? '');
 
-/// Three tabs inside the shell, Home, Courses and Groups; everything else is pushed full-screen above it.
-/// Students, tests, uploads and test questions all live inside a group or a course.
+/// Two tabs inside the shell, Home and Classes; everything else is pushed full-screen above it.
+/// Students, tests, uploads and test questions all live inside a group or a course. The Groups and Courses tabs of
+/// the versions before 1.8.0 are the Classes tab now.
 final teacherRoutes = <RouteBase>[
   StatefulShellRoute.indexedStack(
     builder: (context, state, shell) => TeacherShell(shell: shell),
     branches: [
       StatefulShellBranch(routes: [_tab('/t', (_) => const TutorHome())]),
-      StatefulShellBranch(routes: [_tab('/t/courses', (_) => const CoursesScreen())]),
-      StatefulShellBranch(routes: [_tab('/t/groups', (_) => const GroupsScreen())]),
+      StatefulShellBranch(routes: [_tab('/t/classes', (_) => const ClassesScreen())]),
     ],
   ),
+  GoRoute(path: '/t/groups', redirect: (_, _) => '/t/classes'),
+  GoRoute(path: '/t/courses', redirect: (_, _) => '/t/classes'),
+  _page('/t/papers', (_) => const PapersToFinishScreen()),
   _page('/t/courses/:id', (s) => CourseScreen(id: s.pathParameters['id']!, name: s.uri.queryParameters['name'] ?? 'Course')),
   _page(
     '/t/courses/:id/add',
