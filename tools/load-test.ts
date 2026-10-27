@@ -71,6 +71,7 @@ const pct = (xs: number[], p: number) => xs.slice().sort((a, b) => a - b)[Math.m
 const db = new pg.Client({ connectionString: process.env.DATABASE_URL_UNPOOLED });
 await db.connect();
 const created = { users: [] as string[], tuition: '' };
+let cleaned = false;
 
 try {
   console.log(`${N} students, ${Q} questions, against ${BASE}`);
@@ -179,10 +180,11 @@ try {
     }
     await db.query('delete from users where username like $1', [`${tag}.%`]);
     await db.query('delete from app_installs where install_id like $1', [`${tag}-%`]);
+    cleaned = true;
   } catch (e) {
     console.log('cleanup problem:', e);
   }
-  await db.end();
-  console.log(`\n${pass} passed, ${fail} failed (test data removed)`);
-  process.exit(fail ? 1 : 0);
+  await db.end().catch(() => {});
+  console.log(`\n${pass} passed, ${fail} failed (${cleaned ? 'test data removed' : `TEST DATA LEFT BEHIND: users named ${tag}.*, remove them by hand`})`);
+  process.exit(fail || !cleaned ? 1 : 0);
 }
