@@ -4,9 +4,10 @@ import {
   checkPassword, checkPin, checkUsername, hashSecret, killSessions, LOCK_MINUTES, lockedError, newPin, takeTry, tokenHash, tuitionOf, verifySecret, type AppEnv,
 } from '../lib/auth.ts';
 import { assignedCte, EVERYONE_DONE, resultPayload, TEST_COUNTS } from '../lib/attempts.ts';
-import { knowsCourses } from '../lib/client.ts';
+import { knowsCourses, knowsSimpleHome } from '../lib/client.ts';
 import { courseCards, ownCourse } from '../lib/courses.ts';
 import { pool, q, q1, tq, tq1, tx } from '../lib/db.ts';
+import { papersToFinish, recentFinished } from '../lib/home.ts';
 import { bad, bool, date, hasNul, HttpError, int, notFound, optionList, str, uuid, uuidOpt } from '../lib/http.ts';
 import { assertLevel, CLASS_MIN, CUSTOM_MAX, levelIn, levelLabel, levelParam } from '../lib/levels.ts';
 import { afterTestChange } from '../lib/notify.ts';
@@ -543,7 +544,8 @@ teacherRoutes.delete('/groups/:cls/:subject', async (c) => {
 /**
  * The home screen: every group, each with the tests its students can write now (live) and the
  * ones posted to open later, with how many students have submitted and how many are writing. The
- * courses follow, in the same shape, for an app that knows them.
+ * courses follow, in the same shape, for an app that knows them, and the newest app also gets the tests
+ * that finished lately and the papers still waiting for the tutor.
  */
 teacherRoutes.get('/home', async (c) => {
   const t = tuitionOf(c);
@@ -592,6 +594,8 @@ teacherRoutes.get('/home', async (c) => {
       writing: out.reduce((s, g) => s + g.live.reduce((n, x) => n + Number(x.writing), 0), 0),
     },
     ...(knowsCourses(c) ? { courses: await courseCards(T) } : {}),
+    // The simpler Home also lists the tests that finished lately and the papers the tutor has yet to finish.
+    ...(knowsSimpleHome(c) ? { finished: await recentFinished(T), papers: await papersToFinish(T) } : {}),
   });
 });
 

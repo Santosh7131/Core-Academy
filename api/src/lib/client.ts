@@ -48,6 +48,17 @@ export function knowsCourses(c: Context): boolean {
 }
 
 /**
+ * Whether this app has the simpler Home (1.8.0 and later): the tests that finished lately and the papers still
+ * waiting for the tutor. An older app has nowhere to show them, so it is not sent them.
+ */
+export function knowsSimpleHome(c: Context): boolean {
+  const v = clientInfo(c).appVersion;
+  if (!v) return false;
+  const [major, minor] = v.split('.').map(Number);
+  return major > 1 || (major === 1 && minor >= 8);
+}
+
+/**
  * The oldest build of the app the server still serves, from app_settings.min_app_build. None until a person
  * sets it: it is switched on only once the newest app has been out long enough for phones to have updated.
  */
