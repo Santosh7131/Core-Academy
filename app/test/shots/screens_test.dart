@@ -46,6 +46,10 @@ final _landscape = Platform.environment['LANDSCAPE'] == '1';
 /// screen that fits at the usual size stops fitting. Without them the screens draw at 1.0 on a 411 dp wide phone.
 final _textScale = double.tryParse(Platform.environment['TEXTSCALE'] ?? '') ?? 1.0;
 final _widthDp = double.tryParse(Platform.environment['WIDTH_DP'] ?? '') ?? 1080 / 2.625;
+
+/// KEYBOARD=318 draws every screen on a phone 800 dp tall with a keyboard of that many dp up, as Android gives it to the window,
+/// to find what the keyboard covers or squeezes: a screen that does not scroll then overflows and fails its test.
+final _keyboard = double.tryParse(Platform.environment['KEYBOARD'] ?? '') ?? 0;
 Widget _scaled(BuildContext context, Widget? child) =>
     MediaQuery(data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(_textScale)), child: child!);
 final _boundary = GlobalKey();
@@ -77,14 +81,24 @@ Map<String, Object?> _tuition({int pending = 2, bool open = true, String role = 
 
 Future<void> _show(WidgetTester t, Widget screen, {bool dark = false, double height = 2400}) async {
   setResolvedDark(dark);
-  t.view.physicalSize = _landscape ? const Size(2400, 1080) : Size(_widthDp * _ratio, height);
+  t.view.physicalSize = _landscape ? const Size(2400, 1080) : Size(_widthDp * _ratio, _keyboard > 0 ? 800 * _ratio : height);
   t.view.devicePixelRatio = _ratio;
+  if (_keyboard > 0) {
+    t.view.viewPadding = const FakeViewPadding(top: 24 * _ratio, bottom: 16 * _ratio);
+    t.view.padding = const FakeViewPadding(top: 24 * _ratio, bottom: 16 * _ratio);
+    t.view.viewInsets = const FakeViewPadding(bottom: 0);
+  }
   addTearDown(t.view.reset);
   await t.pumpWidget(RepaintBoundary(
     key: _boundary,
     child: MaterialApp(debugShowCheckedModeBanner: false, theme: buildTheme(dark ? Brightness.dark : Brightness.light), builder: _scaled, home: screen),
   ));
   await _settle(t);
+  if (_keyboard > 0) {
+    t.view.padding = const FakeViewPadding(top: 24 * _ratio);
+    t.view.viewInsets = FakeViewPadding(bottom: _keyboard * _ratio);
+    await _settle(t);
+  }
 }
 
 Future<void> _settle(WidgetTester t) async {
@@ -351,7 +365,7 @@ void main() {
           'tests': [
             {
               'id': 'a', 'title': 'Linear equations', 'class_level': 9, 'time_limit_min': 20, 'opens_at': null, 'closes_at': _iso(const Duration(hours: 5)),
-              'question_count': 12, 'max_marks': 12, 'state': 'open', 'retake': false, 'results_open': false, 'attempt': null,
+              'question_count': 12, 'max_marks': 12, 'state': 'open', 'retake': false, 'results_open': true, 'attempt': null,
             },
             {
               'id': 'b', 'title': 'Number systems', 'class_level': 9, 'time_limit_min': 15, 'opens_at': null, 'closes_at': _iso(const Duration(days: -1)),
@@ -400,7 +414,6 @@ void main() {
       r'The decimal form of $\frac{7}{16}$ is', r'Between $1$ and $2$ there are', r'$\sqrt{2} \times \sqrt{8}$ equals', r'Which is the smallest?', 'The number 0 is',
     ];
     routes['/student/attempts/att-9/result'] = (_) => {
-          'waiting': false,
           'attempt': {
             'id': 'att-9', 'title': 'Number systems', 'score': 8, 'max_score': 10, 'correct': 8, 'wrong': 2, 'skipped': 0, 'time_taken_sec': 372,
             'submitted_at': _iso(const Duration(days: -1, hours: -2)), 'auto_submitted': false,
@@ -518,6 +531,101 @@ void main() {
     holds.clear();
   });
 
+  shotTest('tutor: a paper AI wrote, replacing the questions it could not answer', (t) async {
+    _sessionAs(role: 'teacher', tuitions: [{'id': 't-1', 'name': 'Priya Maths Classes', 'role': 'owner', 'status': 'active'}]);
+    Map<String, Object?> d(int n, String text, List<String> opts, {int? correct, String status = 'draft', String? note}) => {
+          'id': 'w-$n-$status', 'paper_id': 'p-3', 'page_no': 1, 'seq': n, 'number_label': '$n', 'kind': 'mcq', 'status': status, 'text': text, 'options': opts,
+          'correct_option': correct, 'answer_source': correct == null ? null : 'ai', 'ai_confidence': correct == null ? null : 0.98, 'ai_note': note, 'ai_picks': null,
+          'ai_votes': null, 'proposed_option': null, 'answer_checked': true, 'needs_diagram': false, 'image_key': null, 'image_url': null, 'chapter': null,
+          'chapter_id': null, 'ai_chapter_guess': null, 'edited': false,
+        };
+    Map<String, Object?> paper(bool replaceable) => {
+          'id': 'p-3', 'class_level': 9, 'exam_name': 'Algebra, Monday', 'category': 'Made with AI', 'subject': 'Maths', 'subject_id': 'sub-0', 'chapter': null,
+          'chapter_id': null, 'course_id': null, 'ai_details': {'ok': true}, 'page_count': 0, 'missing': <String>[], 'replaceable': replaceable,
+        };
+    final settled = [
+      d(1, 'Which of these is a linear equation in one variable?', ['x + 2 = 5', 'x squared = 4', 'xy = 6', 'x + y = 3'], correct: 0),
+      d(2, 'The value of x in 3x + 5 = 20 is', ['3', '5', '15', '25'], correct: 1),
+      d(3, 'If 2x - 7 = 11, then x equals', ['2', '4', '9', '18'], correct: 2),
+      d(4, 'The degree of the polynomial 5x cubed + 2x is', ['1', '2', '3', '5'], correct: 2),
+    ];
+    const cant = ['A number added to its double gives 36. The number is', 'The sum of two consecutive even numbers is 50. The smaller one is'];
+    // One stub for the whole run, the way the server behaves: the paper has two questions the checks could not settle until the
+    // writer is asked to replace them, and after that it has two new ones with their answers.
+    var replaced = false;
+    final before = <String, Object?>{
+      'paper': paper(true),
+      'pages': <Object?>[],
+      'drafts': [...settled, d(5, cant[0], ['9', '12', '18', '24']), d(6, cant[1], ['22', '24', '26', '28'])],
+      'chapters': <Object?>[], 'questions': <Object?>[], 'tests': <Object?>[],
+    };
+    final after = <String, Object?>{
+      'paper': paper(false),
+      'pages': <Object?>[],
+      'drafts': [
+        ...settled,
+        d(5, cant[0], ['9', '12', '18', '24'], status: 'discarded', note: 'replaced'),
+        d(6, cant[1], ['22', '24', '26', '28'], status: 'discarded', note: 'replaced'),
+        d(5, 'The sum of three consecutive numbers is 72. The middle number is', ['23', '24', '25', '26'], correct: 1),
+        d(6, 'Twice a number decreased by 5 is 27. The number is', ['11', '16', '17', '22'], correct: 1),
+      ],
+      'chapters': <Object?>[], 'questions': <Object?>[], 'tests': <Object?>[],
+    };
+    routes['/teacher/papers/p-3'] = (_) => replaced ? after : before;
+    routes['POST /teacher/papers/p-3/answers'] = (_) => {'from_key': 0, 'by_ai': 0, 'tried': 0, 'left': 0, 'second': 0};
+    routes['POST /teacher/papers/p-3/second-opinion'] = (_) => {'by_ai': 0, 'tried': 0, 'asked': 0, 'left': 0};
+    routes['POST /teacher/papers/p-3/replace'] = (_) {
+      replaced = true;
+      return {'replaced': 2, 'left': 0};
+    };
+    Widget fresh() {
+      replaced = false;
+      return const PaperReviewScreen(id: 'p-3');
+    }
+
+    // While the writer is at work (its call is held): two questions the checks could not settle, a notice, and the review there to be used.
+    final gate = Completer<void>();
+    holds['POST /teacher/papers/p-3/replace'] = gate.future;
+    await _both(t, 'paper-replacing', fresh, height: 3000);
+    gate.complete();
+    await t.pump(const Duration(milliseconds: 100)); // the calls the closed screens left waiting run out
+    holds.clear();
+    // The whole run: the writer replaces the two, the new ones are checked, and the list ends on Ready with a line saying what happened.
+    await _both(t, 'paper-replaced-ready', fresh, height: 3000);
+    await _both(t, 'paper-replaced-skipped', fresh, height: 2400, then: (t) async {
+      await t.tap(find.text('Skipped'));
+      await _settle(t);
+    });
+  });
+
+  shotTest('tutor: a paper AI could not check', (t) async {
+    _sessionAs(role: 'teacher', tuitions: [{'id': 't-1', 'name': 'Priya Maths Classes', 'role': 'owner', 'status': 'active'}]);
+    Map<String, Object?> d(int n, String text, List<String> opts, {int? correct, String? note}) => {
+          'id': 'u-$n', 'paper_id': 'p-4', 'page_no': 1, 'seq': n, 'number_label': '$n', 'kind': 'mcq', 'status': 'draft', 'text': text, 'options': opts,
+          'correct_option': correct, 'answer_source': correct == null ? null : 'ai', 'ai_confidence': correct == null ? null : 0.98, 'ai_note': note, 'ai_picks': null,
+          'ai_votes': null, 'proposed_option': null, 'answer_checked': true, 'needs_diagram': false, 'image_key': null, 'image_url': null, 'chapter': null,
+          'chapter_id': null, 'ai_chapter_guess': null, 'edited': false,
+        };
+    // The models were down: two questions could not be checked. They are not replaced, and the paper asks again by itself.
+    routes['/teacher/papers/p-4'] = (_) => {
+          'paper': {
+            'id': 'p-4', 'class_level': 9, 'exam_name': 'Mensuration, Tuesday', 'category': 'Made with AI', 'subject': 'Maths', 'subject_id': 'sub-0', 'chapter': null,
+            'chapter_id': null, 'course_id': null, 'ai_details': {'ok': true}, 'page_count': 0, 'missing': <String>[], 'replaceable': true,
+          },
+          'pages': <Object?>[],
+          'drafts': [
+            d(1, 'The area of a rectangle 8 cm long and 5 cm wide is', ['13 cm squared', '26 cm squared', '40 cm squared', '80 cm squared'], correct: 2),
+            d(2, 'The volume of a cube of side 3 cm is', ['9 cm cubed', '18 cm cubed', '27 cm cubed', '54 cm cubed'], correct: 2),
+            d(3, 'The total surface area of a cube of side 5 cm is', ['100 cm squared', '125 cm squared', '150 cm squared', '250 cm squared'], note: 'unchecked'),
+            d(4, 'The curved surface area of a cylinder of radius 7 cm and height 10 cm is (take pi as 22/7)', ['220 cm squared', '440 cm squared', '880 cm squared', '1540 cm squared'], note: 'unchecked'),
+          ],
+          'chapters': <Object?>[], 'questions': <Object?>[], 'tests': <Object?>[],
+        };
+    routes['POST /teacher/papers/p-4/answers'] = (_) => {'from_key': 0, 'by_ai': 0, 'tried': 0, 'left': 0, 'second': 0};
+    routes['POST /teacher/papers/p-4/second-opinion'] = (_) => {'by_ai': 0, 'tried': 0, 'asked': 0, 'left': 0};
+    await _both(t, 'paper-not-checked', () => const PaperReviewScreen(id: 'p-4'), height: 2600);
+  });
+
   shotTest('student profile', (t) async {
     _sessionAs(role: 'student', tuitions: [
       {'id': 't-1', 'name': 'Priya Maths Classes', 'role': 'student', 'status': 'active', 'class_level': 9},
@@ -623,6 +731,10 @@ void main() {
       await t.tap(find.text('Make a test'));
       await _settle(t);
     });
+    await _both(t, 'course-rename', () => const CourseScreen(id: 'c-1', name: 'Spoken English, Batch 1'), then: (t) async {
+      await t.tap(find.text('Rename course'));
+      await _settle(t);
+    });
     await _both(t, 'course-delete', () => const CourseScreen(id: 'c-1', name: 'Spoken English, Batch 1'), height: 3600, then: (t) async {
       await t.scrollUntilVisible(find.text('Delete this course'), 300, scrollable: find.byType(Scrollable).first);
       await t.tap(find.text('Delete this course'));
@@ -689,7 +801,7 @@ void main() {
   shotTest('courses: the student app', (t) async {
     Map<String, Object?> test(String id, String title, String state, {Duration? closes, Duration? opens, int? score}) => {
           'id': id, 'course_id': 'c-1', 'title': title, 'class_level': null, 'time_limit_min': 15, 'opens_at': opens == null ? null : _iso(opens),
-          'closes_at': closes == null ? null : _iso(closes), 'question_count': 10, 'max_marks': 10, 'state': state, 'retake': false, 'results_open': state == 'done',
+          'closes_at': closes == null ? null : _iso(closes), 'question_count': 10, 'max_marks': 10, 'state': state, 'retake': false, 'results_open': true,
           'attempt': state == 'done'
               ? {'id': 'att-$id', 'attempt_no': 1, 'submitted_at': _iso(const Duration(days: -3)), 'deadline_at': null, 'score': score, 'max_score': 10}
               : null,
@@ -697,7 +809,7 @@ void main() {
     final classTests = [
       {
         'id': 'a', 'title': 'Linear equations', 'course_id': null, 'class_level': 9, 'time_limit_min': 20, 'opens_at': null, 'closes_at': _iso(const Duration(hours: 3, minutes: 10)),
-        'question_count': 12, 'max_marks': 12, 'state': 'open', 'retake': false, 'results_open': false, 'attempt': null,
+        'question_count': 12, 'max_marks': 12, 'state': 'open', 'retake': false, 'results_open': true, 'attempt': null,
       },
     ];
     routes['/student/home'] = (_) => {'server_now': _iso(Duration.zero), 'tuition': {'id': 't-1', 'name': 'Priya Maths Classes'}, 'tests': classTests, 'courses': 2};

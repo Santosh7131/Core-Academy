@@ -26,20 +26,33 @@ Future<Map<String, dynamic>?> newCourse(BuildContext context) => showCentredCard
       context,
       title: 'New course',
       subtitle: 'Name it so your people know it',
-      builder: (ctx) => const _NewCourseCard(),
+      builder: (ctx) => const _CourseNameCard(),
     );
 
-class _NewCourseCard extends StatefulWidget {
-  const _NewCourseCard();
+/// Asks for a new name for a course. Returns the course as the server now has it, or null when the tutor backed out.
+Future<Map<String, dynamic>?> renameCourse(BuildContext context, {required String id, required String name}) => showCentredCard<Map<String, dynamic>>(
+      context,
+      title: 'Rename course',
+      subtitle: 'Its tests, people and results stay as they are',
+      builder: (ctx) => _CourseNameCard(courseId: id, name: name),
+    );
+
+/// The name field of the two course cards: a new course (no [courseId]) or a course being renamed.
+class _CourseNameCard extends StatefulWidget {
+  const _CourseNameCard({this.courseId, this.name = ''});
+  final String? courseId;
+  final String name;
 
   @override
-  State<_NewCourseCard> createState() => _NewCourseCardState();
+  State<_CourseNameCard> createState() => _CourseNameCardState();
 }
 
-class _NewCourseCardState extends State<_NewCourseCard> {
-  final _name = TextEditingController();
+class _CourseNameCardState extends State<_CourseNameCard> {
+  late final _name = TextEditingController(text: widget.name);
   bool _busy = false;
   String? _error;
+
+  bool get _renaming => widget.courseId != null;
 
   @override
   void dispose() {
@@ -47,7 +60,8 @@ class _NewCourseCardState extends State<_NewCourseCard> {
     super.dispose();
   }
 
-  bool get _ready => _name.text.trim().isNotEmpty;
+  /// A new course needs a name; a rename needs a different one (a change of capitals counts).
+  bool get _ready => _name.text.trim().isNotEmpty && (!_renaming || _name.text.trim() != widget.name);
 
   Future<void> _create() async {
     setState(() {
@@ -55,7 +69,8 @@ class _NewCourseCardState extends State<_NewCourseCard> {
       _error = null;
     });
     try {
-      final r = await api.post('/teacher/courses', {'name': _name.text.trim()});
+      final name = _name.text.trim();
+      final r = _renaming ? await api.patch('/teacher/courses/${widget.courseId}', {'name': name}) : await api.post('/teacher/courses', {'name': name});
       if (mounted) Navigator.of(context).pop(Map<String, dynamic>.from(r['course'] as Map));
     } on ApiException catch (e) {
       if (mounted) {
@@ -89,7 +104,7 @@ class _NewCourseCardState extends State<_NewCourseCard> {
         const SizedBox(height: 16),
         ListenableBuilder(
           listenable: _name,
-          builder: (context, _) => PrimaryButton('Create course', busy: _busy, onTap: _ready ? _create : null),
+          builder: (context, _) => PrimaryButton(_renaming ? 'Save' : 'Create course', busy: _busy, onTap: _ready ? _create : null),
         ),
       ]);
 }
@@ -298,6 +313,12 @@ class _CourseScreenState extends State<CourseScreen> with WidgetsBindingObserver
     }
   }
 
+  /// A new name for the course. The page loads again to show it; the Courses tab and Home hear of the change by themselves.
+  Future<void> _rename() async {
+    final c = await renameCourse(context, id: widget.id, name: _name);
+    if (c != null && mounted) _load();
+  }
+
   /// The course, its tests and everyone's results go; the people keep their logins and any groups they are in.
   Future<void> _delete() async {
     final yes = await confirmCard(
@@ -352,7 +373,9 @@ class _CourseScreenState extends State<CourseScreen> with WidgetsBindingObserver
         ]);
 
     return [
-      const SizedBox(height: 18),
+      const SizedBox(height: 4),
+      Align(alignment: Alignment.centerLeft, child: _RenameLink(onTap: _rename)),
+      const SizedBox(height: 10),
       PrimaryButton('Make a test', leadingIcon: Ph.plus, onTap: _makeTest),
       if (live.isNotEmpty) ...[SectionRule('Live now', count: live.length, padding: rule), rows(live)],
       if (posted.isNotEmpty) ...[SectionRule('Posted', count: posted.length, padding: rule), rows(posted)],
@@ -387,6 +410,26 @@ class _CourseScreenState extends State<CourseScreen> with WidgetsBindingObserver
       Center(child: TextAction('Delete this course', color: danger, onTap: _delete)),
     ];
   }
+}
+
+/// "Rename course" under a course's name: a pencil and the words, so it is found without guessing what an icon does.
+class _RenameLink extends StatelessWidget {
+  const _RenameLink({required this.onTap});
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Pressable(
+        label: 'Rename course',
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(Ph.pencilSimple, size: 16, color: muted),
+            const SizedBox(width: 6),
+            Fig('Rename course', style: chipStyle.copyWith(color: muted, fontWeight: FontWeight.w600)),
+          ]),
+        ),
+      );
 }
 
 // ---------------------------------------------------------------- add people

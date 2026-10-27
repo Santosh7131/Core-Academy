@@ -9,8 +9,8 @@ import '../../core/session.dart';
 import '../../theme.dart';
 import '../../ui/kit.dart';
 
-/// Every test has a closing time (students see their marks after it), so a new one starts with
-/// the next 9:00 pm that is at least three hours away.
+/// Every test has a closing time, so a new one starts with the next 9:00 pm that is at least
+/// three hours away.
 DateTime defaultClosing() {
   final now = DateTime.now();
   var t = DateTime(now.year, now.month, now.day, 21);

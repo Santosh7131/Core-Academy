@@ -347,7 +347,7 @@ class _TestEditorState extends State<TestEditor> {
             '${[
               _opens == null ? 'Opens as soon as you post it' : 'Opens ${f.when(_opens!)}',
               if (_closes != null) 'closes ${f.when(_closes!)}',
-            ].join(', ')}. Marks show after it closes, or once everyone has finished.',
+            ].join(', ')}. Students see their marks and the right answers as soon as they hand it in.',
             style: labelStyle,
           ),
         ),
@@ -624,23 +624,6 @@ class _TestResultsScreenState extends State<TestResultsScreen> with WidgetsBindi
     _load();
   }
 
-  /// Shows the marks and the right answers to the students now, ahead of the closing time.
-  Future<void> _release() async {
-    final ok = await confirmCard(
-      context,
-      title: 'Show marks to students now?',
-      body: 'Every student who has submitted will see their marks and the right answers straight away.',
-      confirm: 'Show marks',
-    );
-    if (!ok) return;
-    try {
-      await api.post('/teacher/tests/${widget.id}/release-results');
-      _load();
-    } on ApiException catch (e) {
-      if (mounted) showProblem(context, e);
-    }
-  }
-
   Future<void> _load() async {
     markLoaded();
     try {
@@ -779,22 +762,6 @@ class _TestResultsScreenState extends State<TestResultsScreen> with WidgetsBindi
             StatSmall((sum['missed'] as int) > 0 ? 'Missed' : 'Writing now', '${(sum['missed'] as int) > 0 ? sum['missed'] : sum['writing']}'),
           ],
         ),
-        if (published) ...[
-          const SizedBox(height: 16),
-          if (t['results_open'] == true)
-            InlineNotice('Students can see their marks and the right answers.', tone: Tone.success, icon: Ph.eye)
-          else ...[
-            InlineNotice(
-              closes == null
-                  ? 'Students see their marks once everyone has finished.'
-                  : 'Students see their marks after ${f.when(closes)}, or earlier once everyone has finished.',
-              tone: Tone.neutral,
-              icon: Ph.lock,
-            ),
-            const SizedBox(height: 10),
-            SecondaryButton('Show marks to students now', icon: Ph.eye, onTap: _release),
-          ],
-        ],
         SectionRule('Students', count: students.length, padding: const EdgeInsets.fromLTRB(0, 26, 0, 11)),
         if (students.isEmpty) Text('No students are given this test.', style: bodyStyle.copyWith(color: muted)),
         for (final (i, s) in students.indexed) ...[

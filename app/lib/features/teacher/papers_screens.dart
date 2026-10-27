@@ -276,10 +276,25 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
   bool _saving = false;
   bool _making = false;
   bool _running = false;
+
+  /// When the models could not be reached, the questions they never looked at (or could not check) are asked about again once
+  /// the server's cooldown is over, while the screen stays open, a few times. After that they wait for the paper to be opened again.
+  Timer? _retryTimer;
+  int _autoRetries = 0;
+  static const _maxAutoRetries = 5;
+  static const _retryAfter = Duration(minutes: 3, seconds: 15);
   _Filter _filter = _Filter.toCheck;
 
   /// Each draft's latest marking, so a slow reply to an earlier tap cannot undo a later one.
   final Map<String, int> _markSeq = {};
+
+  /// The marks still on their way to the server, and when each question was last marked. A picture of the paper that was asked for
+  /// before a mark (or while it is on its way) does not hold that mark, so it must not undo it.
+  final Map<String, int> _marksOnTheWay = {};
+  final Map<String, DateTime> _markedAt = {};
+
+  /// The tutor's mark on [id] is newer than a picture of the paper asked for at [asked], or has not been saved yet.
+  bool _markIsNewer(Object? id, DateTime asked) => (_marksOnTheWay['$id'] ?? 0) > 0 || (_markedAt['$id']?.isAfter(asked) ?? false);
 
   /// Looking at the AI drafts of a paper that is already a finished set.
   bool _review = false;
@@ -297,6 +312,7 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
 
   @override
   void dispose() {
+    _retryTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -305,16 +321,66 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state != AppLifecycleState.resumed || _running) return;
+    _autoRetries = 0;
     _load().then((_) {
       if (mounted && _workLeft && !_running) _run();
     });
   }
 
-  /// Pages AI has not read, questions it has not looked for an answer to, or questions waiting for a second opinion.
-  bool get _workLeft =>
-      _pages.any((p) => p['ai_status'] != 'done' && p['uploaded'] != false) ||
-      _drafts.any((d) => d['status'] == 'draft' && d['kind'] == 'mcq' && d['correct_option'] == null && d['answer_checked'] != true && d['needs_diagram'] != true) ||
-      _secondPending > 0;
+  /// Pages AI has not read, questions it has not looked for an answer to (or could not check last time), questions waiting for a
+  /// second opinion, or questions the checks could not settle that AI is yet to replace.
+  bool get _workLeft => _pages.any((p) => p['ai_status'] != 'done' && p['uploaded'] != false) || _unanswered || _secondPending > 0 || _unsettled > 0;
+
+  /// Questions AI has not looked for an answer to, or could not check last time because the models were down.
+  bool get _unanswered => _drafts.any((d) =>
+      d['status'] == 'draft' &&
+      d['kind'] == 'mcq' &&
+      d['correct_option'] == null &&
+      d['needs_diagram'] != true &&
+      (d['answer_checked'] != true || d['ai_note'] == 'unchecked'));
+
+  /// Asks again for the answers the models could not give, once the server's three-minute cooldown is over: the models being
+  /// down is no reason to leave the tutor marking by hand. Stops after a few tries (the paper carries on when it is next opened).
+  void _retryUnansweredSoon() {
+    _retryTimer?.cancel();
+    if (!mounted || _autoRetries >= _maxAutoRetries || !_unanswered) return;
+    _retryTimer = Timer(_retryAfter, () async {
+      if (!mounted || _running) return;
+      _autoRetries++;
+      try {
+        await _load();
+      } catch (_) {
+        return;
+      }
+      if (mounted && _unanswered && !_running) _run();
+    });
+  }
+
+  /// In a paper AI wrote from the tutor's request: the questions its checks could not settle (no answer, or an answer
+  /// against what the writer meant) that nobody has touched. The server replaces these with new questions. A question
+  /// the tutor marked, reworded or brought back is hers, and a paper that was uploaded is never replaced.
+  int get _unsettled => _paper?['replaceable'] != true
+      ? 0
+      : _drafts
+          .where((d) =>
+              d['status'] == 'draft' &&
+              d['kind'] == 'mcq' &&
+              d['edited'] != true &&
+              d['answer_checked'] == true &&
+              d['ai_votes'] == null &&
+              d['ai_note'] != 'unchecked' &&
+              (d['correct_option'] == null || d['ai_note'] == 'writer_differs'))
+          .length;
+
+  /// How many questions are being replaced in this round; 0 when none are.
+  int _replacing = 0;
+
+  /// The questions left out of this paper for a new one so far.
+  int get _replacedCount => _drafts.where((d) => d['ai_note'] == 'replaced').length;
+
+  /// What the replacing did, said when it is over ("... The paper still has 10 questions."), so the count under Skipped is
+  /// not taken for questions lost.
+  String? _replacedNote;
 
   /// Questions the first two AI checks could not settle, which a stronger model is asked about next.
   int get _secondPending => _drafts.where((d) => d['status'] == 'draft' && d['kind'] == 'mcq' && d['correct_option'] == null && d['ai_votes'] != null).length;
@@ -326,13 +392,16 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
   List<String> get _missing => ((_paper?['missing'] as List?) ?? const []).cast<String>().where((m) => m == 'exam_name').toList();
 
   Future<void> _load() async {
+    final asked = DateTime.now();
     try {
       final d = await api.get('/teacher/papers/${widget.id}');
       if (!mounted) return;
+      final mine = {for (final x in _drafts) '${x['id']}': x};
       setState(() {
         _paper = Map<String, dynamic>.from(d['paper']);
         _pages = (d['pages'] as List).cast<Map<String, dynamic>>();
-        _drafts = (d['drafts'] as List).cast<Map<String, dynamic>>();
+        // A question the tutor marked after this picture was asked for stays as she left it: the picture may be older than her tap.
+        _drafts = [for (final x in (d['drafts'] as List).cast<Map<String, dynamic>>()) _markIsNewer(x['id'], asked) ? (mine['${x['id']}'] ?? x) : x];
         _chapters = (d['chapters'] as List).cast<Map<String, dynamic>>();
         _questions = (d['questions'] as List? ?? const []).cast<Map<String, dynamic>>();
         _tests = (d['tests'] as List? ?? const []).cast<Map<String, dynamic>>();
@@ -422,7 +491,10 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
     if (_running || _paper == null) return;
     _running = true;
     _bulk = true;
-    setState(() => _aiError = null);
+    setState(() {
+      _aiError = null;
+      _replacedNote = null;
+    });
     try {
       // The paper's title is asked for alongside the reading and never waited for: a paper that AI could not name
       // keeps the date it was made, and the pages are read all the same.
@@ -438,11 +510,24 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
       _bulk = false;
       if (mounted) setState(() => _working = null);
       await _secondOpinions();
+      final replacedBefore = _replacedCount;
+      await _replaceUnsettled();
+      final replaced = _replacedCount - replacedBefore;
+      if (mounted && replaced > 0) {
+        // New questions took the place of the ones AI was not sure about: say so, with the size the paper still has.
+        final size = f.count(_drafts.where((d) => d['status'] != 'discarded').length, 'question');
+        setState(() => _replacedNote = replaced == 1
+            ? 'AI replaced 1 question it was not sure about with a new one. The paper still has $size.'
+            : 'AI replaced $replaced questions it was not sure about with new ones. The paper still has $size.');
+        // With nothing left for the tutor, show her the ready ones, as at the end of a read, and not an empty list.
+        if (_filter == _Filter.toCheck) _summarise();
+      }
     } finally {
       _running = false;
       _bulk = false;
       _busyUntil = null;
       if (mounted) setState(() => _working = null);
+      _retryUnansweredSoon();
     }
   }
 
@@ -477,11 +562,44 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
     }
   }
 
+  /// How many rounds of replacing a paper gets in one run. The server has a ceiling of its own and says so by
+  /// clearing the paper's `replaceable`, so a topic the checks never settle cannot go on for ever.
+  static const _replaceRounds = 3;
+
+  /// A paper AI wrote keeps what it was asked for. A question whose answer the checks could not settle is left out
+  /// (it stays under Skipped, with the reason) and a new question takes its number; the new ones go through the same
+  /// checks, and what is still unsettled after that is replaced again. Nothing of the tutor's is touched. When the
+  /// writer is busy or the line drops, nothing changes: the questions stay with the tutor, as they did before.
+  Future<void> _replaceUnsettled() async {
+    for (var round = 0; round < _replaceRounds && mounted; round++) {
+      final n = _unsettled;
+      if (n == 0) return;
+      setState(() => _replacing = n);
+      try {
+        var replaced = 0;
+        while (mounted) {
+          final r = await _ai(() => api.post('/teacher/papers/${widget.id}/replace', null, const Duration(minutes: 2)));
+          replaced += r['replaced'] as int;
+          if ((r['replaced'] as int) == 0 || (r['left'] as int) == 0) break;
+        }
+        await _load();
+        if (replaced == 0) return;
+        await _readAndAnswer(replacing: true);
+        await _secondOpinions();
+      } on ApiException {
+        return;
+      } finally {
+        if (mounted) setState(() => _replacing = 0);
+      }
+    }
+  }
+
   /// Reads the pages that are not done yet, [_readWidth] at a time, and looks for answers to the
   /// questions already read while the other pages are still being read. A printed answer key on a
   /// late page replaces whatever AI worked out for those questions in the meantime (the server
-  /// does that), so the key still wins.
-  Future<void> _readAndAnswer() async {
+  /// does that), so the key still wins. With [replacing] there are no pages to read, only the new
+  /// questions to answer, and the tutor's view of the paper is left as it is.
+  Future<void> _readAndAnswer({bool replacing = false}) async {
     final todo = [for (final p in _pages) if (p['ai_status'] != 'done') p['page_no'] as int];
     _pagesTotal = todo.length;
     _pagesRead = 0;
@@ -558,7 +676,7 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
                 ? 'Page ${unread.keys.first} could not be read. $why'
                 : '${unread.length} pages could not be read. $why');
     if (error != null) setState(() => _aiError = error);
-    _summarise();
+    if (!replacing) _summarise();
   }
 
   /// Points the list at what needs the tutor first, or at the ready questions when nothing does.
@@ -605,6 +723,8 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
     final seq = (_markSeq[id] ?? 0) + 1;
     _markSeq[id] = seq;
     final before = d;
+    _marksOnTheWay[id] = (_marksOnTheWay[id] ?? 0) + 1;
+    _markedAt[id] = DateTime.now();
     _replace({...d, 'correct_option': option, 'answer_source': 'teacher', 'ai_confidence': null});
     try {
       final r = await api.patch('/teacher/drafts/$id', {'correct_option': option});
@@ -613,6 +733,14 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
       if (!mounted || _markSeq[id] != seq) return;
       _replace(before);
       showProblem(context, e);
+    } finally {
+      _markedAt[id] = DateTime.now();
+      final left = (_marksOnTheWay[id] ?? 1) - 1;
+      if (left <= 0) {
+        _marksOnTheWay.remove(id);
+      } else {
+        _marksOnTheWay[id] = left;
+      }
     }
   }
 
@@ -711,7 +839,10 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
   }
 
   Future<void> _save() async {
-    setState(() => _saving = true);
+    setState(() {
+      _saving = true;
+      _replacedNote = null;
+    });
     try {
       final r = await api.post('/teacher/papers/${widget.id}/save');
       final already = r['already_in_bank'] as int? ?? 0;
@@ -770,7 +901,7 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
       builder: (ctx) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Fig('${f.count(n, 'question')} · ${_limitFor(n)} min · closes ${f.when(defaultClosing())}', style: labelStyle.copyWith(fontSize: 12.5), numColor: ink),
         const SizedBox(height: 10),
-        Fig('Goes to $who. Students see their marks after it closes, or once everyone has finished.', style: bodyStyle.copyWith(color: muted)),
+        Fig('Goes to $who. Students see their marks and the right answers as soon as they hand it in.', style: bodyStyle.copyWith(color: muted)),
         if (students == 0) ...[
           const SizedBox(height: 12),
           InlineNotice(
@@ -994,12 +1125,21 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
             const SizedBox(height: 10),
             SecondaryButton('Find answers with AI', icon: Ph.scan, tint: aiAccentInk, onTap: _run),
           ]),
-        if (_working != null && !_bulk) InlineNotice('$_workingText.', tone: Tone.ai, icon: Ph.scan),
+        if (_working != null && !_bulk && _replacing == 0) InlineNotice('$_workingText.', tone: Tone.ai, icon: Ph.scan),
+        if (_replacing > 0 && !reading)
+          InlineNotice(
+            _replacing == 1
+                ? 'AI was not sure about 1 question, so it is writing a new one. You can carry on meanwhile.'
+                : 'AI was not sure about $_replacing questions, so it is writing new ones. You can carry on meanwhile.',
+            tone: Tone.ai,
+            icon: Ph.scan,
+          ),
+        if (_replacedNote != null && _replacing == 0 && !reading) InlineNotice(_replacedNote!, tone: Tone.ai, icon: Ph.scan),
         if (_asking && !reading) ...[
           InlineNotice(
             _secondPending == 1
-                ? 'A stronger AI model is taking a second look at 1 question. You can carry on meanwhile.'
-                : 'A stronger AI model is taking a second look at $_secondPending questions. You can carry on meanwhile.',
+                ? 'AI is taking a second look at 1 question. You can carry on meanwhile.'
+                : 'AI is taking a second look at $_secondPending questions. You can carry on meanwhile.',
             tone: Tone.ai,
             icon: Ph.scan,
           ),
@@ -1538,7 +1678,7 @@ class _DraftCard extends StatelessWidget {
   /// The label at the card's top right.
   (String, Tone) get _tag {
     final correct = d['correct_option'] as int?;
-    if (d['status'] == 'discarded') return ('Skipped', Tone.neutral);
+    if (d['status'] == 'discarded') return (d['ai_note'] == 'replaced' ? 'Replaced' : 'Skipped', Tone.neutral);
     if (d['status'] == 'saved') return ('Saved', Tone.success);
     if (d['kind'] != 'mcq') return ('Not multiple choice', Tone.neutral);
     if (correct == null) {
@@ -1546,6 +1686,7 @@ class _DraftCard extends StatelessWidget {
       if (_waiting) return ('Second look', Tone.ai);
       return switch (d['ai_note']) {
         'disagree' || 'unsure' => ('AI is split', Tone.warning),
+        'unchecked' => ('Not checked yet', Tone.warning),
         'unclear' => ('Part unreadable', Tone.warning),
         'no_option' => ('May be misprinted', Tone.warning),
         _ => ('Mark the answer', Tone.warning),
@@ -1562,11 +1703,13 @@ class _DraftCard extends StatelessWidget {
     final correct = d['correct_option'] as int?;
     final p = _picks;
     final w = p['writer'];
+    if (d['ai_note'] == 'replaced') return ('AI was not sure of the answer to this one, so a new question took its place. Bring it back if you want it anyway.', false);
     if (d['ai_note'] == 'duplicate') return ('Same as ${repeatOf ?? 'an earlier question'}, so it was skipped.', false);
     if (d['ai_note'] == 'in_bank') return ('You already have this question, so it was not saved again.', false);
     if (correct == null && _needsFigure) return ('AI cannot see figures. Add a photo of it, or skip the question.', true);
-    if (correct == null && _waiting) return ('A stronger AI model is taking a second look. You can mark it yourself meanwhile.', false);
+    if (correct == null && _waiting) return ('AI is taking a second look. You can mark it yourself meanwhile.', false);
     return switch (d['ai_note']) {
+      'unchecked' => ('AI could not check this one just now. It tries again by itself a little later, or you can mark it yourself.', true),
       'unclear' => ('Part of this could not be read, so AI did not answer it. Check it against the page.', true),
       'no_option' => ('No option fits, so it may be misprinted. Check it against the page.', true),
       'disagree' => ('The AI checks chose different answers.${w == null ? '' : ' The question was written with ${_letter(w)}.'}', true),
