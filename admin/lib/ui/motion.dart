@@ -21,7 +21,8 @@ const _ease = Curves.easeOutCubic;
 /// Fades its child in and lifts it a few pixels when it first appears, after [delay]. Give [scope]
 /// (a State or any object that lives as long as the screen) and an [id] and it plays once per
 /// screen: a row scrolled away and back does not play again. A child that starts out of sight, such
-/// as a row far down a long list, waits there and comes in as the list is scrolled to it.
+/// as a row far down a long list, waits there and comes in as soon as it is in sight: by scrolling to
+/// it, or by anything else that moves it (a keyboard that goes, a row above it that ends).
 class Reveal extends StatefulWidget {
   const Reveal({
     super.key,
@@ -54,9 +55,9 @@ class Reveal extends StatefulWidget {
 
 class _RevealState extends State<Reveal> with SingleTickerProviderStateMixin {
   late final AnimationController _c = AnimationController(vsync: this, duration: widget.duration); // motion: approved
-  ScrollPosition? _watching;
   Timer? _timer;
   Duration _wait = Duration.zero;
+  bool _waiting = false;
 
   @override
   void initState() {
@@ -83,24 +84,27 @@ class _RevealState extends State<Reveal> with SingleTickerProviderStateMixin {
     if (!mounted) return;
     final scrollable = Scrollable.maybeOf(context);
     if (scrollable != null && !_inView(scrollable)) {
-      _watching = scrollable.position..addListener(_onScroll);
+      _waiting = true;
+      _lookAgain();
       return;
     }
     _begin(_wait);
   }
 
-  bool _looking = false;
-
-  /// The child has not moved until the list has been laid out again, so look after the next frame.
-  void _onScroll() {
-    if (_looking) return;
-    _looking = true;
+  /// Looks again after the next frame. Scrolling is not all that brings a child into sight: the list can grow with no
+  /// scroll at all (a keyboard goes, a row above it ends), and a child that was judged out of sight while the list was
+  /// squeezed would wait for ever. A frame comes whenever anything moves, and asking for one is not needed: this
+  /// does not keep the screen drawing.
+  void _lookAgain() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _looking = false;
-      final scrollable = mounted ? Scrollable.maybeOf(context) : null;
-      if (scrollable == null || !_inView(scrollable)) return;
-      _unwatch();
-      _begin(Duration.zero);
+      if (!mounted || !_waiting) return;
+      final scrollable = Scrollable.maybeOf(context);
+      if (scrollable == null || _inView(scrollable)) {
+        _waiting = false;
+        _begin(Duration.zero);
+      } else {
+        _lookAgain();
+      }
     });
   }
 
@@ -123,15 +127,10 @@ class _RevealState extends State<Reveal> with SingleTickerProviderStateMixin {
     return s.widget.axis == Axis.vertical ? at.dy < view.size.height - 24 : at.dx < view.size.width - 24;
   }
 
-  void _unwatch() {
-    _watching?.removeListener(_onScroll);
-    _watching = null;
-  }
-
   @override
   void dispose() {
+    _waiting = false;
     _timer?.cancel();
-    _unwatch();
     _c.dispose();
     super.dispose();
   }

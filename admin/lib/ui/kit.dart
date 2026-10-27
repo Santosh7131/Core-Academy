@@ -817,8 +817,8 @@ class PushedPanel extends StatelessWidget {
       );
 }
 
-/// Short choices: a near-full-width card in the middle of the screen. No blur; it fades in
-/// with a slight scale rather than arriving from an edge.
+/// Short choices: a near-full-width card in the middle of the screen, or of what the keyboard leaves of it. No blur;
+/// it fades in with a slight scale rather than arriving from an edge.
 Future<T?> showCentredCard<T>(BuildContext context, {required String title, String? subtitle, required Widget Function(BuildContext) builder}) {
   return showGeneralDialog<T>(
     context: context,
@@ -832,31 +832,47 @@ Future<T?> showCentredCard<T>(BuildContext context, {required String title, Stri
     },
     pageBuilder: (ctx, _, _) {
       final size = MediaQuery.sizeOf(ctx);
-      return SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: math.min(size.width - 36, 480), maxHeight: size.height * 0.72),
-            child: Material(
-              type: MaterialType.transparency,
-              child: Container(
-                decoration: surface(radius: rHero, shadow: e4),
-                padding: const EdgeInsets.fromLTRB(22, 18, 16, 22),
-                child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                  Row(children: [
-                    Expanded(child: Text(title, style: cardTitleStyle)),
-                    CircleBtn(icon: Ph.x, label: 'Close', ground: fill, onTap: () => Navigator.of(ctx).pop()),
-                  ]),
-                  if (subtitle != null) Fig(subtitle, style: labelStyle),
-                  const SizedBox(height: 14),
-                  Flexible(child: Padding(padding: const EdgeInsets.only(right: 6), child: builder(ctx))),
+      return _CardRoom(
+        builder: (ctx, room) => ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: math.min(size.width - 36, 480), maxHeight: math.max(160.0, math.min(size.height * 0.72, room - 16))),
+          child: Material(
+            type: MaterialType.transparency,
+            child: Container(
+              decoration: surface(radius: rHero, shadow: e4),
+              padding: const EdgeInsets.fromLTRB(22, 18, 16, 22),
+              child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                Row(children: [
+                  Expanded(child: Text(title, style: cardTitleStyle)),
+                  CircleBtn(icon: Ph.x, label: 'Close', ground: fill, onTap: () => Navigator.of(ctx).pop()),
                 ]),
-              ),
+                if (subtitle != null) Fig(subtitle, style: labelStyle),
+                const SizedBox(height: 14),
+                // Scrolls when the text is large, the screen short or the keyboard up, so the button at the bottom can always be reached.
+                Flexible(child: SingleChildScrollView(padding: const EdgeInsets.only(right: 6), child: builder(ctx))),
+              ]),
             ),
           ),
         ),
       );
     },
   );
+}
+
+/// The room a centred card has: the screen without the status bar, the navigation bar and the keyboard. The card is
+/// centred in it and follows the keyboard up and down, so a field and the button under it are never behind the keyboard.
+class _CardRoom extends StatelessWidget {
+  const _CardRoom({required this.builder});
+
+  /// Makes the card, given the height of the room.
+  final Widget Function(BuildContext context, double room) builder;
+
+  @override
+  Widget build(BuildContext context) => AnimatedPadding(
+        padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+        duration: const Duration(milliseconds: 100),
+        curve: Curves.decelerate,
+        child: SafeArea(child: LayoutBuilder(builder: (ctx, box) => Center(child: builder(ctx, box.maxHeight)))),
+      );
 }
 
 /// Yes/no in a centred card. Returns true when confirmed.
