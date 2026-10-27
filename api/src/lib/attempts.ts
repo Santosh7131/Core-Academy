@@ -1,6 +1,6 @@
 import { randomInt } from 'node:crypto';
 import type pg from 'pg';
-import { pool, q, q1, tx, type Db } from './db.ts';
+import { q, q1, tx, type Db } from './db.ts';
 import { HttpError, notFound } from './http.ts';
 import { maybeViewUrl } from './storage.ts';
 
@@ -30,17 +30,12 @@ export function shuffle<T>(items: T[]): T[] {
 //
 // `tuition` is the SQL that holds one tuition's id ('@T' inside tq(), or a $n), or null for every
 // tuition at once (the scheduled notifications).
-export const assignedCte = (tuition: string | null, stillHeld = false) => {
-  // Only the tests whose marks are still held back and could still be opened early: not yet released and not yet closed
-  // (a closed test, or one with no closing time, has its marks open anyway). releaseFinishedTests asks only for these, because
-  // it runs for every student's refresh and would otherwise work out the students of every test the tuition ever posted.
-  const held = stillHeld ? ' and t.results_released_at is null and t.closes_at > now()' : '';
-  return `assigned as (
+export const assignedCte = (tuition: string | null) => `assigned as (
   select t.id as test_id, u.id as student_id
     from tests t
     join memberships m on m.tuition_id = t.tuition_id and m.role = 'student' and m.status = 'active' and m.class_level = t.class_level
     join users u on u.id = m.user_id and u.active
-   where t.status = 'published' and t.course_id is null${tuition ? ` and t.tuition_id = ${tuition}` : ''}${held}
+   where t.status = 'published' and t.course_id is null${tuition ? ` and t.tuition_id = ${tuition}` : ''}
      and (t.closes_at is null or m.joined_at < t.closes_at or exists (select 1 from attempts x where x.test_id = t.id and x.student_id = u.id))
      and (t.assign_all or t.assign_group)
      and exists (select 1 from student_subjects ss
@@ -51,7 +46,7 @@ export const assignedCte = (tuition: string | null, stillHeld = false) => {
     join test_students ts on ts.test_id = t.id
     join memberships m on m.tuition_id = t.tuition_id and m.user_id = ts.student_id and m.role = 'student' and m.status = 'active'
     join users u on u.id = ts.student_id and u.active
-   where t.status = 'published' and t.course_id is null${tuition ? ` and t.tuition_id = ${tuition}` : ''}${held} and not t.assign_all and not t.assign_group
+   where t.status = 'published' and t.course_id is null${tuition ? ` and t.tuition_id = ${tuition}` : ''} and not t.assign_all and not t.assign_group
      and (t.closes_at is null or m.joined_at < t.closes_at or exists (select 1 from attempts x where x.test_id = t.id and x.student_id = u.id))
   union
   select t.id, cm.student_id
@@ -59,16 +54,14 @@ export const assignedCte = (tuition: string | null, stillHeld = false) => {
     join course_members cm on cm.course_id = t.course_id
     join memberships m on m.tuition_id = t.tuition_id and m.user_id = cm.student_id and m.role = 'student' and m.status = 'active'
     join users u on u.id = cm.student_id and u.active
-   where t.status = 'published' and t.course_id is not null${tuition ? ` and t.tuition_id = ${tuition}` : ''}${held}
+   where t.status = 'published' and t.course_id is not null${tuition ? ` and t.tuition_id = ${tuition}` : ''}
      and (t.closes_at is null or cm.added_at < t.closes_at or exists (select 1 from attempts x where x.test_id = t.id and x.student_id = u.id))
 )`;
-};
 export const ASSIGNED_CTE = assignedCte(null);
 
 /**
  * SQL condition: the test was given to someone and every student it was given to has handed it in.
- * Such a test is finished, whatever its closing time says (releaseFinishedTests opens its marks on the
- * same condition). Needs the `assigned` CTE.
+ * Such a test is finished, whatever its closing time says. Needs the `assigned` CTE.
  */
 export const EVERYONE_DONE = `(exists (select 1 from assigned a where a.test_id = t.id)
    and not exists (select 1 from assigned a where a.test_id = t.id
@@ -80,35 +73,6 @@ export const TEST_COUNTS = `${EVERYONE_DONE} as everyone_done,
             (select count(distinct x.student_id) from attempts x where x.test_id = t.id and x.submitted_at is not null) as submitted,
             (select count(*) from attempts x where x.test_id = t.id and x.submitted_at is null
                 and (x.deadline_at is null or x.deadline_at > now())) as writing`;
-
-/**
- * SQL condition: the marks of test t are open to its students: a tutor opened them, or the last
- * student finished (both stamp results_released_at), or the test has closed. A test with no
- * closing time (from before closing was compulsory) has nothing to wait for.
- */
-export const RESULTS_OPEN = `(t.results_released_at is not null or t.closes_at is null or t.closes_at <= now())`;
-
-/** The same condition for one app: one too old to wait for its marks (see holdsResults) always has them. */
-export const resultsOpenFor = (holds: boolean) => (holds ? RESULTS_OPEN : 'true');
-
-/**
- * Opens the marks of every published test whose assigned students have all submitted. Called
- * whenever someone looks at tests or submits one, so "the last student finished" takes effect at
- * once without a timer. Returns how many tests it opened. Given a tuition it looks only at that
- * tuition's tests.
- */
-export async function releaseFinishedTests(tuitionId: string | null = null, db: Db = pool): Promise<number> {
-  const r = await db.query(
-    `with ${assignedCte(tuitionId ? '$1' : null, true)}
-     update tests t set results_released_at = now()
-      where t.status = 'published' and t.results_released_at is null${tuitionId ? ' and t.tuition_id = $1' : ''}
-        and exists (select 1 from assigned a where a.test_id = t.id)
-        and not exists (select 1 from assigned a where a.test_id = t.id
-                         and not exists (select 1 from attempts x where x.test_id = t.id and x.student_id = a.student_id and x.submitted_at is not null))`,
-    tuitionId ? [tuitionId] : [],
-  );
-  return r.rowCount ?? 0;
-}
 
 /**
  * SQL condition: test t is given to student $1 in class $2 (their class in the test's tuition, null for a
@@ -316,7 +280,8 @@ export async function saveAnswers(studentId: string, attemptId: string, raw: unk
   return { saved: out.saved, server_now: out.server_now };
 }
 
-export async function submitAttempt(studentId: string, attemptId: string, raw: unknown, auto: boolean, holds = true) {
+/** Hands the attempt in (or finds it already handed in) and returns what the student sees at once: the marks and the review. */
+export async function submitAttempt(studentId: string, attemptId: string, raw: unknown, auto: boolean) {
   const answers = parseAnswers(raw);
   await tx(async (c) => {
     const a = await lockAttempt(c, studentId, attemptId);
@@ -335,35 +300,12 @@ export async function submitAttempt(studentId: string, attemptId: string, raw: u
     );
     await c.query('select grade_attempt($1)', [a.id]);
   });
-  return studentResult(attemptId, studentId, holds);
-}
-
-/**
- * What a student sees of one of their attempts: the marks and the review once the test's marks
- * are open, until then only a note saying when (the closing time, or earlier once everyone has
- * finished or the tutor opens them).
- */
-export async function studentResult(attemptId: string, studentId: string, holds = true) {
-  const home = await q1<{ tuition_id: string }>(
-    `select t.tuition_id from attempts a join tests t on t.id = a.test_id where a.id = $1 and a.student_id = $2`,
-    [attemptId, studentId],
-  );
-  if (!home) throw notFound('This attempt');
-  await releaseFinishedTests(home.tuition_id);
-  const t = await q1<{ title: string; closes_at: Date | null; submitted_at: Date | null; open: boolean }>(
-    `select t.title, t.closes_at, a.submitted_at, ${RESULTS_OPEN} as open
-       from attempts a join tests t on t.id = a.test_id where a.id = $1 and a.student_id = $2`,
-    [attemptId, studentId],
-  );
-  if (!t) throw notFound('This attempt');
-  if (!t.submitted_at) throw new HttpError(409, 'not_submitted', 'This test has not been submitted yet.');
-  if (!t.open && holds) return { waiting: true, title: t.title, results_at: t.closes_at };
   return resultPayload(attemptId, { studentId });
 }
 
 /**
- * Marks plus the full review. Only for a submitted attempt: the owner, or a tutor of the tuition
- * the test belongs to.
+ * Marks plus the full review, as soon as the attempt is handed in: nothing holds them back until the test closes.
+ * Only for a submitted attempt: the owner, or a tutor of the tuition the test belongs to.
  */
 export async function resultPayload(attemptId: string, who: { studentId?: string; tuitionId?: string }) {
   const a = await q1<AttemptRow & { title: string; class_level: number; display_name: string }>(

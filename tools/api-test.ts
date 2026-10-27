@@ -85,9 +85,8 @@ try {
   check('"Both (a) and (b)" question keeps option order', keep.body?.question?.keep_option_order === true, keep.body?.question);
 
   // Every test needs a closing time (one day ahead unless given), and a closing time already past is
-  // set after posting, since the server will not post such a test. Marks are opened for the students
-  // straight away unless `hold`: these checks are about marking, not about when marks show.
-  const mkTest = async (title: string, extra: Record<string, unknown>, hold = false) => {
+  // set after posting, since the server will not post such a test.
+  const mkTest = async (title: string, extra: Record<string, unknown>) => {
     const wanted = (extra.closes_at as string | undefined) ?? iso(86_400_000);
     const past = new Date(wanted).getTime() <= Date.now();
     const body = {
@@ -98,7 +97,6 @@ try {
     created.tests.push(r.body.id);
     const p = await api('POST', `/teacher/tests/${r.body.id}/publish`, T, { published: true });
     if (past) await api('PATCH', `/teacher/tests/${r.body.id}`, T, { ...body, closes_at: wanted });
-    if (!hold) await api('POST', `/teacher/tests/${r.body.id}/release-results`, T);
     check(`test "${title}" created and published`, r.status === 201 && p.status === 200, [r.body, p.body]);
     return r.body.id as string;
   };
@@ -179,8 +177,7 @@ try {
   check('the older app still gets a school list, now empty', JSON.stringify((await api('GET', '/teacher/schools', T)).body) === '{"schools":[]}');
   check('students no longer have a school', !('school' in ((await api('GET', '/teacher/students', T)).body?.students?.[0] ?? {})));
 
-  // Closing is compulsory, and marks stay hidden from students until the test closes, the last
-  // student has finished, or the tutor shows them.
+  // Closing is compulsory.
   const body0 = { title: `${tag} no closing`, class_level: 9, question_ids: created.questions, assign_all: false, student_ids: created.users };
   const ncl = await api('POST', '/teacher/tests', T, body0);
   created.tests.push(ncl.body.id);
@@ -196,34 +193,33 @@ try {
   check('nor with a closing time that has passed',
     (await api('POST', `/teacher/tests/${pcl.body.id}/publish`, T, { published: true })).body?.error?.code === 'closing_passed');
 
-  // Only apps from 1.4.0 can show "marks come later": they say so in X-App. An app that does not keeps seeing its marks at once.
-  const NEWAPP = { 'x-app': 'core_academy/1.4.0+6' };
-  const H = await mkTest('marks held', { closes_at: iso(86_400_000) }, true);
+  // Marks and the right answers show the moment a test is handed in: not at the closing time, and not once everyone has
+  // finished. Every app version gets them the same way (1.4.0 to 1.6.0 still read results_open, which is always true).
+  const NEWAPP = { 'x-app': 'core_academy/1.6.0+8' };
+  const H = await mkTest('marks at once', { closes_at: iso(86_400_000) });
   const h1 = await api('POST', `/student/tests/${H}/start`, S1);
   const hsub = await api('POST', `/student/attempts/${h1.body.attempt.id}/submit`, S1, { answers: [] }, NEWAPP);
-  check('a student who submits is told their marks come later', hsub.status === 200 && hsub.body?.waiting === true && !('review' in hsub.body), hsub.body);
+  check('a student who submits gets the marks and the review at once, with the test still open and a student still to write it',
+    hsub.status === 200 && hsub.body?.review?.length === 3 && hsub.body?.attempt?.max_score === 3 && !('waiting' in hsub.body), hsub.body);
   const hres = await api('GET', `/student/attempts/${h1.body.attempt.id}/result`, S1, undefined, NEWAPP);
-  check('and cannot read them early', hres.body?.waiting === true && !('review' in hres.body), hres.body);
+  check('and can read them again afterwards', hres.body?.review?.length === 3 && !('waiting' in hres.body), hres.body);
   const hold = await api('GET', `/student/attempts/${h1.body.attempt.id}/result`, S1);
-  check('an app before 1.4.0 cannot wait for marks, so it still gets them', hold.body?.review?.length === 3 && !('waiting' in hold.body), hold.body);
-  const holdHome = (await api('GET', '/student/home', S1)).body?.tests?.find((x: any) => x.id === H);
-  check('and so does its home list', holdHome?.results_open === true && holdHome?.attempt?.max_score === 3, holdHome);
-  const hhome = (await api('GET', '/student/home', S1, undefined, NEWAPP)).body?.tests?.find((x: any) => x.id === H);
-  check('the home list hides the marks', hhome?.results_open === false && hhome?.attempt?.score === null, hhome);
-  check('so does the results list', (await api('GET', '/student/results', S1, undefined, NEWAPP)).body?.results?.find((x: any) => x.test_id === H)?.score === null);
-  check('the tutor still sees the marks', (await api('GET', `/teacher/attempts/${h1.body.attempt.id}`, T)).body?.attempt?.max_score === 3);
+  check('an app that does not say which version it is gets the same', hold.body?.review?.length === 3 && !('waiting' in hold.body), hold.body);
+  const holdHome = (await api('GET', '/student/home', S1, undefined, NEWAPP)).body?.tests?.find((x: any) => x.id === H);
+  check('the home list carries the marks', holdHome?.results_open === true && holdHome?.attempt?.max_score === 3 && holdHome?.attempt?.score !== null, holdHome);
+  const hresults = (await api('GET', '/student/results', S1, undefined, NEWAPP)).body?.results?.find((x: any) => x.test_id === H);
+  check('so does the results list', hresults?.results_open === true && hresults?.max_score === 3 && hresults?.score !== null, hresults);
+  check('the tutor sees the marks too', (await api('GET', `/teacher/attempts/${h1.body.attempt.id}`, T)).body?.attempt?.max_score === 3);
   const h2 = await api('POST', `/student/tests/${H}/start`, S2);
   const hsub2 = await api('POST', `/student/attempts/${h2.body.attempt.id}/submit`, S2, { answers: [] }, NEWAPP);
-  check('when the last student submits, everyone sees their marks',
-    hsub2.body?.attempt?.max_score === 3 && (await api('GET', `/student/attempts/${h1.body.attempt.id}/result`, S1, undefined, NEWAPP)).body?.review?.length === 3, hsub2.body);
+  check('the last student gets theirs the same way', hsub2.body?.attempt?.max_score === 3 && hsub2.body?.review?.length === 3, hsub2.body);
 
-  const M = await mkTest('marks shown by the tutor', { closes_at: iso(86_400_000) }, true);
+  const M = await mkTest('one student still to write it', { closes_at: iso(86_400_000) });
   const m1 = await api('POST', `/student/tests/${M}/start`, S1);
-  await api('POST', `/student/attempts/${m1.body.attempt.id}/submit`, S1, { answers: [] }, NEWAPP);
-  check('with a student still to write it, marks stay hidden', (await api('GET', `/student/attempts/${m1.body.attempt.id}/result`, S1, undefined, NEWAPP)).body?.waiting === true);
-  check('the tutor shows the marks', (await api('POST', `/teacher/tests/${M}/release-results`, T)).status === 200);
-  check('and the student sees them', (await api('GET', `/student/attempts/${m1.body.attempt.id}/result`, S1, undefined, NEWAPP)).body?.review?.length === 3);
-  check('the results page says whether marks are open', (await api('GET', `/teacher/tests/${M}/results`, T)).body?.test?.results_open === true
+  const msub = await api('POST', `/student/attempts/${m1.body.attempt.id}/submit`, S1, { answers: [] }, NEWAPP);
+  check('marks need no help from the tutor', msub.body?.review?.length === 3 && !('waiting' in msub.body), msub.body);
+  check('the tutor has nothing to show: that route is gone', (await api('POST', `/teacher/tests/${M}/release-results`, T)).status === 404);
+  check('the results page says the marks are open', (await api('GET', `/teacher/tests/${M}/results`, T)).body?.test?.results_open === true
     && (await api('GET', `/teacher/tests/${H}/results`, T)).body?.test?.results_open === true);
 
   // Several tutors share one tuition, and the home and group pages group tests by class and subject.
@@ -238,7 +234,7 @@ try {
   check('the tutor turns the other one off', (await api('POST', `/teacher/tutors/${nt.body.tutor.id}/active`, T, { active: false })).status === 200
     && (await login(tutorName, 'tutor-pass-123')).status !== 200);
   // M still has a student to write it, so it is live. H has been handed in by everyone it was given to, so it is finished
-  // (its marks are open) and leaves the home screen, whatever its closing time says.
+  // and leaves the home screen, whatever its closing time says.
   const homeGroups = (await api('GET', '/teacher/home', T)).body?.groups;
   const home9 = homeGroups?.find((g: any) => g.class_level === 9 && g.live.some((x: any) => x.id === M));
   check('home lists the live test under its group', !!home9 && home9.students >= 2 && home9.live.find((x: any) => x.id === M)?.assigned === 2, home9);

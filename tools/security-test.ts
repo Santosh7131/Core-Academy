@@ -230,7 +230,6 @@ try {
     'PATCH /teacher/tests/:id': { who: 'tutor', method: 'PATCH', path: `/teacher/tests/${A.test}`, body: { title: 'Hijack', class_level: 9, question_ids: [A.question], closes_at: iso(3_600_000) } },
     'POST /teacher/tests/:id/publish': { who: 'tutor', method: 'POST', path: `/teacher/tests/${A.test}/publish`, body: { published: false } },
     'DELETE /teacher/tests/:id': { who: 'tutor', method: 'DELETE', path: `/teacher/tests/${A.test}?with_results=1` },
-    'POST /teacher/tests/:id/release-results': { who: 'tutor', method: 'POST', path: `/teacher/tests/${A.test}/release-results`, body: {} },
     'GET /teacher/tests/:id/results': { who: 'tutor', method: 'GET', path: `/teacher/tests/${A.test}/results` },
     'POST /teacher/tests/:id/retake': { who: 'tutor', method: 'POST', path: `/teacher/tests/${A.test}/retake`, body: { student_id: A.studentId } },
     'GET /teacher/attempts/:id': { who: 'tutor', method: 'GET', path: `/teacher/attempts/${A.attempt}` },
@@ -239,6 +238,7 @@ try {
     'PATCH /teacher/levels/:code': { who: 'tutor', method: 'PATCH', path: `/teacher/levels/${A.level}`, body: { label: 'Hijack' } },
     'DELETE /teacher/levels/:code': { who: 'tutor', method: 'DELETE', path: `/teacher/levels/${A.level}` },
     'GET /teacher/courses/:id': { who: 'tutor', method: 'GET', path: `/teacher/courses/${A.course}` },
+    'PATCH /teacher/courses/:id': { who: 'tutor', method: 'PATCH', path: `/teacher/courses/${A.course}`, body: { name: 'Hijack' } },
     'DELETE /teacher/courses/:id': { who: 'tutor', method: 'DELETE', path: `/teacher/courses/${A.course}?with_results=1` },
     'POST /teacher/courses/:id/people': { who: 'tutor', method: 'POST', path: `/teacher/courses/${A.course}/people`, body: { student_ids: [B.studentId] } },
     'POST /teacher/courses/:id/people/new': { who: 'tutor', method: 'POST', path: `/teacher/courses/${A.course}/people/new`, body: { display_name: 'Hijack Newcomer', username: `${tag}.hijack` } },
@@ -250,6 +250,7 @@ try {
     'POST /teacher/papers/:id/pages/:n/read': { who: 'tutor', method: 'POST', path: `/teacher/papers/${A.paper}/pages/1/read`, body: {} },
     'POST /teacher/papers/:id/answers': { who: 'tutor', method: 'POST', path: `/teacher/papers/${A.paper}/answers`, body: {} },
     'POST /teacher/papers/:id/second-opinion': { who: 'tutor', method: 'POST', path: `/teacher/papers/${A.paper}/second-opinion`, body: {} },
+    'POST /teacher/papers/:id/replace': { who: 'tutor', method: 'POST', path: `/teacher/papers/${A.paper}/replace`, body: {} },
     'PATCH /teacher/drafts/:id': { who: 'tutor', method: 'PATCH', path: `/teacher/drafts/${A.draft}`, body: { text: 'Hijack' } },
     'POST /teacher/papers/:id/save': { who: 'tutor', method: 'POST', path: `/teacher/papers/${A.paper}/save`, body: {} },
     'DELETE /teacher/papers/:id': { who: 'tutor', method: 'DELETE', path: `/teacher/papers/${A.paper}` },
@@ -336,7 +337,7 @@ try {
     const hasParams = r.path.includes(':');
     // 1. real ids of the first tuition, so the handler goes past the id checks into its own logic: every junk body or query.
     // Destructive calls on real ids are checked elsewhere; here they would only empty the tuition for the calls after them.
-    const destructive = (r.method === 'DELETE' && hasParams) || /\/(active|reset-pin|release-results|publish|join-code|retake)$/.test(r.path);
+    const destructive = (r.method === 'DELETE' && hasParams) || /\/(active|reset-pin|publish|join-code|retake)$/.test(r.path);
     if (!destructive) {
       if (withBody) for (const raw of bodies) fuzzJobs.push({ r, path: own, raw });
       else for (const qs of QUERY_ROUTES.test(r.key) ? queries : ['']) fuzzJobs.push({ r, path: own + qs });
@@ -356,6 +357,9 @@ try {
   let sent = 0;
   const fuzzStart = Date.now();
   const slowTrace: string[] = [];
+  // A route that asks an AI model (when the API has its keys) takes as long as the model does: a few seconds on a good day, 30 on a bad one.
+  const asksAI = /^POST \/teacher\/papers\/(chat|:id\/(detect|answers|second-opinion|replace|pages\/:n\/read))$/;
+  const limitFor = (key: string) => (asksAI.test(key) ? 25_000 : 4000);
   await inParallel(6, fuzzJobs, async (job) => {
     const token = tokenFor(job.r);
     if (!token) return;
@@ -365,11 +369,12 @@ try {
     sent++;
     const k = job.r.key;
     if (serverError(res) && !broke.has(k)) broke.set(k, { status: res.status, sample: `${job.r.method} ${job.path.slice(0, 120)} body=${(job.raw ?? '').slice(0, 90)} -> ${JSON.stringify(res.body).slice(0, 120)}` });
-    if (ms > 4000 && !slow.has(k)) slow.set(k, `${ms} ms: ${job.path.slice(0, 100)} body=${(job.raw ?? '').slice(0, 60)}`);
-    if (ms > 4000) slowTrace.push(`  ${new Date(started).toISOString()} (+${((started - fuzzStart) / 1000).toFixed(1)} s) took ${ms} ms, status ${res.status}: ${job.r.method} ${job.path.slice(0, 80)} body of ${(job.raw ?? '').length} characters: ${(job.raw ?? '').slice(0, 40)}`);
+    const limit = limitFor(k);
+    if (ms > limit && !slow.has(k)) slow.set(k, `${ms} ms: ${job.path.slice(0, 100)} body=${(job.raw ?? '').slice(0, 60)}`);
+    if (ms > limit) slowTrace.push(`  ${new Date(started).toISOString()} (+${((started - fuzzStart) / 1000).toFixed(1)} s) took ${ms} ms, status ${res.status}: ${job.r.method} ${job.path.slice(0, 80)} body of ${(job.raw ?? '').length} characters: ${(job.raw ?? '').slice(0, 40)}`);
   });
   console.log(`${sent} junk requests sent`);
-  if (slowTrace.length) console.log(`${slowTrace.length} of them took over 4 seconds:\n${slowTrace.sort().join('\n')}`);
+  if (slowTrace.length) console.log(`${slowTrace.length} of them took longer than their limit (4 seconds, 25 for a route that asks an AI model):\n${slowTrace.sort().join('\n')}`);
   // The junk sent to the password route counted as wrong guesses, which locked the tutor, as it should: say so, then unlock for the rest.
   const lockedByJunk = await db.query('select locked_until > now() as locked from users where id = $1', [A.tutorId]);
   if (!only || only.test('POST /teacher/password')) check('guessing the current password over and over locked the tutor', lockedByJunk.rows[0].locked === true, lockedByJunk.rows[0]);

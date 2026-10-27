@@ -36,21 +36,9 @@ export function clientInfo(c: Context): ClientInfo {
 }
 
 /**
- * Whether this app can show "your marks come later". Apps before 1.4.0 would read marks that are not in
- * the reply, so they keep seeing theirs straight away until they update. A caller that does not say which
- * app it is (a script, or a build before 1.2.1) counts as old for the same reason.
- */
-export function holdsResults(c: Context): boolean {
-  const v = clientInfo(c).appVersion;
-  if (!v) return false;
-  const [major, minor] = v.split('.').map(Number);
-  return major > 1 || (major === 1 && minor >= 4);
-}
-
-/**
  * Whether this app can show courses (1.6.0 and later). An older app has no screen for a course, or for a
- * student who has no class, so it is never sent either; a caller that does not say which app it is counts
- * as old, as in holdsResults.
+ * student who has no class, so it is never sent either; a caller that does not say which app it is (a script,
+ * or a build before 1.2.1) counts as old.
  */
 export function knowsCourses(c: Context): boolean {
   const v = clientInfo(c).appVersion;

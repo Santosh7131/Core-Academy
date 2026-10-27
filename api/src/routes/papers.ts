@@ -3,11 +3,11 @@ import { tuitionOf, type AppEnv } from '../lib/auth.ts';
 import { ownCourse } from '../lib/courses.ts';
 import { pool, q, q1, tq, tq1, tx, type Db } from '../lib/db.ts';
 import { isGemini } from '../lib/gemini.ts';
-import { CHECK_MODELS, chat, parseJson, SOLVE_MODELS, TIEBREAK_MODELS, VISION_MODELS, WRITE_MODELS } from '../lib/groq.ts';
+import { CHECK_MODELS, chat, parseJson, SOLVE_MODELS, TIEBREAK_MODELS, VISION_MODELS, WRITE_MODELS, type ChatMessage } from '../lib/groq.ts';
 import { bad, hasNul, HttpError, int, MAX_OPTION_CHARS, notFound, str, uuid, uuidOpt } from '../lib/http.ts';
 import { customLevels, isClassNumber, levelIn, levelLabel, studyOf } from '../lib/levels.ts';
 import { wrapBareMath } from '../lib/latex-json.ts';
-import { verdict, type Pick } from '../lib/votes.ts';
+import { verdict, type Pick, type Votes } from '../lib/votes.ts';
 import { mustKeepOrder } from '../lib/questions.ts';
 import { asciiDigits, hasIndicText, indicLabelIndex, namesIndicLanguage } from '../lib/text.ts';
 import { declaredSize, deleteObjects, MAX_IMAGE_BYTES, maybeViewUrl, objectSize, readObject, uploadUrl, viewUrl } from '../lib/storage.ts';
@@ -125,11 +125,105 @@ const WRITE_BATCH = 25;
 /** Hindi and Tamil take several times the tokens of English for the same question, so a call writes fewer. */
 const INDIC_WRITE_BATCH = 10;
 
+/** One question the writer model gave back, with the option it says is right (null when that could not be told). */
+type Written = { text: string; options: string[]; answer: number | null };
+
+/**
+ * Has the writer model write `asked` multiple-choice questions on the teacher's request. It is told what the paper holds
+ * already (every draft, replaced ones too), so it writes something new. The writer's own answer comes with each question: it
+ * is one opinion among three, so a question whose answer cannot be told is still kept. `name` is the test name the writer
+ * suggested, which it is asked for only while the paper holds nothing.
+ */
+async function writeQuestions(w: {
+  userId: string; tuitionId: string; request: string; asked: number; indic: boolean; study: string; subject: string | null;
+  classLevel: number | null; course: boolean; written: { text: string }[];
+}): Promise<{ items: Written[]; name: string }> {
+  const { written, asked, study } = w;
+  const already = written.slice(-150).map((x) => `- ${x.text.replace(/\s+/g, ' ').slice(0, 90)}`).join('\n');
+
+  const messages: ChatMessage[] = [
+      { role: 'system', content: `You write multiple-choice questions for ${w.classLevel != null && isClassNumber(w.classLevel) ? 'a CBSE tuition teacher' : 'a tuition teacher'} in India. You are exact about maths and science.` },
+      {
+        role: 'user',
+        content: `Write exactly ${asked} multiple-choice questions for ${study}${w.subject ? ` ${w.subject}` : ''}, as the teacher asks below. The request may name a number of questions for the whole test: ignore that, this reply is ${asked}.
+Teacher's request:
+"""
+${w.request}
+"""
+${written.length ? `
+The test already has ${written.length} questions, listed below. Write ${asked} new ones on new ground within the request: not the same question, and not one of these reworded.
+${already}
+` : ''}
+
+Reply only as JSON:
+{${written.length ? '' : '"name":"<short test name>",'}"questions":[{"text":"<question>","work":"<one line: how you got the right answer>","options":["<a>","<b>","<c>","<d>"],"answer":"<the correct option, copied exactly as it is written in options>"}]}
+Rules:
+- Write the keys of each question in the order shown: first the question, then "work", then the options. Work the answer out in "work" before you write the options, then make one option exactly that answer and build the other three from plausible mistakes (a wrong formula, a slip in a sign, a forgotten step). The right value of a calculation must be one of the options, and the question must give every number it needs (say "take g = 10 m/s²" when it matters).
+- Exactly four options per question, and exactly one is correct. "answer" is the text of that option, copied character for character from "options" (not a letter). Spread the right answers over all four positions.
+- Test each of the other three options before you finish a question and be sure it is wrong. Never write two options with the same value or meaning (such as $\\frac{\\sqrt{3}}{2}$ and $\\frac{\\sqrt{3}}{\\sqrt{4}}$, or $10\\sqrt{2}$ and 14.14), two that are both acceptable usage, or an option that repeats another.
+- Ask only what a school textbook settles with one accepted answer. In grammar, vocabulary and idioms use the standard textbook examples, and do not use a sentence where more than one choice is acceptable. If a question cannot meet all of this, write a different one.
+- Write all maths, formulas and chemical equations in LaTeX inside $...$, in the options as well as in the question, e.g. $\\frac{3}{4}$, $x^2$, $90^\\circ$, $H_2O$. This is JSON, so write every LaTeX backslash twice, as in "$\\\\frac{3}{4}$". Give each option's text without a letter label.
+- Follow the teacher's topic and difficulty. ${w.course ? 'Pitch the questions at the level the request describes.' : `Match the ${study} syllabus.`}
+- Write the questions and the options in the language of the teacher's request: English, Hindi or Tamil, or the one the request asks for. Hindi and Tamil questions use the standard school-textbook terms, and every number is written with the digits 0 to 9. The JSON keys and the answer letters A to D stay as shown.
+- Every question must be answerable from its text alone: no figures, graphs or diagrams, and no "all of the above" or "none of the above".
+- Wrong options are plausible mistakes. Do not repeat a question.
+${written.length ? '' : '- name: at most 40 characters, e.g. "Quadratic equations, set 1".'}`,
+      },
+  ];
+
+  // Each writer model gets its turn: one that fails, or whose reply holds no usable question (cut off, or not the shape asked for),
+  // is followed by the next.
+  let items: Written[] = [];
+  let content = '';
+  let failure: unknown = null;
+  for (const model of WRITE_MODELS) {
+    try {
+      ({ content } = await chat({
+        task: 'write_questions',
+        userId: w.userId,
+        tuitionId: w.tuitionId,
+        models: [model],
+        json: true,
+        maxTokens: w.indic ? 10000 : 8000,
+        temperature: 0.7,
+        reasoning: 'low',
+        messages,
+      }));
+    } catch (e) {
+      failure = e;
+      continue;
+    }
+    failure = null;
+    items = [];
+    for (const it of listIn(content, 'questions')) {
+      const text = asciiDigits(clip(it?.text, 4000));
+      const options = Array.isArray(it?.options)
+        ? it.options.map((o: unknown) => wrapBareMath(asciiDigits(clip(typeof o === 'string' ? o : String(o ?? ''), 500))))
+        : [];
+      if (!text || options.length !== 4 || options.some((o: string) => !o)) continue;
+      items.push({ text, options, answer: writerAnswer(it?.answer, options) });
+      if (items.length >= asked) break;
+    }
+    if (items.length) break;
+  }
+  if (!items.length) throw failure ?? new HttpError(502, 'ai_unreadable', 'AI could not write that test. Try again, in different words.');
+  let name = '';
+  if (!written.length) {
+    try {
+      name = clip((parseJson<{ name?: unknown }>(content) as { name?: unknown })?.name, 40);
+    } catch {
+      // The questions are what matters: a missing name gets a plain one.
+    }
+  }
+  return { items, name };
+}
+
 /**
  * The chat: the tutor says what test they want and AI writes it. The questions become the drafts
  * of a new paper with no pages, so they get the same checking as an uploaded one: two other models
  * solve each question without seeing the writer's answer, and it is marked only when both agree
- * with each other and with the writer. Anything else is left for the tutor, with a warning.
+ * with each other and with the writer. A question the checks cannot settle is replaced by a new one
+ * (see /papers/:id/replace), which is why the paper keeps the request it was written from.
  *
  * A call writes at most WRITE_BATCH questions. A longer test is several calls: the first makes the
  * paper, and each later one sends its `paper_id` and adds to it, told what is already there so it
@@ -174,75 +268,20 @@ paperRoutes.post('/papers/chat', async (c) => {
     paperName = p.exam_name;
     written = await q<{ text: string; seq: number }>('select text, seq from paper_drafts where paper_id = $1 order by seq', [paperId]);
   }
-  const already = written.slice(-150).map((w) => `- ${w.text.replace(/\s+/g, ' ').slice(0, 90)}`).join('\n');
 
-  const { content } = await chat({
-    task: 'write_questions',
-    userId: c.get('user').id,
-    tuitionId: T,
-    models: WRITE_MODELS,
-    json: true,
-    maxTokens: indic ? 10000 : 8000,
-    temperature: 0.7,
-    reasoning: 'low',
-    messages: [
-      { role: 'system', content: `You write multiple-choice questions for ${classLevel != null && isClassNumber(classLevel) ? 'a CBSE tuition teacher' : 'a tuition teacher'} in India. You are exact about maths and science.` },
-      {
-        role: 'user',
-        content: `Write exactly ${asked} multiple-choice questions for ${study}${subject ? ` ${subject.name}` : ''}, as the teacher asks below. The request may name a number of questions for the whole test: ignore that, this reply is ${asked}.
-Teacher's request:
-"""
-${request}
-"""
-${written.length ? `
-The test already has ${written.length} questions, listed below. Write ${asked} new ones on new ground within the request: not the same question, and not one of these reworded.
-${already}
-` : ''}
-
-Reply only as JSON:
-{${written.length ? '' : '"name":"<short test name>",'}"questions":[{"text":"<question>","options":["<a>","<b>","<c>","<d>"],"answer":"<the correct option, copied exactly as it is written in options>"}]}
-Rules:
-- Exactly four options per question, and exactly one is correct. "answer" is the text of that option, copied character for character from "options" (not a letter). Spread the right answers over all four positions.
-- Write all maths, formulas and chemical equations in LaTeX inside $...$, in the options as well as in the question, e.g. $\\frac{3}{4}$, $x^2$, $90^\\circ$, $H_2O$. This is JSON, so write every LaTeX backslash twice, as in "$\\\\frac{3}{4}$". Give each option's text without a letter label.
-- Follow the teacher's topic and difficulty. ${course ? 'Pitch the questions at the level the request describes.' : `Match the ${study} syllabus.`}
-- Write the questions and the options in the language of the teacher's request: English, Hindi or Tamil, or the one the request asks for. Hindi and Tamil questions use the standard school-textbook terms, and every number is written with the digits 0 to 9. The JSON keys and the answer letters A to D stay as shown.
-- Every question must be answerable from its text alone: no figures, graphs or diagrams, and no "all of the above" or "none of the above".
-- Wrong options are plausible mistakes. Do not repeat a question.
-${written.length ? '' : '- name: at most 40 characters, e.g. "Quadratic equations, set 1".'}`,
-      },
-    ],
+  const { items, name: suggested } = await writeQuestions({
+    userId: c.get('user').id, tuitionId: T, request, asked, indic, study, subject: subject?.name ?? null, classLevel, course: course != null, written,
   });
-
-  const items: { text: string; options: string[]; answer: number | null }[] = [];
-  for (const it of listIn(content, 'questions')) {
-    const text = asciiDigits(clip(it?.text, 4000));
-    const options = Array.isArray(it?.options)
-      ? it.options.map((o: unknown) => wrapBareMath(asciiDigits(clip(typeof o === 'string' ? o : String(o ?? ''), 500))))
-      : [];
-    if (!text || options.length !== 4 || options.some((o: string) => !o)) continue;
-    // The writer's own answer is one opinion among three: a question whose answer cannot be told is still kept.
-    items.push({ text, options, answer: writerAnswer(it?.answer, options) });
-    if (items.length >= asked) break;
-  }
-  if (!items.length) throw new HttpError(502, 'ai_unreadable', 'AI could not write that test. Try again, in different words.');
-  let name = paperName;
-  if (!paperId) {
-    try {
-      name = clip((parseJson<{ name?: unknown }>(content) as { name?: unknown })?.name, 40);
-    } catch {
-      // The questions are what matters: a missing name gets a plain one.
-    }
-    name ||= `${subject?.name ?? course!.name} questions`;
-  }
+  const name = paperId ? paperName : suggested || `${subject?.name ?? course!.name} questions`;
   const first = written.length ? Math.max(...written.map((w) => w.seq)) + 1 : 0;
 
   const paper = await tx(async (cx) => {
     const p = paperId
       ? { id: paperId }
       : await q1(
-          `insert into papers (tuition_id, class_level, exam_name, category, page_count, uploaded_by, subject_id, course_id)
-           values ($1, $2, $3, 'Made with AI', 0, $4, $5, $6) returning id`,
-          [T, classLevel, name, c.get('user').id, subjectId, courseId],
+          `insert into papers (tuition_id, class_level, exam_name, category, page_count, uploaded_by, subject_id, course_id, ai_request)
+           values ($1, $2, $3, 'Made with AI', 0, $4, $5, $6, $7) returning id`,
+          [T, classLevel, name, c.get('user').id, subjectId, courseId, request],
           cx,
         );
     for (const [i, it] of items.entries()) {
@@ -310,8 +349,13 @@ paperRoutes.get('/papers/:id', async (c) => {
       order by d.page_no, d.seq`,
     [id],
   );
+  // A paper AI wrote can have the questions its checks could not settle replaced: the app asks for that (POST /papers/:id/replace)
+  // while this is true. The request the paper was written from stays on the server.
+  const { ai_request: request, ...shown } = p;
+  const replaceable = p.category === 'Made with AI' && p.page_count === 0 && request != null
+    && drafts.filter((d) => d.ai_note === 'replaced').length < replaceCap(drafts.filter((d) => d.status !== 'discarded').length);
   return c.json({
-    paper: { ...p, missing: missingOf(p) },
+    paper: { ...shown, missing: missingOf(p), replaceable },
     pages: await Promise.all(pages.map(async (pg) => ({ ...pg, image_url: pg.uploaded ? await viewUrl(pg.object_key) : null }))),
     drafts: await Promise.all(drafts.map(async (d) => ({ ...d, image_url: await maybeViewUrl(d.image_key) }))),
     chapters,
@@ -826,10 +870,17 @@ export function listIn(content: string, key: string): any[] {
   return [];
 }
 
+/** The options named in a model's reply (`"A"`, `["A","C"]`, `"A, C"`, `[]`), as numbers 0 to 3, each once. */
+function optionsIn(v: unknown): number[] {
+  const text = typeof v === 'string' ? v : JSON.stringify(v ?? '');
+  return [...new Set((text.toUpperCase().match(/\b[A-D]\b/g) ?? []).map((l) => l.charCodeAt(0) - 65))].sort();
+}
+
 /**
- * One model's answers to a batch: position in the batch -> option and how sure it is. The models are
- * tried in order, and a model that left questions out is followed by the next one, asked only for
- * those. Throws only when every model failed outright (the caller gives the batch back).
+ * One model's reading of a batch: position in the batch -> every option it finds correct, and how sure it is. Asking for the
+ * whole list, not for one answer, is what lets a question with two right options (or none) show itself: a model made to pick one
+ * answers a faulty question as confidently as a sound one. The models are tried in order, and a model that left questions out is
+ * followed by the next one, asked only for those. Throws only when every model failed outright (the caller decides what that means).
  */
 async function solve(
   models: string[],
@@ -862,20 +913,24 @@ async function solve(
       },
       {
         role: 'user' as const,
-        content: `Work out the correct option of each question. Reply only as JSON:
-{"answers":[{"id":"q1","answer":"A","confidence":0.97}]}
-- answer is A, B, C or D, or "" when the question is unclear, needs a figure you cannot see, has no correct option, or has more than one.
-- confidence is the probability that your answer is right. Be honest: anything you are not certain of is below 0.9.
+        content: `Check each multiple-choice question before it goes into a test. Reply only as JSON:
+{"answers":[{"id":"q1","correct":["A"],"confidence":0.97}]}
+- "correct" lists every option that is a correct answer to the question as written. Nearly always that is exactly one letter.
+- List two or more letters when more than one option is correct or would be accepted (for example both are accepted usage, or two options mean the same).
+- List none ([]) when no option is correct, when the question is unclear or has no single answer, when it asks about something that is not given, or when it needs a figure you cannot see.
+- Test each option on its own against the question before you decide. Do not stop at the first one that looks right.
+- confidence is the probability that your list is exactly right, between 0 and 1.
 Questions:
 ${JSON.stringify(qs)}`,
       },
     ];
     let content: string;
+    let by: string;
     try {
       // A model that is slow today (the same one answers in 2 s on another call) is cut off, and the next one is asked.
       const cutOff = how.attemptMs === undefined ? how.deadline : Math.min(how.deadline ?? Infinity, Date.now() + how.attemptMs);
-      ({ content } = await chat({
-        task: how.task ?? 'answer_questions', userId, tuitionId, models: [model], json: true, maxTokens: 3000, reasoning: 'medium', messages, deadline: cutOff,
+      ({ content, model: by } = await chat({
+        task: how.task ?? 'answer_questions', userId, tuitionId, models: [model], json: true, maxTokens: 3000, reasoning: model.includes('lite') ? 'low' : 'medium', messages, deadline: cutOff,
       }));
     } catch (e) {
       failure = e;
@@ -885,8 +940,9 @@ ${JSON.stringify(qs)}`,
     for (const a of listIn(content, 'answers')) {
       const i = Number(String(a?.id ?? '').replace(/^q/, '')) - 1;
       if (!todo.includes(i) || out.has(i)) continue;
-      const letter = String(a?.answer ?? '').trim().toUpperCase();
-      out.set(i, { answer: /^[A-D]$/.test(letter) ? letter.charCodeAt(0) - 65 : null, confidence: conf(a?.confidence) });
+      // A reply in the old shape ({"answer": "B"}) is read too: a model that ignored the list still said what it chose.
+      const set = optionsIn(a?.correct ?? a?.answer);
+      out.set(i, { answer: set.length === 1 ? set[0] : null, confidence: conf(a?.confidence), set, by });
       got++;
     }
     if (got > 0) failure = null; // it answered: the next model only fills in what it left out
@@ -902,27 +958,33 @@ const CLAIM_MINUTES = 3;
 const MAX_ANSWER_TRIES = 2;
 
 /**
- * The most time one model gets to answer a batch before the next is asked. They answer in 1 to 5 seconds; one
- * call in a while takes 40 and would hold up the whole paper (a Gemini checker did, in a test).
+ * The most time one model gets to answer a batch before the next is asked. Groq's answer in 1 to 5 seconds; Gemini's take 5 to 25 on
+ * most calls and 40 to 60 on a busy evening, which would hold up the whole paper.
  */
-const ANSWER_ATTEMPT_MS = 20_000;
-
-/** What the first two checks said about a question they could not settle, kept for its second opinion (migration 016). */
-type Votes = { solver?: Pick; checker?: Pick; tries: number };
+const ANSWER_ATTEMPT_MS = 30_000;
 
 /**
- * Finds answers for the next few unanswered questions: first from the paper's own answer keys,
- * then with AI. Two different models work each question out on their own and it is marked when they
- * pick the same option and each is at least 90% sure. A question they split on or hesitated over keeps
- * what each said and waits for a second opinion, which is a step of its own (`/second-opinion`) so the
- * tutor does not wait for the slow, strong model. A question AI wrote in the chat keeps its writer's
- * answer as one more opinion, which can ask the tutor to check the mark but no longer blocks it. A
- * question no model answered at all is asked again.
+ * What the checks said about a question that waits for another opinion (migration 016), and how many times another opinion was
+ * asked for and none came back.
+ */
+type Waiting = Votes & { tries: number };
+
+/** A paper AI wrote from the tutor's request (the chat): its questions come with the writer's own answer, which is one more opinion. */
+const isWritten = (p: { category: string | null; page_count: number }) => p.category === 'Made with AI' && p.page_count === 0;
+
+/**
+ * Finds answers for the next few unanswered questions: first from the paper's own answer keys, then with AI. Two different
+ * models each list the options they find correct, on their own (see `solve`), and the answer is marked when at least two models
+ * were heard and all of them chose the same one option (see `verdict`). A question one of them found two answers to, or none, is
+ * the question's fault and is left for its replacement or the tutor. A question the models split over, or only one could be heard
+ * on (the other was busy), keeps what was said and waits for another model's opinion, which is a step of its own
+ * (`/second-opinion`) so the tutor does not wait for the slow, strong models. A question AI wrote in the chat keeps its writer's
+ * answer as one more opinion, which can ask the tutor to check the mark but does not block it. A question no model said anything
+ * about is asked again.
  *
- * The app calls this several times at once, and while pages are still being read. Each call claims
- * its own batch (so no question is answered twice), and a call that finds nothing open while pages
- * are still coming simply asks again a moment later. `left` counts the questions nobody has
- * claimed yet; `second` counts the questions of this batch now waiting for a second opinion.
+ * The app calls this several times at once, and while pages are still being read. Each call claims its own batch (so no question
+ * is answered twice), and a call that finds nothing open while pages are still coming simply asks again a moment later. `left`
+ * counts the questions nobody has claimed yet; `second` counts the questions of this batch now waiting for another opinion.
  */
 paperRoutes.post('/papers/:id/answers', async (c) => {
   const T = tuitionOf(c).id;
@@ -934,13 +996,15 @@ paperRoutes.post('/papers/:id/answers', async (c) => {
   const fromKey = await applyAnswerKeys(id);
   await fillChapters(id);
 
-  const open = `paper_id = $1 and status = 'draft' and kind = 'mcq' and correct_option is null and not answer_checked
+  const open = `paper_id = $1 and status = 'draft' and kind = 'mcq' and correct_option is null and (not answer_checked or ai_note = 'unchecked')
                 and (answer_claimed_at is null or answer_claimed_at < now() - interval '${CLAIM_MINUTES} minutes')`;
   // AI cannot see a figure, so those wait for the teacher.
   await pool.query(`update paper_drafts set answer_checked = true where ${open} and needs_diagram`, [id]);
   const batch = (
     await q<{ id: string; text: string; options: string[]; page_no: number; seq: number; proposed_option: number | null; answer_tries: number }>(
-      `update paper_drafts set answer_claimed_at = now()
+      // A question AI could not check last time starts again, as if it had never been looked at.
+      `update paper_drafts set answer_claimed_at = now(), ai_note = case when ai_note = 'unchecked' then null else ai_note end,
+                              answer_tries = case when ai_note = 'unchecked' then 0 else answer_tries end
         where id in (select id from paper_drafts where ${open} and array_length(options, 1) = 4
                       order by page_no, seq limit ${ANSWER_BATCH} for update skip locked)
         returning id, text, options, page_no, seq, proposed_option, answer_tries`,
@@ -953,23 +1017,27 @@ paperRoutes.post('/papers/:id/answers', async (c) => {
     try {
       const userId = c.get('user').id;
       const how = { attemptMs: ANSWER_ATTEMPT_MS };
-      const [a, b] = await Promise.all([solve(SOLVE_MODELS, userId, T, p, batch, how), solve(CHECK_MODELS, userId, T, p, batch, how)]);
+      const written = isWritten(p);
+      // Each check is a call of its own: one that cannot be reached must not throw away what the other found.
+      const asked = await Promise.allSettled([solve(SOLVE_MODELS, userId, T, p, batch, how), solve(CHECK_MODELS, userId, T, p, batch, how)]);
+      // Neither could be reached: AI is busy or down. The batch goes back (below) for the next call and the app waits.
+      if (asked.every((r) => r.status === 'rejected')) throw (asked[0] as PromiseRejectedResult).reason;
+      const [x, y] = asked.map((r) => (r.status === 'fulfilled' ? r.value : new Map<number, Pick>()));
       await tx(async (cx) => {
         for (const [i, d] of batch.entries()) {
-          const x = a.get(i);
-          const y = b.get(i);
-          const { mark, note, picks } = verdict(x, y, undefined, d.proposed_option);
-          if (mark) byAi++;
-          const heard = x != null || y != null;
-          // Split or hesitant models (not "no option fits", which is usually a misprint) leave the question
-          // waiting for a stronger model's opinion; the card says so until it comes.
-          const waits = !mark && note !== 'no_option' && heard && TIEBREAK_MODELS.length > 0;
+          const votes: Votes = { solver: x.get(i), checker: y.get(i) };
+          const v = verdict(votes, d.proposed_option, { written });
+          if (v.mark) byAi++;
+          // Models that split, or only one of which was heard, leave the question waiting for another model's opinion; the card says so until it comes.
+          const waits = !v.mark && v.more && v.heard > 0;
           if (waits) second++;
-          // A question no model said anything about is asked again; after two tries it is left to the tutor.
-          const askAgain = !mark && !heard && d.answer_tries + 1 < MAX_ANSWER_TRIES;
-          const votes: Votes = { solver: x, checker: y, tries: 0 };
+          // A question no model said anything about is asked again; after two tries it could not be checked, which is not a doubt about
+          // the question: it is left to the tutor for now, and looked at again when the paper is next opened.
+          const askAgain = !v.mark && v.heard === 0 && d.answer_tries + 1 < MAX_ANSWER_TRIES;
+          const note = askAgain ? null : !v.mark && v.heard === 0 ? 'unchecked' : v.note;
           await cx.query(
-            `update paper_drafts set answer_checked = $6, answer_claimed_at = null, answer_tries = answer_tries + 1,
+            `update paper_drafts set answer_checked = $6, answer_claimed_at = case when $4::text = 'unchecked' then now() else null end,
+                    answer_tries = answer_tries + 1,
                     correct_option = case when $2::smallint is null then correct_option else $2 end,
                     answer_source = case when $2::smallint is null then answer_source else 'ai' end,
                     ai_confidence = $3,
@@ -977,7 +1045,10 @@ paperRoutes.post('/papers/:id/answers', async (c) => {
                     ai_picks = case when $5::jsonb is not null then $5::jsonb else ai_picks end,
                     ai_votes = $7::jsonb
               where id = $1 and correct_option is null`,
-            [d.id, mark?.answer ?? null, mark?.confidence ?? null, askAgain ? null : note, picks ? JSON.stringify(picks) : null, !askAgain, waits ? JSON.stringify(votes) : null],
+            [
+              d.id, v.mark?.answer ?? null, v.mark?.confidence ?? null, note, v.picks ? JSON.stringify(v.picks) : null, !askAgain,
+              waits ? JSON.stringify({ ...votes, tries: 0 } satisfies Waiting) : null,
+            ],
           );
         }
       });
@@ -998,16 +1069,16 @@ const SECOND_MS = 55_000;
 /** The stronger models take 3 to 40 seconds. Each gets this long, so the one behind it still has time when the first hangs. */
 const SECOND_ATTEMPT_MS = 35_000;
 
-/** A second opinion that could not be had this many times is given up on, and the question is left to the tutor. */
+/** A question nobody could give another opinion on this many times is given up on, and left to the tutor. */
 const MAX_SECOND_TRIES = 2;
 
 /**
- * The second opinion: questions the first two checks could not settle go to a stronger model, and are marked
- * when two of the three agree (see `verdict`). It is a call of its own, made after the answers, because the
- * strong models are slow and often busy: the tutor reviews the paper while it works, and what it cannot help
- * with stays with the tutor, with what each check chose on the card. A busy model never fails the call: it
- * counts as a try, and after two the question is left alone. `left` counts the questions still waiting that
- * nobody has claimed.
+ * The next opinion on questions that wait for one: a first check that was never heard goes back to its own model, and when both
+ * were heard (and split) a stronger model is asked. The question is marked when the opinions now add up (see `verdict`). It is a
+ * call of its own, made after the answers, because the strong models are slow and often busy: the tutor reviews the paper while it
+ * works, and what it cannot help with stays with the tutor, with what each check chose on the card. An opinion that comes back
+ * is progress and costs no try; a call nobody could answer counts as one, and after two the question is left alone. `left` counts
+ * the questions still waiting that nobody has claimed.
  */
 paperRoutes.post('/papers/:id/second-opinion', async (c) => {
   const T = tuitionOf(c).id;
@@ -1019,7 +1090,7 @@ paperRoutes.post('/papers/:id/second-opinion', async (c) => {
   const waiting = `paper_id = $1 and status = 'draft' and kind = 'mcq' and correct_option is null and ai_votes is not null
                    and (answer_claimed_at is null or answer_claimed_at < now() - interval '${CLAIM_MINUTES} minutes')`;
   const batch = (
-    await q<{ id: string; text: string; options: string[]; page_no: number; seq: number; proposed_option: number | null; ai_votes: Votes }>(
+    await q<{ id: string; text: string; options: string[]; page_no: number; seq: number; proposed_option: number | null; ai_votes: Waiting }>(
       `update paper_drafts set answer_claimed_at = now()
         where id in (select id from paper_drafts where ${waiting} and array_length(options, 1) = 4
                       order by page_no, seq limit ${SECOND_BATCH} for update skip locked)
@@ -1028,30 +1099,47 @@ paperRoutes.post('/papers/:id/second-opinion', async (c) => {
     )
   ).sort((x, y) => x.page_no - y.page_no || x.seq - y.seq);
   let byAi = 0;
-  const third = new Map<number, Pick>();
+  const written = isWritten(p);
+  const got = new Map<number, { slot: keyof Votes; pick: Pick }>();
   if (batch.length) {
-    try {
-      const got = await solve(TIEBREAK_MODELS, c.get('user').id, T, p, batch, { task: 'second_opinion', deadline: Date.now() + SECOND_MS, attemptMs: SECOND_ATTEMPT_MS });
-      for (const [i, v] of got) third.set(i, v);
-    } catch {
-      // Nobody could be asked in time. That counts as a try below.
-    }
+    const userId = c.get('user').id;
+    const deadline = Date.now() + SECOND_MS;
+    const lacks = (v: Waiting): keyof Votes => (!v.solver ? 'solver' : !v.checker ? 'checker' : 'tiebreak');
+    const groups = new Map<keyof Votes, number[]>();
+    for (const [i, d] of batch.entries()) groups.set(lacks(d.ai_votes), [...(groups.get(lacks(d.ai_votes)) ?? []), i]);
+    await Promise.all(
+      [...groups].map(async ([slot, at]) => {
+        // A model that has already given its opinion on these questions is not asked again: its second answer would be the same vote.
+        const heard = new Set(at.flatMap((i) => [batch[i].ai_votes.solver?.by, batch[i].ai_votes.checker?.by, batch[i].ai_votes.tiebreak?.by]));
+        const models = [...new Set([...(slot === 'solver' ? SOLVE_MODELS : slot === 'checker' ? CHECK_MODELS : []), ...TIEBREAK_MODELS])].filter((m) => !heard.has(m));
+        if (!models.length) return;
+        try {
+          const read = await solve(models, userId, T, p, at.map((i) => batch[i]), { task: 'second_opinion', deadline, attemptMs: SECOND_ATTEMPT_MS });
+          for (const [k, pick] of read) got.set(at[k], { slot, pick });
+        } catch {
+          // Nobody could be asked in time. That counts as a try below.
+        }
+      }),
+    );
     try {
       await tx(async (cx) => {
         for (const [i, d] of batch.entries()) {
-          const t = third.get(i);
-          const { mark, note, picks } = verdict(d.ai_votes.solver, d.ai_votes.checker, t, d.proposed_option);
-          if (mark) byAi++;
-          const tries = (d.ai_votes.tries ?? 0) + 1;
-          // Finished when the stronger model has said something, or when it could not be asked twice.
-          const done = t != null || tries >= MAX_SECOND_TRIES;
+          const g = got.get(i);
+          const votes: Votes = { solver: d.ai_votes.solver, checker: d.ai_votes.checker, tiebreak: d.ai_votes.tiebreak, ...(g ? { [g.slot]: g.pick } : {}) };
+          const v = verdict(votes, d.proposed_option, { written });
+          if (v.mark) byAi++;
+          const tries = (d.ai_votes.tries ?? 0) + (g ? 0 : 1);
+          // Finished when the opinions add up to something (a mark, or a doubt nobody can settle), or when it could not be asked twice.
+          const done = v.mark != null || !v.more || tries >= MAX_SECOND_TRIES;
+          // Given up on while fewer than two families had looked at it: that is not a doubt about the question, it could not be checked.
+          const note = done && !v.mark && v.more && v.note === 'unsure' ? 'unchecked' : v.note;
           await cx.query(
-            `update paper_drafts set answer_claimed_at = null,
+            `update paper_drafts set answer_claimed_at = case when $4::text = 'unchecked' then now() else null end,
                     correct_option = case when $2::smallint is null then correct_option else $2 end,
                     answer_source = case when $2::smallint is null then answer_source else 'ai' end,
                     ai_confidence = $3, ai_note = $4, ai_picks = $5::jsonb, ai_votes = $6::jsonb
               where id = $1 and correct_option is null and ai_votes is not null`,
-            [d.id, mark?.answer ?? null, mark?.confidence ?? null, note, picks ? JSON.stringify(picks) : null, done ? null : JSON.stringify({ ...d.ai_votes, tries })],
+            [d.id, v.mark?.answer ?? null, v.mark?.confidence ?? null, note, v.picks ? JSON.stringify(v.picks) : null, done ? null : JSON.stringify({ ...votes, tries } satisfies Waiting)],
           );
         }
       });
@@ -1062,8 +1150,104 @@ paperRoutes.post('/papers/:id/second-opinion', async (c) => {
     }
   }
   const left = await q1(`select count(*) as n from paper_drafts where ${waiting}`, [id]);
-  // `asked` is how many the stronger model gave an opinion on: none means it was busy, and a pause helps before the next call.
-  return c.json({ by_ai: byAi, tried: batch.length, asked: third.size, left: left.n });
+  // `asked` is how many questions got a new opinion: none means everybody was busy, and a pause helps before the next call.
+  return c.json({ by_ai: byAi, tried: batch.length, asked: got.size, left: left.n });
+});
+
+/**
+ * A paper AI wrote has at most as many replacements as it has questions (and at least 20), however often the app asks:
+ * a topic the checks can never settle must not keep the writer busy for ever.
+ */
+const replaceCap = (questions: number) => Math.max(20, questions);
+
+/**
+ * A question of a paper AI wrote that its checks have finished with and could not settle: no answer was marked, or the
+ * checks marked another option than the one the writer meant. Not one the teacher has marked, reworded or brought back, not one
+ * still waiting for its second opinion, and not one the checks could not be made on (AI was down): that says nothing of the question.
+ */
+const UNSETTLED_NOW = `status = 'draft' and kind = 'mcq' and not edited and answer_checked and ai_votes is null
+   and (correct_option is null or ai_note = 'writer_differs') and ai_note is distinct from 'unchecked'`;
+
+/** ...and that no call is working on right now. */
+const UNSETTLED = `${UNSETTLED_NOW} and (answer_claimed_at is null or answer_claimed_at < now() - interval '${CLAIM_MINUTES} minutes')`;
+
+/**
+ * Replaces the questions AI wrote that its checks could not settle. Each is left out (it shows under Skipped, with the
+ * reason) and AI writes a new one on the same request in its place, with the same number. The new questions are checked like
+ * the rest, by the app calling /answers and /second-opinion again. The app asks for this after the checks, a few times over
+ * (a new question can fail too), so the teacher ends up with the number of questions she asked for, each with an answer
+ * the checks agree on.
+ *
+ * Only for a paper AI wrote, and only one that has the request it was written from (an uploaded paper's questions are the
+ * paper's own). A call replaces at most one writer reply's worth, so `left` says whether to ask again. A busy writer
+ * changes nothing: the questions stay as they were, for the teacher.
+ */
+paperRoutes.post('/papers/:id/replace', async (c) => {
+  const T = tuitionOf(c).id;
+  const id = uuid(c.req.param('id'), 'paper id');
+  const p = await tq1<{ class_level: number | null; course_id: string | null; category: string | null; page_count: number; ai_request: string | null; subject: string | null; course: string | null }>(
+    T,
+    `select p.class_level, p.course_id, p.category, p.page_count, p.ai_request,
+            (select name from subjects where id = p.subject_id) as subject, (select name from courses where id = p.course_id) as course
+       from papers p where p.id = $1 and p.tuition_id = @T`,
+    [id],
+  );
+  if (!p) throw notFound('This paper');
+  const nothing = { replaced: 0, left: 0 };
+  if (p.category !== 'Made with AI' || p.page_count !== 0 || !p.ai_request) return c.json(nothing);
+
+  const counts = await q1<{ live: number; replaced: number }>(
+    `select count(*) filter (where status <> 'discarded') as live, count(*) filter (where ai_note = 'replaced') as replaced
+       from paper_drafts where paper_id = $1`,
+    [id],
+  );
+  const room = replaceCap(Number(counts?.live ?? 0)) - Number(counts?.replaced ?? 0);
+  if (room <= 0) return c.json(nothing);
+  const indic = hasIndicText(p.ai_request) || namesIndicLanguage(p.ai_request);
+  const batch = Math.min(indic ? INDIC_WRITE_BATCH : WRITE_BATCH, room);
+
+  // This call's questions are claimed, so a second call (another phone of the same tuition) takes others and nothing is written twice.
+  const stuck = await q<{ id: string; page_no: number; seq: number; number_label: string | null }>(
+    `update paper_drafts set answer_claimed_at = now()
+      where id in (select id from paper_drafts where paper_id = $1 and ${UNSETTLED} order by page_no, seq limit ${batch} for update skip locked)
+      returning id, page_no, seq, number_label`,
+    [id],
+  );
+  if (!stuck.length) return c.json(nothing);
+  stuck.sort((x, y) => x.page_no - y.page_no || x.seq - y.seq);
+  let replaced = 0;
+  try {
+    const written = await q<{ text: string }>('select text from paper_drafts where paper_id = $1 order by seq', [id]);
+    const study = p.course_id ? `the course "${p.course}"` : await studyOf(T, p.class_level!);
+    const { items } = await writeQuestions({
+      userId: c.get('user').id, tuitionId: T, request: p.ai_request, asked: stuck.length, indic, study, subject: p.subject, classLevel: p.class_level,
+      course: p.course_id != null, written,
+    });
+    replaced = await tx(async (cx) => {
+      // Only as many as the writer gave back, and only those still unsettled: the teacher may have marked one in the meantime.
+      const gone = await cx.query(
+        `update paper_drafts set status = 'discarded', ai_note = 'replaced'
+          where id = any($1::uuid[]) and paper_id = $2 and ${UNSETTLED_NOW} returning id`,
+        [stuck.slice(0, items.length).map((s) => s.id), id],
+      );
+      const dropped = new Set(gone.rows.map((r) => r.id));
+      let n = 0;
+      for (const s of stuck) {
+        if (!dropped.has(s.id)) continue;
+        const it = items[n++];
+        await cx.query(
+          `insert into paper_drafts (paper_id, page_no, seq, number_label, kind, text, options, answer_checked, proposed_option)
+           values ($1, $2, $3, $4, 'mcq', $5, $6, false, $7)`,
+          [id, s.page_no, s.seq, s.number_label, it.text, it.options, it.answer],
+        );
+      }
+      return n;
+    });
+  } finally {
+    await pool.query(`update paper_drafts set answer_claimed_at = null where id = any($1::uuid[])`, [stuck.map((s) => s.id)]).catch(() => {});
+  }
+  const more = room - replaced > 0 ? await q1<{ n: number }>(`select count(*) as n from paper_drafts where paper_id = $1 and ${UNSETTLED}`, [id]) : null;
+  return c.json({ replaced, left: Number(more?.n ?? 0) });
 });
 
 // ---------------------------------------------------------------- checking and saving
@@ -1097,6 +1281,8 @@ paperRoutes.patch('/drafts/:id', async (c) => {
   // her: either way its note goes, and AI may look for its answer.
   const confirmed = b.confirmed === true && d.ai_note === 'unclear';
   const reworded = confirmed || text !== d.text || kind !== d.kind || JSON.stringify(options ?? []) !== JSON.stringify(d.options ?? []);
+  // A question the teacher has marked, reworded or brought back is hers now: AI never replaces it (see /papers/:id/replace).
+  const handled = reworded || marking || (d.status === 'discarded' && status === 'draft');
   const row = await q1(
     `update paper_drafts set text = $2, options = $3, kind = $4, correct_option = $5, chapter_id = $6,
                              needs_diagram = $7, image_key = $8, status = $9,
@@ -1106,7 +1292,8 @@ paperRoutes.patch('/drafts/:id', async (c) => {
                                             then null else ai_note end,
                              ai_picks = case when $11 or ($10 and $5::smallint is not null) then null else ai_picks end,
                              ai_votes = case when $11 or ($10 and $5::smallint is not null) then null else ai_votes end,
-                             answer_checked = case when $11 and $5::smallint is null then false else answer_checked end
+                             answer_checked = case when $11 and $5::smallint is null then false else answer_checked end,
+                             edited = edited or $12
       where id = $1 returning *`,
     [
       id,
@@ -1120,6 +1307,7 @@ paperRoutes.patch('/drafts/:id', async (c) => {
       status,
       marking,
       reworded,
+      handled,
     ],
   );
   return c.json({ draft: { ...row, image_url: await maybeViewUrl(row.image_key) } });

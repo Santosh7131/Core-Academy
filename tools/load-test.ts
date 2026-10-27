@@ -112,6 +112,7 @@ try {
   const expected: number[] = [];
   const attempts: string[] = [];
   const tokens: string[] = [];
+  const submits: Reply[] = [];
   const wall0 = performance.now();
   await Promise.all(students.map(async (s, i) => {
     const login = await api('POST', '/auth/login', undefined, { username: s.username, secret: '4321' }, {}, 'login');
@@ -130,7 +131,7 @@ try {
       await sleep(randomInt(0, 150));
       await api('PUT', `/student/attempts/${attemptId}/answers`, S, { answers: picks.slice(k, k + 5).map((_, j) => answer(k + j)) }, {}, 'save');
     }
-    await api('POST', `/student/attempts/${attemptId}/submit`, S, { answers: picks.map((_, k) => answer(k)) }, {}, 'submit');
+    submits[i] = await api('POST', `/student/attempts/${attemptId}/submit`, S, { answers: picks.map((_, k) => answer(k)) }, {}, 'submit');
   }));
   const wallSeconds = (performance.now() - wall0) / 1000;
 
@@ -159,9 +160,9 @@ try {
   const byStudent = new Map(rows.rows.map((r) => [r.student_id, r]));
   const wrongMarks = students.filter((s, i) => Number(byStudent.get(s.id)?.correct_count) !== expected[i]);
   check('every student was marked on their own answers', wrongMarks.length === 0, wrongMarks.slice(0, 3).map((s) => s.username));
-  const opened = await db.query('select results_released_at is not null as open from tests where id = $1', [testId]);
-  check('the last student to finish opened the marks for everyone', opened.rows[0].open === true);
-  check('and each student can read their marks', marks.every((m) => m.status === 200 && m.body !== null), marks.map((m) => m.status).filter((s) => s !== 200).slice(0, 5));
+  check('every submit answered with the student\'s marks and the review at once, the test being still open to others',
+    submits.every((m) => m?.status === 200 && m.body?.attempt?.max_score === Q && m.body?.review?.length === Q), submits.filter((m) => !(m?.status === 200 && m.body?.review?.length === Q)).slice(0, 3).map((m) => m?.status));
+  check('and each student can read their marks again afterwards', marks.every((m) => m.status === 200 && m.body?.review?.length === Q), marks.map((m) => m.status).filter((s) => s !== 200).slice(0, 5));
   const slow = [...samples.entries()].filter(([, l]) => Math.max(...l.map((x) => x.ms)) > 30_000).map(([s]) => s);
   check('no step took longer than 30 seconds', slow.length === 0, slow);
 } catch (e) {

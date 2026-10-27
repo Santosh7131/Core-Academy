@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import {
   checkPassword, checkPin, checkUsername, hashSecret, killSessions, LOCK_MINUTES, lockedError, newPin, takeTry, tokenHash, tuitionOf, verifySecret, type AppEnv,
 } from '../lib/auth.ts';
-import { assignedCte, EVERYONE_DONE, releaseFinishedTests, resultPayload, TEST_COUNTS } from '../lib/attempts.ts';
+import { assignedCte, EVERYONE_DONE, resultPayload, TEST_COUNTS } from '../lib/attempts.ts';
 import { knowsCourses } from '../lib/client.ts';
 import { courseCards, ownCourse } from '../lib/courses.ts';
 import { pool, q, q1, tq, tq1, tx } from '../lib/db.ts';
@@ -29,7 +29,7 @@ export const teacherRoutes = new Hono<AppEnv>();
 const pct = (score: number | null, max: number | null) => (score == null || !max ? null : score / max);
 
 /**
- * Every test closes: students see their marks after that, so a test posted without a closing time
+ * Every test closes, so it cannot stay open for ever: a test posted without a closing time
  * (by an older app, or by someone who skipped it) closes at the next 9:00 pm India time that is at
  * least three hours away.
  */
@@ -549,7 +549,6 @@ teacherRoutes.get('/home', async (c) => {
   const t = tuitionOf(c);
   const T = t.id;
   await q('select finalize_expired_attempts()');
-  await releaseFinishedTests(T);
   const groups = await tq<any>(T, GROUPS);
   const tests = await tq<any>(
     T,
@@ -611,7 +610,6 @@ teacherRoutes.get('/groups/:cls/:subject', async (c) => {
   );
   if (!subject) throw notFound('This subject');
   await q('select finalize_expired_attempts()');
-  await releaseFinishedTests(T);
   const students = await tq(
     T,
     `select u.id, u.display_name, u.username, (m.status = 'active') as active, u.last_seen_at,
@@ -626,7 +624,7 @@ teacherRoutes.get('/groups/:cls/:subject', async (c) => {
   const tests = await tq(
     T,
     `with ${assignedCte('@T')}
-     select t.id, t.title, t.status, t.opens_at, t.closes_at, t.results_released_at, t.time_limit_min, now() as now,
+     select t.id, t.title, t.status, t.opens_at, t.closes_at, t.time_limit_min, now() as now,
             (select count(*) from test_questions tq where tq.test_id = t.id) as question_count, ${TEST_COUNTS}
        from tests t
       where t.tuition_id = @T and t.class_level = $1 and t.subject_id = $2 and not (t.status = 'draft' and t.library_key is not null)
@@ -1115,7 +1113,7 @@ teacherRoutes.patch('/tests/:id', async (c) => {
     if (cur.attempts > 0 && !sameQuestions) {
       throw new HttpError(409, 'has_attempts', 'Students have already started this test, so its questions cannot change.');
     }
-    // A published test always has a closing time: students see their marks after it.
+    // A published test always has a closing time.
     if (own.status === 'published' && !t.closes_at) t.closes_at = defaultClosing();
     // Moved to open later: students are told again when it opens. A new closing time gets its
     // own reminder.
@@ -1146,7 +1144,7 @@ teacherRoutes.post('/tests/:id/publish', async (c) => {
   if (published) {
     const n = await q1('select count(*) as n from test_questions where test_id = $1', [id]);
     if (!n || n.n === 0) throw new HttpError(409, 'empty_test', 'Add at least one question before publishing.');
-    // Every test closes: students see their marks after that, so it cannot stay open for ever.
+    // Every test closes, so it cannot stay open for ever.
     // Posted with no closing time, it gets the default one.
     if (!own.closes_at) await pool.query('update tests set closes_at = $2 where id = $1', [id, defaultClosing()]);
     else if (own.closes_at <= own.now) throw new HttpError(400, 'closing_passed', 'The closing time has already passed. Choose a later one.');
@@ -1173,29 +1171,17 @@ teacherRoutes.delete('/tests/:id', async (c) => {
   return c.json({ ok: true, results_deleted: n.n });
 });
 
-/** Opens the marks and answers to the test's students now, without waiting for the closing time. */
-teacherRoutes.post('/tests/:id/release-results', async (c) => {
-  const id = uuid(c.req.param('id'), 'test id');
-  const t = await tq1(
-    tuitionOf(c).id,
-    `update tests set results_released_at = coalesce(results_released_at, now())
-      where id = $1 and tuition_id = @T and status = 'published' returning id, results_released_at`,
-    [id],
-  );
-  if (!t) throw new HttpError(409, 'not_published', 'Only a published test has marks to show.');
-  return c.json({ ok: true, results_released_at: t.results_released_at });
-});
-
 teacherRoutes.get('/tests/:id/results', async (c) => {
   const T = tuitionOf(c).id;
   const id = uuid(c.req.param('id'), 'test id');
   await q('select finalize_expired_attempts()');
-  await releaseFinishedTests(T);
+  // results_open is always true: students see their marks the moment they hand a test in. The tutor apps of 1.5.0 and
+  // 1.6.0 still read it, to decide between a lock notice with a "Show marks" button and "Students can see their marks".
   const t = await tq1(
     T,
     `select id, title, class_level, opens_at, closes_at, time_limit_min, status, now() as now, subject_id, assign_group, shuffle,
-            results_released_at, course_id,
-            (results_released_at is not null or closes_at is null or closes_at <= now()) as results_open,
+            course_id,
+            true as results_open,
             (select name from subjects where id = tests.subject_id) as subject,
             (select name from courses where id = tests.course_id) as course
        from tests where id = $1 and tuition_id = @T`,

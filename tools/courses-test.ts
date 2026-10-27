@@ -93,6 +93,27 @@ try {
   const dup = await api('POST', '/teacher/courses', TA, { name: `${tag} SPOKEN english` }, NEW);
   check('a second course of the same name is refused, whatever the case', dup.status === 409 && code(dup) === 'duplicate', dup.body);
 
+  // ------------------------------------------------------------------ renaming a course
+  const other = await api('POST', '/teacher/courses', TA, { name: `${tag} Maths Olympiad` }, NEW);
+  created.courses.push(other.body.course.id);
+  const noRename = await api('PATCH', `/teacher/courses/${C}`, TA, { name: ' ' }, NEW);
+  check('a course cannot be renamed to nothing', noRename.status === 400, noRename.body);
+  const longRename = await api('PATCH', `/teacher/courses/${C}`, TA, { name: 'x'.repeat(61) }, NEW);
+  check('nor to a name over 60 characters', longRename.status === 400, longRename.body);
+  const clash = await api('PATCH', `/teacher/courses/${C}`, TA, { name: `  ${tag} MATHS olympiad ` }, NEW);
+  check('nor to the name of another course, whatever the case', clash.status === 409 && code(clash) === 'duplicate', clash.body);
+  const ren = await api('PATCH', `/teacher/courses/${C}`, TA, { name: `  ${tag} Spoken English, Batch 2 ` }, NEW);
+  check('a course is renamed, and the name is trimmed', ren.status === 200 && ren.body.course.id === C && ren.body.course.name === `${tag} Spoken English, Batch 2`, ren.body);
+  check('the Courses list and the course page carry the new name',
+    (await api('GET', '/teacher/courses', TA, undefined, NEW)).body.courses.find((x: any) => x.id === C)?.name === `${tag} Spoken English, Batch 2`
+    && (await api('GET', `/teacher/courses/${C}`, TA, undefined, NEW)).body.course.name === `${tag} Spoken English, Batch 2`);
+  const spell = await api('PATCH', `/teacher/courses/${C}`, TA, { name: `${tag} SPOKEN ENGLISH, BATCH 2` }, NEW);
+  check('a course may be spelled differently under its own name', spell.status === 200 && spell.body.course.name === `${tag} SPOKEN ENGLISH, BATCH 2`, spell.body);
+  const back = await api('PATCH', `/teacher/courses/${C}`, TA, { name: `${tag} Spoken English` }, NEW);
+  check('and renamed back', back.status === 200 && back.body.course.name === `${tag} Spoken English`, back.body);
+  const ghost = await api('PATCH', '/teacher/courses/00000000-0000-4000-8000-0000000000dd', TA, { name: 'Nobody' }, NEW);
+  check('a course that is not there cannot be renamed', ghost.status === 404, ghost.body);
+
   // ------------------------------------------------------------------ adding people
   const addNone = await api('POST', `/teacher/courses/${C}/people`, TA, { student_ids: 'x' }, NEW);
   check('people are sent as a list', addNone.status === 400, addNone.body);

@@ -141,8 +141,6 @@ try {
   nf('B cannot unpublish A\'s test', await api('POST', `/teacher/tests/${aTest.body.id}/publish`, TB, { published: false }));
   nf('B cannot delete A\'s test', await api('DELETE', `/teacher/tests/${aTest.body.id}?with_results=1`, TB));
   nf('B cannot grant a retake on A\'s test', await api('POST', `/teacher/tests/${aTest.body.id}/retake`, TB, { student_id: a1 }));
-  const rel = await api('POST', `/teacher/tests/${aTest.body.id}/release-results`, TB);
-  check('B cannot release A\'s marks', rel.status !== 200, rel);
   nf('B cannot open A\'s attempt', await api('GET', `/teacher/attempts/${attemptA}`, TB));
   check('B lists none of A\'s papers', (await api('GET', '/teacher/papers', TB)).body.papers.length === 0);
   nf('B cannot open A\'s paper', await api('GET', `/teacher/papers/${aPaper.body.paper.id}`, TB));

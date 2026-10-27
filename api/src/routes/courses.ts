@@ -1,7 +1,7 @@
 import { waitUntil } from '@neon/functions';
 import { Hono } from 'hono';
 import { tuitionOf, type AppEnv } from '../lib/auth.ts';
-import { assignedCte, releaseFinishedTests, TEST_COUNTS } from '../lib/attempts.ts';
+import { assignedCte, TEST_COUNTS } from '../lib/attempts.ts';
 import { courseCards, ownCourse } from '../lib/courses.ts';
 import { q, q1, tq, tq1, tx } from '../lib/db.ts';
 import { bad, HttpError, notFound, str, uuid } from '../lib/http.ts';
@@ -52,7 +52,6 @@ courseRoutes.get('/courses/:id', async (c) => {
   const id = uuid(c.req.param('id'), 'course id');
   const course = await ownCourse(T, id);
   await q('select finalize_expired_attempts()');
-  await releaseFinishedTests(T);
   const people = await tq(
     T,
     `select u.id, u.display_name, u.username, (m.status = 'active') as active, u.last_seen_at, cm.added_at,
@@ -69,7 +68,7 @@ courseRoutes.get('/courses/:id', async (c) => {
   const tests = await tq(
     T,
     `with ${assignedCte('@T')}
-     select t.id, t.title, t.status, t.opens_at, t.closes_at, t.results_released_at, t.time_limit_min, now() as now,
+     select t.id, t.title, t.status, t.opens_at, t.closes_at, t.time_limit_min, now() as now,
             (select count(*) from test_questions tq where tq.test_id = t.id) as question_count, ${TEST_COUNTS}
        from tests t
       where t.tuition_id = @T and t.course_id = $1
@@ -78,6 +77,26 @@ courseRoutes.get('/courses/:id', async (c) => {
     [id],
   );
   return c.json({ course: { id: course.id, name: course.name, people: people.filter((p) => p.active).length }, people, tests });
+});
+
+/**
+ * Renames a course. The name stays unique among the tuition's courses ignoring case, so a course may be spelled
+ * differently ("spoken english" to "Spoken English") but not take another course's name. The tests, papers and
+ * people belong to the course, not to its name, so none of them change.
+ */
+courseRoutes.patch('/courses/:id', async (c) => {
+  const T = tuitionOf(c).id;
+  const id = uuid(c.req.param('id'), 'course id');
+  await ownCourse(T, id);
+  const name = str(await readBody(c), 'name', { max: 60 })!;
+  try {
+    const co = await tq1(T, 'update courses set name = $2 where id = $1 and tuition_id = @T returning id, name', [id, name]);
+    if (!co) throw notFound('This course');
+    return c.json({ course: co });
+  } catch (e: any) {
+    if (e.code === '23505') throw new HttpError(409, 'duplicate', `You already have a course called ${name}.`);
+    throw e;
+  }
 });
 
 /**

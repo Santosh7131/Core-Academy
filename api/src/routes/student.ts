@@ -1,7 +1,6 @@
 import { Hono } from 'hono';
 import { requireUser, tuitionOf, type AppEnv } from '../lib/auth.ts';
-import { ASSIGNED, releaseFinishedTests, resultsOpenFor, saveAnswers, startOrResume, studentResult, submitAttempt } from '../lib/attempts.ts';
-import { holdsResults } from '../lib/client.ts';
+import { ASSIGNED, resultPayload, saveAnswers, startOrResume, submitAttempt } from '../lib/attempts.ts';
 import { pool, q, q1, tq, tq1 } from '../lib/db.ts';
 import { HttpError, notFound, uuid } from '../lib/http.ts';
 import { LEVELS_JSON } from '../lib/levels.ts';
@@ -65,8 +64,7 @@ type TestState = 'open' | 'in_progress' | 'upcoming' | 'done' | 'missed';
  * student became one of the people it is given to (the tuition, or the course), and `where` picks the tests.
  * $1 is the student.
  */
-const testRows = (open: string, joined: string, where: string) => `select t.id, t.course_id, t.title, t.class_level, t.time_limit_min, t.opens_at, t.closes_at, now() as now,
-            ${open} as results_open,
+const testRows = (joined: string, where: string) => `select t.id, t.course_id, t.title, t.class_level, t.time_limit_min, t.opens_at, t.closes_at, now() as now,
             (select count(*) from test_questions tq where tq.test_id = t.id) as question_count,
             (select coalesce(sum(qq.marks), 0) from test_questions tq join questions qq on qq.id = tq.question_id
               where tq.test_id = t.id) as max_marks,
@@ -79,7 +77,7 @@ const testRows = (open: string, joined: string, where: string) => `select t.id, 
       where ${where}
       order by coalesce(t.closes_at, t.opens_at, t.created_at) desc`;
 
-/** What the student's screens show of each test: the state they sort by, and marks only once those are open. */
+/** What the student's screens show of each test: the state they sort by, and the marks of the attempt they handed in. */
 function present(rows: any[]) {
   // A test that closed before the student joined was never theirs to write, so it is neither missed nor listed.
   const given = rows.filter((r) => r.attempt_id || !r.closes_at || !r.joined_at || r.closes_at > r.joined_at);
@@ -103,13 +101,10 @@ function present(rows: any[]) {
       max_marks: r.max_marks,
       state,
       retake: r.retake,
-      // Marks stay hidden until the test closes, everyone has finished, or the tutor opens them.
-      results_open: r.results_open,
+      // Marks show the moment a test is handed in. Apps from 1.4.0 to 1.6.0 still read this, from when they were held back.
+      results_open: true,
       attempt: r.attempt_id
-        ? {
-            id: r.attempt_id, attempt_no: r.attempt_no, submitted_at: r.submitted_at, deadline_at: r.deadline_at,
-            score: r.results_open ? r.score : null, max_score: r.results_open ? r.max_score : null,
-          }
+        ? { id: r.attempt_id, attempt_no: r.attempt_no, submitted_at: r.submitted_at, deadline_at: r.deadline_at, score: r.score, max_score: r.max_score }
         : null,
     };
   });
@@ -124,12 +119,9 @@ studentRoutes.get('/home', async (c) => {
   const me = c.get('user');
   const t = tuitionOf(c);
   await q('select finalize_expired_attempts()');
-  await releaseFinishedTests(t.id);
-  const open = resultsOpenFor(holdsResults(c));
   const rows = await tq(
     t.id,
     testRows(
-      open,
       `(select m.joined_at from memberships m where m.tuition_id = t.tuition_id and m.user_id = $1)`,
       `t.tuition_id = @T and t.status = 'published' and t.course_id is null and ${ASSIGNED}`,
     ),
@@ -149,7 +141,6 @@ studentRoutes.get('/courses', async (c) => {
   const me = c.get('user');
   const t = tuitionOf(c);
   await q('select finalize_expired_attempts()');
-  await releaseFinishedTests(t.id);
   const courses = await tq<{ id: string; name: string }>(
     t.id,
     `select co.id, co.name from course_members cm join courses co on co.id = cm.course_id
@@ -159,7 +150,6 @@ studentRoutes.get('/courses', async (c) => {
   const rows = await tq(
     t.id,
     testRows(
-      resultsOpenFor(holdsResults(c)),
       `(select cm.added_at from course_members cm where cm.course_id = t.course_id and cm.student_id = $1)`,
       `t.tuition_id = @T and t.status = 'published' and t.course_id in (select course_id from course_members where student_id = $1)`,
     ),
@@ -188,11 +178,9 @@ studentRoutes.get('/courses/:id', async (c) => {
   );
   if (!course) throw notFound('This course');
   await q('select finalize_expired_attempts()');
-  await releaseFinishedTests(t.id);
   const rows = await tq(
     t.id,
     testRows(
-      resultsOpenFor(holdsResults(c)),
       `(select cm.added_at from course_members cm where cm.course_id = t.course_id and cm.student_id = $1)`,
       `t.tuition_id = @T and t.status = 'published' and t.course_id = $2`,
     ),
@@ -213,25 +201,19 @@ studentRoutes.put('/attempts/:id/answers', async (c) => {
 
 studentRoutes.post('/attempts/:id/submit', async (c) => {
   const b = await readBody(c);
-  return c.json(await submitAttempt(c.get('user').id, uuid(c.req.param('id'), 'attempt id'), b.answers, b.auto === true, holdsResults(c)));
+  return c.json(await submitAttempt(c.get('user').id, uuid(c.req.param('id'), 'attempt id'), b.answers, b.auto === true));
 });
 
 studentRoutes.get('/attempts/:id/result', async (c) => {
-  return c.json(await studentResult(uuid(c.req.param('id'), 'attempt id'), c.get('user').id, holdsResults(c)));
+  return c.json(await resultPayload(uuid(c.req.param('id'), 'attempt id'), { studentId: c.get('user').id }));
 });
 
 studentRoutes.get('/results', async (c) => {
   const T = tuitionOf(c).id;
-  await releaseFinishedTests(T);
-  const open = resultsOpenFor(holdsResults(c));
   const rows = await tq(
     T,
     `select a.id, a.test_id, t.title, t.closes_at, a.attempt_no, a.started_at, a.submitted_at, a.auto_submitted,
-            ${open} as results_open,
-            case when ${open} then a.score end as score, case when ${open} then a.max_score end as max_score,
-            case when ${open} then a.correct_count end as correct_count,
-            case when ${open} then a.wrong_count end as wrong_count,
-            case when ${open} then a.skipped_count end as skipped_count
+            true as results_open, a.score, a.max_score, a.correct_count, a.wrong_count, a.skipped_count
        from attempts a join tests t on t.id = a.test_id
       where a.student_id = $1 and t.tuition_id = @T and t.course_id is null and a.submitted_at is not null
       order by a.submitted_at desc`,
