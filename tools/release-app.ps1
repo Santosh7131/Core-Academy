@@ -2,6 +2,10 @@
 # installed copies read (app/lib/core/updater.dart). Every phone on 1.2.0 or later then offers
 # the update by itself.
 #
+# Each release also carries the same APK under one fixed name, core-academy.apk, so this link never changes and always
+# gives the newest version (GitHub's "latest" release):
+#   https://github.com/Santosh7131/Core-Academy/releases/latest/download/core-academy.apk
+#
 #   .\tools\release-app.ps1 -Notes notes.txt              # build, then publish v<version>
 #   .\tools\release-app.ps1 -Notes notes.txt -NoPublish   # build and write the files only
 #
@@ -39,6 +43,10 @@ New-Item -ItemType Directory -Force $out | Out-Null
 $apk = Join-Path $out "core-academy-$version.apk"
 Copy-Item (Join-Path $root 'app\build\app\outputs\flutter-apk\app-release.apk') $apk -Force
 
+# The same file under a name with no version in it: the one link to send to anyone.
+$fixed = Join-Path $out 'core-academy.apk'
+Copy-Item $apk $fixed -Force
+
 $feed = [ordered]@{
   version = $version
   build   = $build
@@ -56,7 +64,11 @@ $json = Join-Path $out 'update.json'
 if ($NoPublish) { return }
 $notesFile = Join-Path $out "notes-$version.md"
 [IO.File]::WriteAllText($notesFile, $text, (New-Object Text.UTF8Encoding $false))
-Invoke-Native 'gh release create' { gh release create $tag $apk $json --repo $repo --title "Core Academy $version" --notes-file $notesFile }
+Invoke-Native 'gh release create' { gh release create $tag $apk $fixed $json --repo $repo --title "Core Academy $version" --notes-file $notesFile }
 # The feed every installed copy reads; it should now name this version.
 $r = Invoke-WebRequest "https://github.com/$repo/releases/latest/download/update.json" -UseBasicParsing
 if ($r.Content -is [byte[]]) { [Text.Encoding]::UTF8.GetString($r.Content) } else { $r.Content }
+# The one link: it must answer, and it must be the file just published.
+$link = "https://github.com/$repo/releases/latest/download/core-academy.apk"
+$head = Invoke-WebRequest $link -Method Head -UseBasicParsing
+"$link  ->  HTTP $($head.StatusCode), $($head.Headers['Content-Length']) bytes (this build: $($feed.size))"

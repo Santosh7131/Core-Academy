@@ -20,8 +20,7 @@ test to AI and let it write the questions, as many as they ask for.
 
 ## How marking stays fair
 
-- The right answers never leave the server until a student has submitted and the test's
-  results are open (see "When students see their marks").
+- The right answers never leave the server until a student has submitted that test.
 - Each student gets their own order of questions and options, unless the tutor picks the same
   order for everyone.
 - The deadline is the start time plus the time limit, capped at the test's closing time. The
@@ -33,20 +32,17 @@ test to AI and let it write the questions, as many as they ask for.
 
 ## When students see their marks
 
-Every test has a closing time. A tutor who posts a test without one gets the next 9 pm India
-time that is at least three hours away, and one who picks a time already past is told so. A
-student who submits sees "Submitted" and when the marks will show. The marks and the right
-answers open for everyone when any of these happens first:
+The moment a student hands a test in, or the time runs out and the app hands it in for them, they
+see their marks and every right answer. Nothing waits for the closing time and the tutor has
+nothing to switch on. Every test still has a closing time: a tutor who posts one without gets the
+next 9 pm India time that is at least three hours away, and one who picks a time already past is
+told so. The right answers stay on the server until that student has submitted that test.
 
-- the closing time passes,
-- every student the test was given to has submitted, or
-- the tutor taps "Show marks to students now" on the test's page.
-
-The server decides (`results_released_at` on the test, set by the last two rules; the first
-is the clock). Apps from 1.4.0 on say which version they are in `X-App` and are shown "marks
-later". An older app cannot read that reply, so it keeps getting its marks straight away until
-the phone updates; a caller that sends no `X-App` counts as older. Tests posted before this
-rule keep what they had: they were opened when the migration ran.
+Until 1.7.0 marks were held back until the test closed, everyone had finished, or the tutor
+showed them early (`tests.results_released_at`, migration 011). That is gone: the column stays in
+the database, unused, and the server no longer has the "release marks" route. Replies still carry
+`results_open: true` because the apps of 1.4.0 to 1.6.0 read it, and an old app therefore shows the
+marks at once too, with no update.
 
 ## The tutor app
 
@@ -65,8 +61,8 @@ marks everyone's attempt again. Add student suggests a username from the name an
 repeat, so a second Harini Venkatesh gets harini.v.2 without anyone thinking of one (the server
 decides, so the app of 1.3 and before gets it too).
 
-A test's page leads with its marks notice and its settings (time limit, opens, closes, order),
-and folds the questions to two with a link to show the rest. Settings (the avatar on Home) holds
+A test's page leads with how it went and who has written it, then the questions (folded to two
+with a link to show the rest) and its settings (time limit, opens, closes, order). Settings (the avatar on Home) holds
 the tuition's name, the tutors, the subjects, the theme and the password. Several tutors can
 share one tuition: they all see every group and test, and any tutor can add another or turn one off
 (not themselves) in Settings.
@@ -129,6 +125,10 @@ can be in any number of groups and any number of courses; adding someone to a co
 them out of a group, and a person made through a course (a student with no class, no subjects) is in
 no group. A course page works like a group page: Make a test, its tests (live, posted, drafts,
 finished) and its people, with a page for each person. Every tutor of the tuition sees every course.
+A course can be renamed from its own page (Rename course, `PATCH /teacher/courses/:id`, trimmed,
+up to 60 characters, 409 when another course of the tuition has the name); its tests, people and
+results are not touched, since they hang on the course's id and not on its name. Apps before 1.7.0
+have no Rename button.
 
 Everything that belongs to a course (tests, papers, questions) says so in `course_id` and has no
 class or subject (migration 019), and no group query returns it, so nothing in a course ever shows
@@ -184,12 +184,47 @@ and, for a one-chapter paper, the chapter. It asks the teacher only for what it 
 find. Every page is read into drafts, together with any answer key the paper prints, on
 whichever page it is.
 
-Answers come from that key first. For the rest, two models each work the question out:
-gpt-oss-120b on Groq (`GROQ_SOLVE_MODELS`) and Gemini 3.1 Flash-Lite (`GROQ_CHECK_MODELS`;
-gpt-oss-20b, Gemini 3.5 Flash and Qwen stand in, in that order, when it is busy or over its
-free limit). An answer is marked only when both pick the same option and each is at least 90%
-sure. Questions that need a figure are left to the teacher. Each marked answer says where it came from, so the teacher
-can check it before saving. Once every question is saved or skipped, the app asks whether to
+Answers come from that key first. For the rest, models of two different families each work the
+question out on their own, without seeing each other's answer, and each lists every option it
+finds correct, not just one (`solve` in `api/src/routes/papers.ts`). A model made to pick one
+answer picks one for a faulty question as confidently as for a sound one; asked for the whole
+list, it shows a question with two right options, or none. The solver is gpt-oss-120b on Groq
+(`GROQ_SOLVE_MODELS`; gpt-oss-20b stands in when the 120b has used its day's allowance) and the
+checker is Gemini 3.1 Flash-Lite (`GROQ_CHECK_MODELS`; Gemini 3.5 Flash-Lite, then Qwen, stand in
+when it is busy or over its free limit).
+
+`verdict` in `api/src/lib/votes.ts` says what their answers add up to (`node tools/votes-test.ts`).
+An answer is marked only when at least two models were heard, each found exactly one right option
+and was at least 80% sure, they all chose the same one, and the models that chose it come from at
+least two families (gpt-oss, Gemini and Qwen are three: two gpt-oss models that agree prove little,
+because they make the same mistakes). A model that found two right options, none, or hesitated
+blocks the mark, because the question is at fault. A question the first two split on, or that only
+one of them could be heard on, keeps what was said and waits for a stronger Gemini model
+(`GROQ_TIEBREAK_MODELS`, the second opinion: a step of its own that runs once the tutor already has
+the paper) and is marked when two of the three agree. When one check cannot be reached, the other's
+answer is kept, not thrown away. When neither can (both down, twice), the question says "Not checked
+yet" and starts again from scratch three minutes later: by itself while the paper stays open on the
+tutor's screen (up to five times), and whenever the paper is opened. Questions that need a figure
+are left to the teacher.
+
+Why these models: 165 questions an AI had written (140 sound, 25 faulty, each judged by hand) went
+through the candidates. gpt-oss-120b was right on 32 of 33 sound questions outside Hindi and Tamil
+and on 8 of 12 in them. Gemini Flash-Lite was right on 138 of 140, Hindi and Tamil included, but let
+12 of the 25 faulty ones through. The two together blocked 24 of the 25 faulty questions and marked
+none of the sound ones wrongly (87% of the sound ones were marked; the rest went to the writer or
+the tutor), where two gpt-oss models together blocked 16 and let 6 to 9 through. Gemini Flash-Lite
+answers one call in three with "high demand", or takes 30 to 60 seconds, from the evening on; the
+check that is down then costs the question a later look, never a wrong answer. On 27 October six
+papers of 15 questions (trigonometry, motion and force, English grammar, Hindi grammar, Tamil
+grammar, Indian geography and the Constitution) went through the real pipeline on the dev copy
+(`tools/out/ai-maker-run.mjs`, not in git): 80 of the 90 were marked before any replacing (all 45 in
+maths, science and English; 11 of 15 in Hindi and in Tamil; 13 of 15 in geography) and all 90 after
+14 replacements, in 50 to 350 seconds a paper. A hand check of the 90 marks found none wrong and
+four that a teacher could argue over (grammar and geography points). The scripted test
+`tools/answers-test.ts` (45 checks, no AI keys needed) makes each failure happen on cue: a model that
+is down, slow, or answers with junk, two that split, the writer disagreeing, the second opinion.
+
+Each marked answer says where it came from, so the teacher can check it before saving. Once every question is saved or skipped, the app asks whether to
 publish the paper as a test for its class and subject straight away; the test remembers the
 paper it came from.
 
@@ -231,15 +266,50 @@ quadratic equations, with two word problems") and how many questions: any number
 thousand, where the top only guards against a slip of the finger. The server asks Gemini 3.1
 Flash-Lite, with gpt-oss-120b behind it (`GROQ_WRITE_MODELS`), for the questions as JSON: four
 options each and the writer's answer. The result opens in the same review screen as an uploaded
-paper. The writer's answer is only a proposal. The two solving models work every question out
-without seeing it, and an answer is marked only when both agree with each other and with the
-writer; otherwise the question is left for the tutor with a note.
+paper. The writer's answer is only a proposal, and the checking models never see it. A question is
+marked when two models of different families agree (see Question papers), and the writer's answer
+is one more opinion: a mark that differs from it is kept but asks the tutor to check, and a
+question whose writer's answer could not be matched to one of its options is never marked. On a
+paper AI wrote, a split between the first two models is final, since a new question costs less than
+a stronger model's time: the question is replaced (below).
+
+The writer is told to work each answer out in a `work` line before it writes the options, to build
+the three wrong options from plausible mistakes, to give every number a calculation needs, never to
+write two options of the same value, and to ask only what a textbook settles with one accepted
+answer. Each writer model is tried on its own, so one that replies with nothing usable is followed
+by the next. By hand, 25 of 165 questions from the first prompt were faulty (15%) and 6 of 90 from
+this one (7%), on topics of the same kind (the 6 were a tense question with two acceptable answers,
+a loosely worded constitution question, a question whose options showed raw maths markup, a badly
+worded rolled-paper problem and two Tamil grammar questions).
 
 One reply holds about 25 questions, so the app asks for twenty at a time. The first call makes
 the paper. Each later call sends its `paper_id`, is told which questions are already written and
 adds new ones, so a test can be any length: 47 questions took three calls and 19 seconds, with
 no repeats. The app shows how far it has got and waits out the free tier's per-minute limit. If
 the allowance runs out part way, it keeps what was written and says how many.
+
+A question the checks cannot settle is replaced, not handed to the tutor. After the answers and the
+second opinions, the app asks the server to replace each question of the paper that has no answer,
+or an answer other than the one the writer meant (`POST /teacher/papers/:id/replace`). The question
+is left out (it shows under Skipped as Replaced, with the reason, and can be brought back), and the
+writer is asked for a new one on the same request, which takes its number and goes through the same
+checks. What is still unsettled after that is replaced again, up to three rounds in one run; the
+paper keeps trying when it is opened again. A question the models could not be reached for is not
+replaced: it is asked again (see Question papers). A question the tutor has marked, reworded or brought
+back is hers and is never replaced, and neither is anything in an uploaded paper. The server keeps
+the request the paper was written from (`papers.ai_request`, migration 021), says whether more can
+be replaced in `replaceable` on `GET /teacher/papers/:id`, and stops at 20 replacements or the
+paper's length, whichever is larger. An app that finds no `replaceable` leaves the paper alone. A
+question is replaced one for one, so the paper keeps its size (a server test checks it, and a run on
+the dev copy that asked for 10 questions and made 2 of them unanswerable ended with 10, 2 replaced),
+and when the replacing is over the review says how many were replaced and how many questions the
+paper still has, because the replaced ones stay listed under Skipped.
+
+Measured earlier on 27 October on the dev copy with the real models and the first version of the
+checks (`tools/out/ai-maker-run.mjs`, not in git), three papers of 20 questions each, on linear equations, on ratio and profit and loss word problems, and
+on number systems: 17, 18 and 19 questions were clean after the checks, and all three papers ended
+with 20 of 20 clean, after 4, 4 and 1 replacements, in 39, 47 and 27 seconds. The second paper
+used all three rounds.
 
 Models write LaTeX in JSON with one backslash (`\frac`), which JSON reads as a form feed plus
 "rac". Every model reply passes through `fixLatexEscapes` first (`api/src/lib/latex-json.ts`,
@@ -263,8 +333,8 @@ Measured on 16 verified Class 10 Maths questions (plain text), translated to Hin
 Gemini, printed as four-page papers and sent through the real pipeline (`tools/out/lang/`, not in
 git): details found on every paper (class 10, Maths, a name), all 16 questions and options read on
 every paper, and the printed key matched 16 of 16 in all three languages. Without a key AI marked
-16 of 16 right in English and 15 of 16 right in Hindi and in Tamil, with none wrong; the other
-question was left for the tutor. Tamil letters that look alike (ண and ன) were misread once in
+16 of 16 right in English, Hindi and Tamil on 27 October, after the answer checks were reworked
+(on 10 October it was 16, 15 and 15, the other question left for the tutor), with none wrong. Tamil letters that look alike (ண and ன) were misread once in
 four Tamil runs, so a tutor still checks the questions, as with English.
 
 ## Screens stay current
@@ -471,7 +541,9 @@ and the scripts that read it would then point at the live database.
 | `node tools/security-test.ts` | About 670 checks that walk every route the API has, found from the app itself: nobody and each role are refused what they should be, a tutor of another tuition can read or change nothing, junk bodies, ids and queries never end in a server error or an unanswered request, the answer key never reaches a student, a new password signs the other phones out, guesses sent all at once are counted one by one, the sign-up and tuition caps hold under a burst, and an oversized body is read away and refused. `--only '<regex>'` fuzzes just the routes whose `METHOD /path` matches. It makes its own data and removes it. Dev only. |
 | `node tools/load-test.ts` | A classroom (40 students unless `--students` says otherwise) logs in, opens the home screen, starts a test, saves answers and submits, all at the same moment, then reads the marks: no server errors, one finished attempt each, each marked on its own answers, the marks open for everyone, and a table of how long each step took (the trip from your PC to the database is in those figures). It makes its own data and removes it. Dev only. |
 | `node tools/levels-test.ts` | 47 checks of classes 1 to 12 and the levels a tuition names itself. |
-| `node tools/votes-test.ts` | 25 checks of when two or three AI answers agree enough to mark a question. |
+| `node tools/votes-test.ts` | 44 checks of when AI answers agree enough to mark a question: how a model's reading counts (one option, several, none, hesitant), models of two families, splits, the writer's answer, and a split on a paper AI wrote being final. |
+| `node tools/answers-test.ts` | 45 checks of the answers and second-opinion steps with scripted models (the API runs in the process against the dev database, every AI call is answered by a script, no keys or quota needed): a model down, slow or answering junk, two that split or doubt, a partial answer kept, the writer's own answer, a question left "not checked yet" and asked again. |
+| `node tools/replace-test.ts` | Checks that the question maker replaces what its checks could not settle and never touches what the tutor has, what waits for a second opinion, what a call is working on, or an uploaded paper. The new questions come from the real writer, so the API needs its AI keys. Dev only. |
 | `node tools/courses-test.ts` | 114 checks of courses: people from any class or with no class at all, a course's papers, questions and tests kept out of every group, app versions from before courses kept away from them and told to update, the minimum-build gate, and deleting a course while its people stay. Against the local dry-run API (`--base http://127.0.0.1:8787 --log server.log`) it adds a check that the push names the course. It makes its own data and removes it. Dev only. `tools/courses-demo.ts` sets up a small demo of courses on dev (`--clear` removes it). |
 | `node tools/text-test.mjs` | Hindi and Tamil text handling, the test writer's answer matching and suggested usernames. |
 | `node tools/summary-test.ts --log server.log` | 7 checks that the evening summary goes to each tuition's own tutors (after 8 pm India time; local API, dry-run push). |
