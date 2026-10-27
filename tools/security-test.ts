@@ -577,6 +577,13 @@ try {
 } finally {
   try {
     const tuitions = created.tuitions;
+    // The fuzz can open tuitions of its own (a junk name is still a name). They belong to the tutors this run made, so they go too.
+    const opened = await db.query(
+      `select distinct m.tuition_id from memberships m join users u on u.id = m.user_id
+        where m.role in ('owner', 'tutor') and (u.id = any($1::uuid[]) or u.username like $2)`,
+      [created.users, `${tag}.%`],
+    );
+    for (const r of opened.rows) if (!tuitions.includes(r.tuition_id)) tuitions.push(r.tuition_id);
     await db.query('delete from tests where tuition_id = any($1::uuid[])', [tuitions]);
     await db.query('delete from questions where tuition_id = any($1::uuid[])', [tuitions]);
     await db.query('delete from papers where tuition_id = any($1::uuid[])', [tuitions]);
