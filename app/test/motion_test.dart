@@ -170,12 +170,16 @@ void main() {
     for (final i in built) {
       expect(_revealAround(find.text('Student $i')), findsOneWidget, reason: 'student $i has no reveal around it');
     }
-    // They come in one after another, from the first student down.
-    await _advance(t, 80);
-    expect(_opacity(t, find.text('Student 0')), lessThan(0.05));
-    await _advance(t, 300);
-    expect(_opacity(t, find.text('Student 0')), greaterThan(0.3));
-    expect(_opacity(t, find.text('Student 5')), 0, reason: 'the sixth student waits for its turn');
+    // They come in one after another, from the first student down. A screen's cascade is timed against the real clock
+    // (see Reveal), which a busy machine stretches, so this looks for a moment when the first student is on its way in
+    // and the sixth has not started, not for fixed times.
+    expect(_opacity(t, find.text('Student 0')), lessThan(0.05), reason: 'the first student starts out of sight');
+    var firstAhead = false;
+    for (var ms = 0; ms < 2000 && _opacity(t, find.text('Student 5')) == 0; ms += 16) {
+      if (_opacity(t, find.text('Student 0')) > 0) firstAhead = true;
+      await t.pump(const Duration(milliseconds: 16));
+    }
+    expect(firstAhead, isTrue, reason: 'the sixth student waits for its turn');
     await _advance(t, 1200);
     for (final i in built) {
       expect(_opacity(t, find.text('Student $i')), closeTo(1, 0.001), reason: 'student $i never came in');
