@@ -26,6 +26,7 @@ import 'package:core_academy/features/teacher/home_screen.dart';
 import 'package:core_academy/features/teacher/join_requests_screen.dart';
 import 'package:core_academy/features/teacher/papers_screens.dart';
 import 'package:core_academy/features/teacher/settings_screen.dart';
+import 'package:core_academy/features/teacher/teacher_routes.dart';
 import 'package:core_academy/features/teacher/setup_screen.dart';
 import 'package:core_academy/features/teacher/students_screens.dart';
 import 'package:core_academy/features/teacher/share_code_screen.dart';
@@ -34,6 +35,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -695,6 +697,12 @@ void main() {
       await t.tap(find.text('Make a test'));
       await _settle(t);
     });
+    await _both(t, 'home-how', () => const Scaffold(body: TutorHome()), then: (t) async {
+      await t.tap(find.text('Make a test'));
+      await _settle(t);
+      await t.tap(find.text('10th Maths').last);
+      await _settle(t);
+    });
     // Nothing open right now.
     routes['/teacher/home'] = (_) => busyHome(open: false);
     await _both(t, 'home-quiet', () => const Scaffold(body: TutorHome()), height: 3000);
@@ -720,6 +728,7 @@ void main() {
     _sessionAs(role: 'teacher', tuitions: tutorTuition);
     routes['/teacher/home'] = (_) => home();
     await _both(t, 'classes-empty', () => const Scaffold(body: ClassesScreen()));
+    routes['/teacher/home'] = (_) => busyHome();
     // A button is scrolled to before it is tapped: on a phone on its side, or with very large text, it may start below the edge.
     Future<void> tapIt(WidgetTester t, Finder f) async {
       await t.ensureVisible(f);
@@ -737,6 +746,14 @@ void main() {
     });
     routes['/teacher/home'] = (_) => busyHome();
     await _both(t, 'classes-full', () => const Scaffold(body: ClassesScreen()));
+  });
+
+  shotTest('tutor: the two tabs', (t) async {
+    _sessionAs(role: 'teacher', tuitions: tutorTuition);
+    routes['/teacher/home'] = (_) => busyHome();
+    // The real routes, so the floating tab bar is there: Home and Classes.
+    await _both(t, 'tabs-home', () => Router.withConfig(config: GoRouter(initialLocation: '/t', routes: teacherRoutes)));
+    await _both(t, 'tabs-classes', () => Router.withConfig(config: GoRouter(initialLocation: '/t/classes', routes: teacherRoutes)));
   });
 
   shotTest('tutor: papers to finish', (t) async {
