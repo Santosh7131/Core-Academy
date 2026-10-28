@@ -37,7 +37,7 @@ String testMeta(Map<String, dynamic> t) {
     'open' => '$q · ${closes == null ? 'open' : 'closes ${f.when(closes)}'}',
     'upcoming' => '$q · opens ${opens == null ? 'later' : f.when(opens)}',
     'closed' => '$q · closed ${closes == null ? '' : f.when(closes)}',
-    'done' => '$q · all submitted',
+    'done' => '$q · all handed in',
     _ => '$q · not posted yet',
   };
 }
@@ -56,11 +56,11 @@ class TestListTile extends StatelessWidget {
       title: '${t['title']}',
       meta: testMeta(t),
       trailing: !published
-          ? const TagChip('Draft')
+          ? const TagChip('Not posted')
           : Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
               Text('${_count(t['submitted'])}/${_count(t['assigned'])}', style: numStyle(size: 15)),
               const SizedBox(height: 2),
-              Fig(writing > 0 ? '$writing writing' : 'submitted', style: labelStyle.copyWith(color: writing > 0 ? warning : null)),
+              Fig(writing > 0 ? '$writing writing' : 'handed in', style: labelStyle.copyWith(color: writing > 0 ? warning : null)),
             ]),
       onTap: onTap,
     );
@@ -276,8 +276,8 @@ class _TestEditorState extends State<TestEditor> {
       kicker: isNew
           ? (_isCourse && _courseName != null ? 'New test · $_courseName' : 'New test')
           : _isCourse
-              ? '${_courseName == null ? '' : '$_courseName · '}${_published ? 'Posted' : 'Draft'}'
-              : '${_class != null && _subjectName != null ? '${groupName(_class!, _subjectName!)} · ' : ''}${_published ? 'Posted' : 'Draft'}',
+              ? '${_courseName == null ? '' : '$_courseName · '}${_published ? 'Posted' : 'Not posted yet'}'
+              : '${_class != null && _subjectName != null ? '${groupName(_class!, _subjectName!)} · ' : ''}${_published ? 'Posted' : 'Not posted yet'}',
       title: isNew ? 'New test' : 'Test settings',
       footer: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         PrimaryButton(
@@ -672,11 +672,11 @@ class _TestResultsScreenState extends State<TestResultsScreen> with WidgetsBindi
   Future<void> _togglePublish(bool published) async {
     final ok = await confirmCard(
       context,
-      title: published ? 'Unpublish this test?' : 'Publish this test?',
+      title: published ? 'Take this test down?' : 'Post this test?',
       body: published
           ? 'Students will no longer see it. Results already written are kept.'
           : (_d?['test']?['course_id'] != null ? 'The people in the course will see it.' : 'Students in the class will see it.'),
-      confirm: published ? 'Unpublish' : 'Publish',
+      confirm: published ? 'Take it down' : 'Post it',
       destructive: published,
     );
     if (!ok) return;
@@ -691,7 +691,7 @@ class _TestResultsScreenState extends State<TestResultsScreen> with WidgetsBindi
   void _export(Map<String, dynamic> t, List<Map<String, dynamic>> students) {
     String cell(Object? v) => '"${'${v ?? ''}'.replaceAll('"', '""')}"';
     final lines = [
-      ['Name', 'Class', 'Status', 'Marks', 'Out of', 'Percent', 'Minutes taken', 'Submitted at'].map(cell).join(','),
+      ['Name', 'Class', 'Status', 'Marks', 'Out of', 'Percent', 'Minutes taken', 'Handed in at'].map(cell).join(','),
       for (final s in students)
         [
           s['display_name'],
@@ -735,7 +735,7 @@ class _TestResultsScreenState extends State<TestResultsScreen> with WidgetsBindi
         className(t['class_level'])
       else
         groupName(t['class_level'] as int, '${t['subject']}'),
-      if (!published) 'unpublished' else if (closes != null) (closes.isAfter(DateTime.now()) ? 'closes ${f.when(closes)}' : 'closed ${f.when(closes)}'),
+      if (!published) 'not posted' else if (closes != null) (closes.isAfter(DateTime.now()) ? 'closes ${f.when(closes)}' : 'closed ${f.when(closes)}'),
     ].join(' · ');
 
     return PushedPanel(
@@ -749,16 +749,16 @@ class _TestResultsScreenState extends State<TestResultsScreen> with WidgetsBindi
       footer: Row(children: [
         Expanded(child: SecondaryButton('Export', icon: Ph.export, onTap: students.isEmpty ? null : () => _export(t, students))),
         const SizedBox(width: 10),
-        Expanded(child: SecondaryButton(published ? 'Unpublish' : 'Publish', icon: published ? Ph.eyeSlash : Ph.eye, onTap: () => _togglePublish(published))),
+        Expanded(child: SecondaryButton(published ? 'Take down' : 'Post', icon: published ? Ph.eyeSlash : Ph.eye, onTap: () => _togglePublish(published))),
       ]),
       children: [
         const SizedBox(height: 22),
         StatGrid(
           label: 'Average',
           value: sum['average_pct'] == null ? '-' : f.percent(sum['average_pct'] as num),
-          note: sum['high_pct'] == null ? 'No one has submitted yet' : 'High ${f.percent(sum['high_pct'] as num)} · low ${f.percent(sum['low_pct'] as num)}',
+          note: sum['high_pct'] == null ? 'No one has handed it in yet' : 'High ${f.percent(sum['high_pct'] as num)} · low ${f.percent(sum['low_pct'] as num)}',
           small: [
-            StatSmall('Submitted', '${sum['submitted']}/${sum['assigned']}'),
+            StatSmall('Handed in', '${sum['submitted']}/${sum['assigned']}'),
             StatSmall((sum['missed'] as int) > 0 ? 'Missed' : 'Writing now', '${(sum['missed'] as int) > 0 ? sum['missed'] : sum['writing']}'),
           ],
         ),
@@ -770,7 +770,7 @@ class _TestResultsScreenState extends State<TestResultsScreen> with WidgetsBindi
             leading: AppAvatar(name: '${s['display_name']}', seed: '${s['id']}'),
             title: '${s['display_name']}',
             meta: switch (s['status']) {
-              'submitted' => 'Submitted ${f.when(f.parseTime(s['submitted_at'])!)} · ${f.duration(s['time_taken_sec'] as int)}'
+              'submitted' => 'Handed in ${f.when(f.parseTime(s['submitted_at'])!)} · ${f.duration(s['time_taken_sec'] as int)}'
                   '${(s['attempt_no'] as int) > 1 ? ' · retake' : ''}${s['auto_submitted'] == true ? ' · time ran out' : ''}',
               'writing' => 'Writing now',
               'missed' => 'Missed',

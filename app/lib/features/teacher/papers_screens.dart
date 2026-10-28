@@ -897,7 +897,7 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
         : (students == null ? 'the students in $group' : (students == 1 ? 'the 1 student in $group' : 'the $students students in $group'));
     final choice = await showCentredCard<String>(
       context,
-      title: 'Publish it as a test?',
+      title: 'Post it as a test?',
       builder: (ctx) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Fig('${f.count(n, 'question')} · ${_limitFor(n)} min · closes ${f.when(defaultClosing())}', style: labelStyle.copyWith(fontSize: 12.5), numColor: ink),
         const SizedBox(height: 10),
@@ -912,7 +912,7 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
           ),
         ],
         const SizedBox(height: 18),
-        PrimaryButton(students == null ? 'Publish now' : 'Publish for all of $group', leadingIcon: Ph.exam, onTap: () => Navigator.of(ctx).pop('publish')),
+        PrimaryButton(students == null ? 'Post now' : 'Post for all of $group', leadingIcon: Ph.exam, onTap: () => Navigator.of(ctx).pop('publish')),
         const SizedBox(height: 10),
         SecondaryButton('Choose students or settings first', onTap: () => Navigator.of(ctx).pop('edit')),
         const SizedBox(height: 12),
@@ -958,7 +958,7 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
           context.pop();
           return;
         }
-        setState(() => _saved = 'Published "${paperName(p)}" for ${paperGroup(p)}. It is open now and closes ${f.when(closes)}.');
+        setState(() => _saved = 'Posted "${paperName(p)}" for ${paperGroup(p)}. It is open now and closes ${f.when(closes)}.');
         await _load();
       } else {
         if (!mounted) return;
@@ -1208,7 +1208,7 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
       title: paperName(p),
       headerTrailing: CircleBtn(icon: Ph.pencilSimple, label: 'Paper details', onTap: () => _editDetails(p)),
       footer: _tests.isEmpty
-          ? PrimaryButton('Publish as a test', leadingIcon: Ph.exam, busy: _making, onTap: _making ? null : () => _offerPublish(p))
+          ? PrimaryButton('Post as a test', leadingIcon: Ph.exam, busy: _making, onTap: _making ? null : () => _offerPublish(p))
           : SecondaryButton(_making ? 'Making the test' : 'Make another test from it', icon: Ph.exam, onTap: _making ? null : () => _offerPublish(p)),
       children: [
         const SizedBox(height: 12),
@@ -1224,7 +1224,7 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
             RowTile(
               leading: Icon(Ph.exam, size: 20, color: t['status'] == 'published' ? success : faint),
               title: '${t['title']}',
-              meta: '${t['status'] == 'published' ? 'Published' : 'Draft, not published'} · ${f.count(t['question_count'] as int, 'question')}',
+              meta: '${t['status'] == 'published' ? 'Posted' : 'Not posted yet'} · ${f.count(t['question_count'] as int, 'question')}',
               chevron: true,
               onTap: () async {
                 await context.push(t['status'] == 'published' ? '/t/tests/${t['id']}' : '/t/tests/${t['id']}/edit');

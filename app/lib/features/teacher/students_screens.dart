@@ -415,7 +415,7 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> with WidgetsB
             title: '${a['title']}${(a['attempt_no'] as int) > 1 ? ' (retake)' : ''}',
             meta: a['submitted_at'] == null
                 ? 'Writing now'
-                : 'Submitted ${f.when(f.parseTime(a['submitted_at'])!)}'
+                : 'Handed in ${f.when(f.parseTime(a['submitted_at'])!)}'
                     ' · ${f.duration(f.parseTime(a['submitted_at'])!.difference(f.parseTime(a['started_at'])!).inSeconds)}',
             trailing: a['submitted_at'] == null
                 ? const TagChip('Writing', tone: Tone.warning)

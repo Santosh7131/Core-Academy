@@ -232,9 +232,9 @@ class _CourseScreenState extends State<CourseScreen> with WidgetsBindingObserver
       Align(alignment: Alignment.centerLeft, child: _RenameLink(onTap: _rename)),
       const SizedBox(height: 10),
       PrimaryButton('Make a test', leadingIcon: Ph.plus, onTap: _makeTest),
-      if (live.isNotEmpty) ...[SectionRule('Live now', count: live.length, padding: rule), rows(live)],
-      if (posted.isNotEmpty) ...[SectionRule('Posted', count: posted.length, padding: rule), rows(posted)],
-      if (drafts.isNotEmpty) ...[SectionRule('Drafts', count: drafts.length, padding: rule), rows(drafts)],
+      if (live.isNotEmpty) ...[SectionRule('Open now', count: live.length, padding: rule), rows(live)],
+      if (posted.isNotEmpty) ...[SectionRule('Coming up', count: posted.length, padding: rule), rows(posted)],
+      if (drafts.isNotEmpty) ...[SectionRule('Not posted yet', count: drafts.length, padding: rule), rows(drafts)],
       if (finished.isNotEmpty) ...[
         SectionRule('Finished', count: finished.length, padding: rule),
         rows(_allFinished ? finished : finished.take(3).toList()),
