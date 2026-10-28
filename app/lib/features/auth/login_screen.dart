@@ -20,6 +20,7 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _user = TextEditingController();
   final _secret = TextEditingController();
+  final _secretFocus = FocusNode();
   bool _tutor = false;
   bool _busy = false;
   bool _show = false;
@@ -29,6 +30,7 @@ class _LoginScreenState extends State<LoginScreen> {
   void dispose() {
     _user.dispose();
     _secret.dispose();
+    _secretFocus.dispose();
     super.dispose();
   }
 
@@ -69,12 +71,21 @@ class _LoginScreenState extends State<LoginScreen> {
 
   void _choose(int i) {
     if (_busy || (i == 1) == _tutor) return;
+    final inSecret = _secretFocus.hasFocus;
     setState(() {
       _tutor = i == 1;
       _error = null;
       _secret.clear();
       _show = false;
     });
+    // Android keeps the keyboard a box opened with for as long as the box stays active, so a tutor who tapped Tutor with the cursor
+    // already in the PIN box stayed on a number pad with no letters. Leaving the box and entering it again opens the right keyboard.
+    if (inSecret) {
+      _secretFocus.unfocus();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _secretFocus.requestFocus();
+      });
+    }
   }
 
   @override
@@ -106,6 +117,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   BareField(
                     controller: _secret,
+                    focusNode: _secretFocus,
                     placeholder: _tutor ? 'Password' : 'PIN, 4 digits',
                     obscure: !_show,
                     keyboard: _tutor ? TextInputType.visiblePassword : TextInputType.number,
