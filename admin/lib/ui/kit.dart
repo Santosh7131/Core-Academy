@@ -274,13 +274,41 @@ class SectionRule extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = alert ? danger : faint;
+    final labelStyle = kickerStyle.copyWith(color: c);
+    final countStyle = numStyle(size: 11, color: c);
+    final scaler = MediaQuery.textScalerOf(context);
+    double widthOf(String text, TextStyle style) {
+      final p = TextPainter(text: TextSpan(text: text, style: style), textDirection: TextDirection.ltr, textScaler: scaler, maxLines: 1)..layout();
+      final w = p.width;
+      p.dispose();
+      return w;
+    }
     return Padding(
       padding: padding,
       child: Row(children: [
-        Text(label.toUpperCase(), style: kickerStyle.copyWith(color: c)),
-        if (count != null) ...[const SizedBox(width: 10), Text('$count', style: numStyle(size: 11, color: c))],
-        const SizedBox(width: 10),
-        Expanded(child: Container(height: 1, color: hairline)),
+        Expanded(
+          child: LayoutBuilder(
+            builder: (context, box) {
+              // The label, the count and a stretch of rule at least this long fit side by side. With a very large text size they do not:
+              // the label is then cut short with an ellipsis and the rule is left out, instead of the row running off the screen.
+              const minRule = 16.0;
+              final need = widthOf(label.toUpperCase(), labelStyle) + (count == null ? 0 : 10 + widthOf('$count', countStyle)) + 10 + minRule;
+              final countText = count == null ? null : Text('$count', style: countStyle);
+              if (need > box.maxWidth) {
+                return Row(children: [
+                  Expanded(child: Text(label.toUpperCase(), style: labelStyle, maxLines: 1, overflow: TextOverflow.ellipsis)),
+                  if (countText != null) ...[const SizedBox(width: 10), countText],
+                ]);
+              }
+              return Row(children: [
+                Text(label.toUpperCase(), style: labelStyle),
+                if (countText != null) ...[const SizedBox(width: 10), countText],
+                const SizedBox(width: 10),
+                Expanded(child: Container(height: 1, color: hairline)),
+              ]);
+            },
+          ),
+        ),
         if (trailing != null) ...[const SizedBox(width: 10), trailing!],
       ]),
     );

@@ -239,16 +239,13 @@ void main() {
           await t.tap(find.text('Add a class and subject'));
           await _settle(t);
         }
-        await t.tap(find.text('Choose a class'));
-        await _settle(t);
-        await t.tap(find.text('Class $cls').last);
-        await _settle(t);
-        await t.tap(find.text('Choose a subject'));
-        await _settle(t);
-        await t.tap(find.text(subject).last);
-        await _settle(t);
-        await t.tap(find.text('Add group'));
-        await _settle(t);
+        // The card scrolls when the text is large and the phone narrow, so each button is scrolled to before it is tapped.
+        for (final f in [find.text('Choose a class'), find.text('Class $cls').last, find.text('Choose a subject'), find.text(subject).last, find.text('Add group')]) {
+          await t.ensureVisible(f);
+          await t.pump();
+          await t.tap(f);
+          await _settle(t);
+        }
       }
       await t.enterText(find.byType(TextField).first, 'Priya Maths Classes');
       await _settle(t);
@@ -723,15 +720,20 @@ void main() {
     _sessionAs(role: 'teacher', tuitions: tutorTuition);
     routes['/teacher/home'] = (_) => home();
     await _both(t, 'classes-empty', () => const Scaffold(body: ClassesScreen()));
-    await _both(t, 'classes-add', () => const Scaffold(body: ClassesScreen()), then: (t) async {
-      await t.tap(find.text('Add a class').last);
+    // A button is scrolled to before it is tapped: on a phone on its side, or with very large text, it may start below the edge.
+    Future<void> tapIt(WidgetTester t, Finder f) async {
+      await t.ensureVisible(f);
+      await t.pump();
+      await t.tap(f);
       await _settle(t);
+    }
+
+    await _both(t, 'classes-add', () => const Scaffold(body: ClassesScreen()), then: (t) async {
+      await tapIt(t, find.text('Add a class').last);
     });
     await _both(t, 'classes-new-course', () => const Scaffold(body: ClassesScreen()), then: (t) async {
-      await t.tap(find.text('Add a class').last);
-      await _settle(t);
-      await t.tap(find.text('A course'));
-      await _settle(t);
+      await tapIt(t, find.text('Add a class').last);
+      await tapIt(t, find.text('A course'));
     });
     routes['/teacher/home'] = (_) => busyHome();
     await _both(t, 'classes-full', () => const Scaffold(body: ClassesScreen()));
@@ -797,8 +799,11 @@ void main() {
           ],
         };
     await _both(t, 'courses-add', () => const AddPeopleScreen(courseId: 'c-1', courseName: 'Spoken English, Batch 1'), then: (t) async {
-      await t.tap(find.text('Aarav Kumar'));
-      await t.tap(find.text('Diya Nair'));
+      // The list is long and the window can be short (a phone on its side, a keyboard up): scroll to each person first.
+      for (final name in ['Aarav Kumar', 'Diya Nair']) {
+        await t.scrollUntilVisible(find.text(name), 100, scrollable: find.byType(Scrollable).first, maxScrolls: 30);
+        await t.tap(find.text(name));
+      }
       await _settle(t);
     });
     await _both(t, 'courses-add-filter', () => const AddPeopleScreen(courseId: 'c-1', courseName: 'Spoken English, Batch 1'), then: (t) async {

@@ -450,22 +450,26 @@ class _TestSkeleton extends StatelessWidget {
   const _TestSkeleton();
 
   @override
+  // On a phone turned on its side there is less room than the placeholder's rows: it is cut off at the edge, not squeezed or overflowed.
   Widget build(BuildContext context) => const SkeletonScope(
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          SkeletonBox(width: 90, height: 10),
-          SizedBox(height: 20),
-          SkeletonBox(height: 20, radius: 6),
-          SizedBox(height: 10),
-          SkeletonBox(width: 220, height: 20, radius: 6),
-          SizedBox(height: 30),
-          SkeletonBox(height: 60, radius: rCard),
-          SizedBox(height: gapRow),
-          SkeletonBox(height: 60, radius: rCard),
-          SizedBox(height: gapRow),
-          SkeletonBox(height: 60, radius: rCard),
-          SizedBox(height: gapRow),
-          SkeletonBox(height: 60, radius: rCard),
-        ]),
+        child: SingleChildScrollView(
+          physics: NeverScrollableScrollPhysics(),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            SkeletonBox(width: 90, height: 10),
+            SizedBox(height: 20),
+            SkeletonBox(height: 20, radius: 6),
+            SizedBox(height: 10),
+            SkeletonBox(width: 220, height: 20, radius: 6),
+            SizedBox(height: 30),
+            SkeletonBox(height: 60, radius: rCard),
+            SizedBox(height: gapRow),
+            SkeletonBox(height: 60, radius: rCard),
+            SizedBox(height: gapRow),
+            SkeletonBox(height: 60, radius: rCard),
+            SizedBox(height: gapRow),
+            SkeletonBox(height: 60, radius: rCard),
+          ]),
+        ),
       );
 }
 
