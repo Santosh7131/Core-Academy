@@ -6,20 +6,46 @@ String time(DateTime t) => DateFormat('h:mm a').format(t).toLowerCase();
 
 bool _sameDay(DateTime a, DateTime b) => a.year == b.year && a.month == b.month && a.day == b.day;
 
-/// "today", "tomorrow", "yesterday" or "Tue 6 Oct".
-String day(DateTime t) {
+/// "today", "tomorrow", "yesterday", or null for any other day.
+String? nearDay(DateTime t) {
   final now = DateTime.now();
   if (_sameDay(t, now)) return 'today';
   if (_sameDay(t, now.add(const Duration(days: 1)))) return 'tomorrow';
   if (_sameDay(t, now.subtract(const Duration(days: 1)))) return 'yesterday';
-  return DateFormat('EEE d MMM').format(t);
+  return null;
 }
+
+/// "Tue 6 Oct": the day name, the date and the month, always.
+String shortDate(DateTime t) => DateFormat('EEE d MMM').format(t);
+
+/// "today", "tomorrow", "yesterday" or "Tue 6 Oct".
+String day(DateTime t) => nearDay(t) ?? shortDate(t);
 
 /// "today 9:00 pm", "Tue 6 Oct, 9:00 pm".
 String when(DateTime t) {
   final d = day(t);
   return d.contains(' ') ? '$d, ${time(t)}' : '$d ${time(t)}';
 }
+
+// When a test opens or closes, the day is always spelled out: "tomorrow" alone leaves the reader to work out which day that is.
+
+/// A day inside a sentence: "today, Thu 29 Oct" or "Sat 31 Oct".
+String dayDate(DateTime t) {
+  final near = nearDay(t);
+  return near == null ? shortDate(t) : '$near, ${shortDate(t)}';
+}
+
+/// A start or end inside a sentence: "today, Thu 29 Oct, 6:00 pm" or "Sat 31 Oct, 6:00 pm".
+String whenDate(DateTime t) => '${dayDate(t)}, ${time(t)}';
+
+/// A day on its own, in a box or a list of days: "Today · Thu 29 Oct" or "Sat 31 Oct".
+String dayTitle(DateTime t) {
+  final near = nearDay(t);
+  return near == null ? shortDate(t) : '${near[0].toUpperCase()}${near.substring(1)} · ${shortDate(t)}';
+}
+
+/// A start or end on its own, as a value: "Today · Thu 29 Oct, 6:00 pm" or "Sat 31 Oct, 6:00 pm".
+String whenTitle(DateTime t) => '${dayTitle(t)}, ${time(t)}';
 
 /// "45 s", "18 min", "1 h 5 min".
 String duration(int seconds) {

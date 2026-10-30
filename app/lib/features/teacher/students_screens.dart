@@ -427,7 +427,7 @@ class _StudentDetailScreenState extends State<StudentDetailScreen> with WidgetsB
       for (final m in missed)
         (
           f.parseTime(m['closes_at']) ?? DateTime.now(),
-          RowTile(title: '${m['title']}', meta: 'Closed ${f.when(f.parseTime(m['closes_at'])!)}', trailing: const TagChip('Missed', tone: Tone.danger)),
+          RowTile(title: '${m['title']}', meta: 'Closed ${f.whenDate(f.parseTime(m['closes_at'])!)}', trailing: const TagChip('Missed', tone: Tone.danger)),
         ),
     ]..sort((a, b) => b.$1.compareTo(a.$1));
     final testsShown = _allTests ? items : items.take(6).toList();

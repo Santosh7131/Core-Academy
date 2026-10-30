@@ -17,8 +17,6 @@ import 'papers_screens.dart' show paperGroup, paperName;
 
 int _n(Object? v) => v is num ? v.toInt() : int.tryParse('$v') ?? 0;
 
-String _capital(String s) => s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
-
 // ---------------------------------------------------------------- home
 
 /// The tutor's home, in the order a tutor needs it: one button to make a test, what needs her, the tests students can write now,
@@ -282,7 +280,7 @@ class _OpenTest extends StatelessWidget {
     final writing = _n(t['writing']);
     return RowTile(
       title: '${t['title']}',
-      meta: '$cls · ${closes == null ? 'open' : 'closes ${f.when(closes)}'}',
+      meta: '$cls · ${closes == null ? 'open' : 'closes ${f.whenDate(closes)}'}',
       trailing: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
         Text('${_n(t['submitted'])}/${_n(t['assigned'])}', style: numStyle(size: 15)),
         const SizedBox(height: 2),
@@ -310,9 +308,10 @@ class _ComingTest extends StatelessWidget {
       trailing: opens == null
           ? null
           : Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-              Fig(_capital(f.day(opens)), style: rowTitleStyle),
+              // The day name and date are always there; "tomorrow" alone leaves her to work out which day that is.
+              Fig(f.shortDate(opens), style: rowTitleStyle),
               const SizedBox(height: 2),
-              Fig('opens ${f.time(opens)}', style: labelStyle),
+              Fig('opens ${f.nearDay(opens) == null ? '' : '${f.nearDay(opens)} '}${f.time(opens)}', style: labelStyle),
             ]),
       chevron: true,
       onTap: onTap,
@@ -334,7 +333,7 @@ class _FinishedTest extends StatelessWidget {
     final early = closes != null && closes.isAfter(DateTime.now());
     return RowTile(
       title: '${t['title']}',
-      meta: '$cls · ${closes == null || early ? 'all handed in' : 'closed ${f.day(closes)}'}',
+      meta: '$cls · ${closes == null || early ? 'all handed in' : 'closed ${f.dayDate(closes)}'}',
       trailing: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
         Text('${_n(t['submitted'])}/${_n(t['assigned'])}', style: numStyle(size: 15)),
         const SizedBox(height: 2),

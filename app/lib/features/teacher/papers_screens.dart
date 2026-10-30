@@ -899,7 +899,7 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
       context,
       title: 'Post it as a test?',
       builder: (ctx) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Fig('${f.count(n, 'question')} · ${_limitFor(n)} min · closes ${f.when(defaultClosing())}', style: labelStyle.copyWith(fontSize: 12.5), numColor: ink),
+        Fig('${f.count(n, 'question')} · ${_limitFor(n)} min · closes ${f.whenDate(defaultClosing())}', style: labelStyle.copyWith(fontSize: 12.5), numColor: ink),
         const SizedBox(height: 10),
         Fig('Goes to $who. Students see their marks and the right answers as soon as they hand it in.', style: bodyStyle.copyWith(color: muted)),
         if (students == 0) ...[
@@ -958,7 +958,7 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
           context.pop();
           return;
         }
-        setState(() => _saved = 'Posted "${paperName(p)}" for ${paperGroup(p)}. It is open now and closes ${f.when(closes)}.');
+        setState(() => _saved = 'Posted "${paperName(p)}" for ${paperGroup(p)}. It is open now and closes ${f.whenDate(closes)}.');
         await _load();
       } else {
         if (!mounted) return;

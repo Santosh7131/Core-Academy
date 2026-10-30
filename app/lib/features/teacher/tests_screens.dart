@@ -34,9 +34,9 @@ String testMeta(Map<String, dynamic> t) {
   final opens = f.parseTime(t['opens_at']);
   final q = f.count(_count(t['question_count']), 'question');
   return switch (testState(t)) {
-    'open' => '$q · ${closes == null ? 'open' : 'closes ${f.when(closes)}'}',
-    'upcoming' => '$q · opens ${opens == null ? 'later' : f.when(opens)}',
-    'closed' => '$q · closed ${closes == null ? '' : f.when(closes)}',
+    'open' => '$q · ${closes == null ? 'open' : 'closes ${f.whenDate(closes)}'}',
+    'upcoming' => '$q · opens ${opens == null ? 'later' : f.whenDate(opens)}',
+    'closed' => '$q · closed ${closes == null ? '' : f.whenDate(closes)}',
     'done' => '$q · all handed in',
     _ => '$q · not posted yet',
   };
@@ -344,10 +344,9 @@ class _TestEditorState extends State<TestEditor> {
         Padding(
           padding: const EdgeInsets.only(top: 10),
           child: Fig(
-            '${[
-              _opens == null ? 'Opens as soon as you post it' : 'Opens ${f.when(_opens!)}',
-              if (_closes != null) 'closes ${f.when(_closes!)}',
-            ].join(', ')}. Students see their marks and the right answers as soon as they hand it in.',
+            '${_opens == null ? 'Opens as soon as you post it' : 'Opens ${f.whenDate(_opens!)}'}.'
+            '${_closes == null ? '' : '\nCloses ${f.whenDate(_closes!)}.'}'
+            '\nStudents see their marks and the right answers as soon as they hand it in.',
             style: labelStyle,
           ),
         ),
@@ -728,19 +727,22 @@ class _TestResultsScreenState extends State<TestResultsScreen> with WidgetsBindi
     final closes = f.parseTime(t['closes_at']);
     final opens = f.parseTime(t['opens_at']);
     final isCourse = t['course_id'] != null;
-    final kicker = [
-      if (isCourse)
-        '${t['course'] ?? 'Course'}'
-      else if (t['subject'] == null)
-        className(t['class_level'])
-      else
-        groupName(t['class_level'] as int, '${t['subject']}'),
-      if (!published) 'not posted' else if (closes != null) (closes.isAfter(DateTime.now()) ? 'closes ${f.when(closes)}' : 'closed ${f.when(closes)}'),
-    ].join(' · ');
+    final cls = isCourse
+        ? '${t['course'] ?? 'Course'}'
+        : t['subject'] == null
+            ? className(t['class_level'])
+            : groupName(t['class_level'] as int, '${t['subject']}');
+    // The closing time is long now that it names its day and date, so it takes a line of its own.
+    final kicker = !published
+        ? '$cls · not posted'
+        : closes == null
+            ? cls
+            : '$cls\n${closes.isAfter(DateTime.now()) ? 'closes' : 'closed'} ${f.whenDate(closes)}';
 
     return PushedPanel(
       onRefresh: _load,
       kicker: kicker,
+      kickerLines: 2,
       title: '${t['title']}',
       headerTrailing: CircleBtn(icon: Ph.pencilSimple, label: 'Edit test', onTap: () async {
         await context.push('/t/tests/${widget.id}/edit');
@@ -809,8 +811,8 @@ class _TestResultsScreenState extends State<TestResultsScreen> with WidgetsBindi
         SectionRule('Settings', padding: const EdgeInsets.fromLTRB(0, 26, 0, 11)),
         FactList([
           ('Time limit', t['time_limit_min'] == null ? 'No limit' : '${t['time_limit_min']} min'),
-          ('Opens', opens == null ? 'As soon as it was posted' : f.when(opens)),
-          ('Closes', closes == null ? 'No closing time' : f.when(closes)),
+          ('Opens', opens == null ? 'As soon as it was posted' : f.whenTitle(opens)),
+          ('Closes', closes == null ? 'No closing time' : f.whenTitle(closes)),
           ('Order', t['shuffle'] == true ? 'Shuffled for each student' : 'Same for everyone'),
         ]),
       ],

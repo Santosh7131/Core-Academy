@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../core/api.dart';
+import '../../core/format.dart' as f;
 import '../../core/levels.dart';
 import '../../core/session.dart';
 import '../../theme.dart';
@@ -223,11 +224,9 @@ class DayTimeChooser extends StatelessWidget {
     final day0 = DateTime(today.year, today.month, today.day);
     final selDay = value == null ? null : DateTime(value!.year, value!.month, value!.day);
     final selMinutes = value == null ? null : value!.hour * 60 + value!.minute;
-    String dayLabel(int i) {
-      if (i == 0) return 'Today';
-      if (i == 1) return 'Tomorrow';
-      return DateFormat('EEE d').format(day0.add(Duration(days: i)));
-    }
+    // "Today · Thu 29 Oct", "Tomorrow · Fri 30 Oct", then "Sat 31 Oct": every day has its day name and date, so nobody has to work
+    // out which day "tomorrow" is.
+    String dayLabel(int i) => f.dayTitle(day0.add(Duration(days: i)));
 
     // 6:00 am to 9:30 pm in half hours.
     final times = [for (var m = 6 * 60; m <= 21 * 60 + 30; m += 30) m];
@@ -239,18 +238,12 @@ class DayTimeChooser extends StatelessWidget {
       onChanged(DateTime(d.year, d.month, d.day, m ~/ 60, m % 60));
     }
 
-    // A value from before the 14-day window, or not on a half hour, still shows as itself.
-    String? currentDay() {
-      if (selDay == null) return noneLabel;
-      final i = selDay.difference(day0).inDays;
-      return i >= 0 && i < days ? dayLabel(i) : DateFormat('EEE d MMM').format(selDay);
-    }
-
-    return Row(children: [
-      Expanded(
-        child: SelectField(
-          value: currentDay(),
+    // A value from before the 14-day window, or not on a half hour, still shows as itself. Beside the time a near day takes two short
+    // lines ("Tomorrow" over "Fri 30 Oct"); on a line of its own, and in the list of days, it is one ("Tomorrow · Fri 30 Oct").
+    Widget dayField({required bool oneLine, double? minHeight}) => SelectField(
+          value: selDay == null ? noneLabel : (oneLine ? f.dayTitle(selDay) : f.dayTitle(selDay).replaceFirst(' · ', '\n')),
           placeholder: 'Day',
+          minHeight: minHeight,
           onTap: () async {
             final c = await showChoices<int>(
               context,
@@ -265,21 +258,34 @@ class DayTimeChooser extends StatelessWidget {
               pick(dayValue: day0.add(Duration(days: c.value!)));
             }
           },
-        ),
-      ),
-      if (value != null) ...[
-        const SizedBox(width: 10),
-        Expanded(
-          child: SelectField(
-            value: timeLabel(selMinutes!),
-            onTap: () async {
-              final c = await showChoices<int>(context, title: 'Time', options: [for (final m in times) Choice(m, timeLabel(m))], selected: selMinutes);
-              if (c?.value != null) pick(minutes: c!.value);
-            },
-          ),
-        ),
-      ],
-    ]);
+        );
+
+    Widget timeField({double? minHeight}) => SelectField(
+          value: timeLabel(selMinutes!),
+          minHeight: minHeight,
+          onTap: () async {
+            final c = await showChoices<int>(context, title: 'Time', options: [for (final m in times) Choice(m, timeLabel(m))], selected: selMinutes);
+            if (c?.value != null) pick(minutes: c!.value);
+          },
+        );
+
+    final scaler = MediaQuery.textScalerOf(context);
+    return LayoutBuilder(builder: (context, box) {
+      // Side by side while the longest day ("Wed 30 Sep") fits a half-width box; one above the other when a narrow phone or large text
+      // leaves it no room.
+      if (value != null && box.maxWidth < 170 * scaler.scale(15) / 15 + 126) {
+        return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [dayField(oneLine: true), const SizedBox(height: 10), timeField()]);
+      }
+      // Both boxes are as tall as a two-line day (two lines, the padding, and two pixels for line heights that round up), so the page
+      // does not jump when the day changes between "Tomorrow" and "Sat 31 Oct".
+      final twoLines = value == null ? null : scaler.scale(15 * 1.33) * 2 + 32;
+      return IntrinsicHeight(
+        child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Expanded(child: dayField(oneLine: false, minHeight: twoLines)),
+          if (value != null) ...[const SizedBox(width: 10), Expanded(child: timeField(minHeight: twoLines))],
+        ]),
+      );
+    });
   }
 }
 

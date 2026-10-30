@@ -71,7 +71,7 @@ List<Widget> testSections(
     final closes = f.parseTime(t['closes_at']);
     return RowTile(
       title: '${t['title']}',
-      meta: resume ? 'Under way · tap to continue' : (closes == null ? facts(t) : '${facts(t)} · closes ${f.when(closes)}'),
+      meta: resume ? 'Under way · tap to continue' : (closes == null ? facts(t) : '${facts(t)} · closes ${f.whenDate(closes)}'),
       trailing: resume ? const TagChip('Resume', tone: Tone.warning) : null,
       chevron: !resume,
       onTap: () => onStart(t),
@@ -114,13 +114,13 @@ List<Widget> testSections(
         for (final t in upcoming)
           RowTile(
             title: '${t['title']}',
-            meta: 'Opens ${f.parseTime(t['opens_at']) == null ? '' : f.when(f.parseTime(t['opens_at'])!)} · ${facts(t)}',
+            meta: 'Opens ${f.parseTime(t['opens_at']) == null ? '' : f.whenDate(f.parseTime(t['opens_at'])!)} · ${facts(t)}',
           ),
       ]),
     if (missed.isNotEmpty)
       group('Missed', missed.length, [
         for (final t in missed)
-          RowTile(title: '${t['title']}', meta: f.parseTime(t['closes_at']) == null ? null : 'Closed ${f.when(f.parseTime(t['closes_at'])!)}'),
+          RowTile(title: '${t['title']}', meta: f.parseTime(t['closes_at']) == null ? null : 'Closed ${f.whenDate(f.parseTime(t['closes_at'])!)}'),
       ], alert: true),
   ];
 }

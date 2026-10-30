@@ -20,7 +20,7 @@ class TestHero extends StatelessWidget {
     final facts = [
       f.count(test['question_count'] as int, 'question'),
       if (limit != null) '$limit min',
-      if (!resume && closes != null) 'closes ${f.time(closes)}',
+      if (!resume && closes != null) 'closes ${f.whenDate(closes)}',
     ].join(' · ');
     return Container(
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
@@ -72,7 +72,7 @@ class AllCaughtUp extends StatelessWidget {
             Text('Nothing to write now', style: sectionStyle),
             const SizedBox(height: 4),
             Fig(
-              next == null ? 'Your next test shows up here.' : '${next!['title']} opens ${opens == null ? 'soon' : f.when(opens)}.',
+              next == null ? 'Your next test shows up here.' : '${next!['title']} opens ${opens == null ? 'soon' : f.whenDate(opens)}.',
               style: labelStyle.copyWith(fontSize: 12.5),
               maxLines: 2,
             ),

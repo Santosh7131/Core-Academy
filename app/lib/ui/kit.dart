@@ -56,13 +56,14 @@ class Fig extends StatelessWidget {
 
 /// Uppercase small-caps kicker; figures inside it stay mono.
 class Kicker extends StatelessWidget {
-  const Kicker(this.text, {super.key, this.color});
+  const Kicker(this.text, {super.key, this.color, this.maxLines = 1});
   final String text;
   final Color? color;
+  final int maxLines;
 
   @override
   Widget build(BuildContext context) =>
-      Fig(text.toUpperCase(), style: kickerStyle.copyWith(color: color ?? faint), maxLines: 1);
+      Fig(text.toUpperCase(), style: kickerStyle.copyWith(color: color ?? faint), maxLines: maxLines);
 }
 
 /// Replaces the ink splash: the child scales to 0.978 while pressed (guide: 130 ms, easeOutCubic).
@@ -794,9 +795,12 @@ class NamedField extends StatelessWidget {
 /// A pushed screen (replaces bottom sheets for forms): back button alone on its row,
 /// 22 gap, kicker, one display line, scrolling content, optional sticky footer.
 class PushedPanel extends StatelessWidget {
-  const PushedPanel({super.key, this.kicker, required this.title, required this.children, this.footer, this.onBack, this.headerTrailing, this.onRefresh});
+  const PushedPanel({super.key, this.kicker, this.kickerLines = 1, required this.title, required this.children, this.footer, this.onBack, this.headerTrailing, this.onRefresh});
 
   final String? kicker;
+
+  /// How many lines the kicker may take: one, unless it carries a long fact (a closing time with its day and date).
+  final int kickerLines;
   final String title;
   final List<Widget> children;
   final Widget? footer;
@@ -817,7 +821,7 @@ class PushedPanel extends StatelessWidget {
       physics: onRefresh == null ? null : const AlwaysScrollableScrollPhysics(),
       padding: EdgeInsets.fromLTRB(gutter, 22, gutter, footer == null ? 28 : _gapToFooter - _footerGap),
       children: [
-        if (kicker != null) ...[Kicker(kicker!), const SizedBox(height: 6)],
+        if (kicker != null) ...[Kicker(kicker!, maxLines: kickerLines), const SizedBox(height: 6)],
         Fig(title, style: displayStyle),
         ...children,
       ],
@@ -1035,16 +1039,20 @@ class SelectPill extends StatelessWidget {
 
 /// A form field that opens a choice card: the current value (or a faint placeholder) and a caret.
 class SelectField extends StatelessWidget {
-  const SelectField({super.key, required this.value, required this.onTap, this.placeholder = 'Choose'});
+  const SelectField({super.key, required this.value, required this.onTap, this.placeholder = 'Choose', this.minHeight});
   final String? value;
   final VoidCallback? onTap;
   final String placeholder;
+
+  /// For fields side by side that should stay one height whatever they hold.
+  final double? minHeight;
 
   @override
   Widget build(BuildContext context) => Pressable(
         label: value ?? placeholder,
         onTap: onTap,
         child: Container(
+          constraints: minHeight == null ? null : BoxConstraints(minHeight: minHeight!),
           padding: const EdgeInsets.fromLTRB(17, 15, 15, 15),
           decoration: surface(radius: rCard, shadow: e1),
           child: Row(children: [

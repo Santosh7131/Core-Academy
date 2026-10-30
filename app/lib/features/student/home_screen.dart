@@ -227,7 +227,7 @@ class _CourseRow extends StatelessWidget {
     final closes = f.parseTime(course['closes_at']);
     return RowTile(
       title: '${course['name']}',
-      meta: open == 0 ? 'No test open right now' : '${f.count(open, 'test')} open${closes == null ? '' : ' · closes ${f.when(closes)}'}',
+      meta: open == 0 ? 'No test open right now' : '${f.count(open, 'test')} open${closes == null ? '' : ' · closes ${f.whenDate(closes)}'}',
       trailing: open > 0 ? TagChip('$open open', tone: Tone.success) : null,
       chevron: true,
       onTap: onTap,

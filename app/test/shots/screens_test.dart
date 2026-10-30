@@ -30,6 +30,7 @@ import 'package:core_academy/features/teacher/teacher_routes.dart';
 import 'package:core_academy/features/teacher/setup_screen.dart';
 import 'package:core_academy/features/teacher/students_screens.dart';
 import 'package:core_academy/features/teacher/share_code_screen.dart';
+import 'package:core_academy/features/teacher/tests_screens.dart';
 import 'package:core_academy/theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -796,6 +797,48 @@ void main() {
       await t.tap(find.text('Delete this course'));
       await _settle(t);
     });
+  });
+
+  // A test that opens tomorrow and closes four days later: the Day box and the lines under it say which day and date each is.
+  shotTest('tests: when a test opens and closes', (t) async {
+    _sessionAs(role: 'teacher', tuitions: tutorTuition);
+    routes['/teacher/subjects'] = (_) => {'subjects': <Object?>[]};
+    routes['/teacher/courses/c-1'] = (_) => {
+          'course': {'id': 'c-1', 'name': 'Spoken English, Batch 1', 'people': 14},
+          'people': <Object?>[],
+          'tests': <Object?>[],
+        };
+    routes['/teacher/tests/t-9'] = (_) => {
+          'test': {
+            'id': 't-9', 'title': 'Unit 2 quiz', 'course_id': 'c-1', 'course': 'Spoken English, Batch 1', 'class_level': null, 'subject_id': null,
+            'time_limit_min': 15, 'opens_at': _iso(const Duration(days: 1)), 'closes_at': _iso(const Duration(days: 4)), 'status': 'draft',
+            'shuffle': true, 'assign_group': false, 'assign_all': false, 'attempts': 0,
+          },
+          'questions': <Object?>[],
+          'students': <Object?>[],
+        };
+    await _both(t, 'test-times', () => const TestEditor(id: 't-9'));
+  });
+
+  // A posted test that opened yesterday and closes in three hours: the kicker and the Opens and Closes rows name the day and date.
+  shotTest('tests: a posted test', (t) async {
+    _sessionAs(role: 'teacher', tuitions: tutorTuition);
+    routes['/teacher/tests/t-9/results'] = (_) => {
+          'test': {
+            'id': 't-9', 'title': 'Unit 1 quiz', 'status': 'published', 'course_id': 'c-1', 'course': 'Spoken English, Batch 1', 'class_level': null,
+            'subject': null, 'time_limit_min': 15, 'opens_at': _iso(const Duration(days: -1)), 'closes_at': _iso(const Duration(hours: 3)), 'shuffle': true,
+          },
+          'summary': {'average_pct': 0.62, 'high_pct': 0.9, 'low_pct': 0.3, 'submitted': 6, 'assigned': 14, 'missed': 0, 'writing': 3},
+          'students': [
+            {
+              'id': 's1', 'display_name': 'Aarav Kumar', 'status': 'submitted', 'submitted_at': _iso(const Duration(hours: -2)), 'time_taken_sec': 600,
+              'attempt_no': 1, 'auto_submitted': false, 'score': 7, 'max_score': 10, 'attempt_id': 'a1',
+            },
+            {'id': 's2', 'display_name': 'Diya Menon', 'status': 'writing'},
+          ],
+          'questions': <Object?>[],
+        };
+    await _both(t, 'test-page', () => const TestResultsScreen(id: 't-9'));
   });
 
   shotTest('courses: adding people', (t) async {
