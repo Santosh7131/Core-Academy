@@ -9,6 +9,7 @@ import { customLevels, isClassNumber, levelIn, levelLabel, studyOf } from '../li
 import { wrapBareMath } from '../lib/latex-json.ts';
 import { verdict, type Pick, type Votes } from '../lib/votes.ts';
 import { mustKeepOrder } from '../lib/questions.ts';
+import { cleanPlaced, joinParts, looksCut, placed, type Part, type Placed } from '../lib/pieces.ts';
 import { asciiDigits, hasIndicText, indicLabelIndex, namesIndicLanguage } from '../lib/text.ts';
 import { declaredSize, deleteObjects, MAX_IMAGE_BYTES, maybeViewUrl, objectSize, readObject, uploadUrl, viewUrl } from '../lib/storage.ts';
 import { defaultSubject, ensureGroup, ownChapter, ownImageKey, taughtSubject } from '../lib/tuition.ts';
@@ -583,7 +584,7 @@ ${lines.join('\n')}
 
 type Extracted = {
   number?: unknown; kind?: unknown; text?: unknown; options?: unknown; needs_diagram?: unknown; chapter_guess?: unknown; printed_answer?: unknown;
-  unclear?: unknown;
+  unclear?: unknown; question_box?: unknown; diagram_box?: unknown; continues_on_next_page?: unknown; continues_from_previous_page?: unknown;
 };
 
 /** A box AI leaves where the page itself cannot be read (some PDFs print ■ for every subscript). */
@@ -593,7 +594,7 @@ function readPrompt(p: { study: string | null; subject: string | null }, pageNo:
   const what = p.study != null ? `a ${p.study}${p.subject ? ` ${p.subject}` : ''} question paper` : 'a CBSE question paper';
   return `This image is page ${pageNo} of ${what}.
 Transcribe every question printed on this page, in order, and any answer key printed on it, as JSON:
-{"questions":[{"number":"<question number as printed>","kind":"mcq" or "other","text":"<question text>","options":["<a>","<b>","<c>","<d>"],"needs_diagram":true or false,"unclear":true or false,"chapter_guess":"<chapter>","printed_answer":"<answer printed for it, or empty>"}],
+{"questions":[{"number":"<question number as printed>","kind":"mcq" or "other","text":"<question text>","options":["<a>","<b>","<c>","<d>"],"needs_diagram":true or false,"diagram_box":[x1,y1,x2,y2] or null,"question_box":[x1,y1,x2,y2],"continues_on_next_page":true or false,"continues_from_previous_page":true or false,"unclear":true or false,"chapter_guess":"<chapter>","printed_answer":"<answer printed for it, or empty>"}],
  "answer_key":[{"number":"<question number>","answer":"<the option as printed, e.g. b>"}]}
 Rules:
 - Copy the wording exactly. Write all maths, formulas and chemical equations in LaTeX inside $...$, e.g. $\\frac{3}{4}$, $x^2$, $\\sqrt{2}$, $90^\\circ$, $H_2O$.
@@ -602,6 +603,10 @@ Rules:
 - Some pages cannot be read in places: smudged, cut off, or printed as boxes such as ${BOX} (a PDF can show every subscript that way). Each box stands for exactly one missing character, so "t${BOX}${BOX}${BOX}" had three, such as "n+1". Restore a box only when the question's own formula or wording forces it: "t${BOX} = 3n - 4" can only be $t_n = 3n - 4$, and "t${BOX} = 7 and t${BOX}${BOX}${BOX} = 2t${BOX}" is $t_1 = 7$ and $t_{n+1} = 2t_n$. Never pick a number, letter or sign that nothing forces: "t${BOX} - t${BOX}" stays "$t_${BOX} - t_${BOX}$", because nothing says which terms. Set "unclear": true for every question where you filled anything in or kept a ${BOX}.
 - "mcq" only when exactly four options are printed. Give the option text without its label, in printed order: the label may be (a)/(A)/(i)/(1) or, in Hindi and Tamil papers, (क)(ख)(ग)(घ), (अ)(ब)(स)(द), (அ)(ஆ)(இ)(ஈ). Otherwise use "other" with "options": [].
 - needs_diagram is true when the question depends on a figure, graph or diagram.
+- Boxes are fractions of the page picture: [x1, y1, x2, y2] with 0,0 at the top left corner and 1,1 at the bottom right corner (x1 is the left edge, y1 the top edge, x2 the right edge, y2 the bottom edge).
+- question_box covers the whole question as printed: its number, text, figure and options.
+- diagram_box covers only the figure, graph or diagram that belongs to the question, with its labels. It never includes the question text or the options. Use null when the question has no figure.
+- A question can be cut by the page edge. If the last question on this page goes on over the page, set continues_on_next_page to true and give only what is printed here. If this page starts with the rest of a question from the page before, such as its last options, give it as one item with "number": "", the text printed there (empty when there are only options), the options printed there (even when there are fewer than four) and continues_from_previous_page true.
 - chapter_guess must be one of: ${chapters.length ? chapters.map((n) => JSON.stringify(n)).join(', ') : '(none listed, so name the chapter or topic in a few words)'}; use "" if unsure.
 - Do not solve anything. printed_answer is only an answer the page itself gives for that question: "Ans: (b)", "उत्तर: (ख)", "விடை: ஆ", a ticked or circled option, or the answer written under it. Otherwise "". Give it as printed, e.g. b, 2, ख or ஆ.
 - answer_key is an answer key printed on this page, such as "Answers: 1. (b) 2. (c)" or "उत्तर: 1. (ख) 2. (ग)", in printed order; [] when there is none. A page may hold only an answer key.
@@ -748,6 +753,127 @@ async function readPageWithAI(T: string, userId: string, prompt: string, dataUrl
   throw lastError ?? new Error('No model could read this page.');
 }
 
+// ---------------------------------------------------------------- questions that run over a page edge
+
+type JoinRow = {
+  id: string; page_no: number; seq: number; status: string; number_label: string | null; kind: 'mcq' | 'other'; text: string;
+  options: string[] | null; needs_diagram: boolean; ai_note: string | null; answer_checked: boolean; question_boxes: Placed[] | null;
+  figure_box: Placed | null; cont_next: boolean; cont_prev: boolean; keep_apart: boolean; chapter_id: string | null; ai_chapter_guess: string | null;
+};
+
+const JOIN_COLS = `id, page_no, seq, status, number_label, kind, text, options, needs_diagram, ai_note, answer_checked, question_boxes, figure_box,
+  cont_next, cont_prev, keep_apart, chapter_id, ai_chapter_guess`;
+
+const asJson = (v: unknown) => (v == null ? null : JSON.stringify(v));
+
+const partOf = (r: JoinRow): Part => ({
+  number_label: r.number_label, kind: r.kind, text: r.text, options: r.options ?? [], needs_diagram: r.needs_diagram, unclear: r.ai_note === 'unclear',
+  question_boxes: r.question_boxes, figure_box: r.figure_box, cont_next: r.cont_next, cont_prev: r.cont_prev,
+});
+
+/** What a join changes in a draft, kept in joined_from so the join can be undone. */
+const fieldsOf = (r: JoinRow) => ({
+  number_label: r.number_label, kind: r.kind, text: r.text, options: r.options ?? [], needs_diagram: r.needs_diagram, ai_note: r.ai_note,
+  answer_checked: r.answer_checked, question_boxes: r.question_boxes, figure_box: r.figure_box, cont_next: r.cont_next, cont_prev: r.cont_prev,
+});
+type Fields = ReturnType<typeof fieldsOf>;
+type Snapshot = { before: Fields; part: Fields & { page_no: number; seq: number; chapter_id: string | null; ai_chapter_guess: string | null } };
+
+/** Held for the length of the transaction: the pass that joins questions and the page reads take it so they never overlap. */
+const lockPaper = (cx: Db, paperId: string) => cx.query('select pg_advisory_xact_lock(hashtext($1))', [`join:${paperId}`]);
+
+/** Puts `rest` (the next page's first item) onto `first` (the last question of the page before) and deletes `rest`. False when they cannot be one. */
+async function mergeRows(first: JoinRow, rest: JoinRow, cx: Db) {
+  const merged = joinParts(partOf(first), partOf(rest));
+  if (!merged) return false;
+  if (!(await q1('delete from paper_drafts where id = $1 returning id', [rest.id], cx))) return false;
+  const snapshot: Snapshot = {
+    before: fieldsOf(first),
+    part: { ...fieldsOf(rest), page_no: rest.page_no, seq: rest.seq, chapter_id: rest.chapter_id, ai_chapter_guess: rest.ai_chapter_guess },
+  };
+  await cx.query(
+    `update paper_drafts set text = $2, options = $3, kind = $4, needs_diagram = $5, question_boxes = $6::jsonb, figure_box = $7::jsonb,
+                             cont_next = $8, joined = true, joined_from = $9::jsonb,
+                             ai_note = case when $10::boolean then 'unclear' else null end,
+                             answer_checked = correct_option is not null or $10::boolean
+      where id = $1`,
+    [first.id, merged.text, merged.options, merged.kind, merged.needs_diagram, asJson(merged.question_boxes), asJson(merged.figure_box), merged.cont_next,
+      JSON.stringify(snapshot), merged.unclear],
+  );
+  // The row goes on as the question, so a third page of the same question can join it too.
+  Object.assign(first, { text: merged.text, options: merged.options, kind: merged.kind, needs_diagram: merged.needs_diagram,
+    question_boxes: merged.question_boxes, figure_box: merged.figure_box, cont_next: merged.cont_next, ai_note: merged.unclear ? 'unclear' : null });
+  return true;
+}
+
+/**
+ * Puts back together each question that ran over a page edge: the last question of a page that goes on, and the next page's
+ * first item, which is the rest of it. Safe to run again and again: it does only what is not yet done, and it waits for a page
+ * that has not been read yet. A cut question or a rest with no partner once the neighbouring page has been read is held for the
+ * tutor ("unclear"), with its picture to check it against. The caller holds a transaction.
+ */
+async function joinSplits(paperId: string, cx: Db) {
+  await lockPaper(cx, paperId);
+  const pages = new Map(
+    (await q<{ page_no: number; ai_status: string }>('select page_no, ai_status from paper_pages where paper_id = $1', [paperId], cx)).map((p) => [p.page_no, p.ai_status]),
+  );
+  const rows = await q<JoinRow>(`select ${JOIN_COLS} from paper_drafts where paper_id = $1 order by page_no, seq`, [paperId], cx);
+  const byPage = new Map<number, JoinRow[]>();
+  for (const r of rows) byPage.set(r.page_no, [...(byPage.get(r.page_no) ?? []), r]);
+  // The row that ends each page, as joins change it.
+  const tail = new Map<number, JoinRow>([...byPage].map(([n, list]) => [n, list[list.length - 1]]));
+  // No page, or a page that was read, has nothing more to say about a question next to it.
+  const settled = (n: number) => !pages.has(n) || pages.get(n) === 'done';
+  const hold = (r: JoinRow) =>
+    cx.query(`update paper_drafts set ai_note = 'unclear', answer_checked = true where id = $1 and status = 'draft' and ai_note is null`, [r.id]);
+
+  for (const n of [...byPage.keys()].sort((a, b) => a - b)) {
+    const list = byPage.get(n)!;
+    const rest = list[0];
+    if (rest.status !== 'draft' || !rest.cont_prev || rest.keep_apart) continue;
+    const first = tail.get(n - 1);
+    if (first && first.status === 'draft' && (first.cont_next || looksCut(partOf(first))) && (await mergeRows(first, rest, cx))) {
+      list.shift();
+      if (!list.length) tail.set(n, first);
+      continue;
+    }
+    if (settled(n - 1)) await hold(rest);
+  }
+
+  // A question still cut at the bottom of its page, whose next page has been read and gave no rest of it.
+  const endsOn = new Map<JoinRow, number>();
+  for (const [n, r] of tail) endsOn.set(r, Math.max(endsOn.get(r) ?? 0, n));
+  for (const [r, n] of endsOn) if (r.status === 'draft' && r.cont_next && settled(n + 1)) await hold(r);
+}
+
+/**
+ * Takes a joined question apart again: the first part goes back to what it was and the second part comes back as a question of its
+ * own on its page. With keepApart (the tutor's undo) the two are not joined again; without it (a page being read again) they can be.
+ * Returns the two rows, or none when the question was not joined.
+ */
+async function unjoin(id: string, cx: Db, keepApart: boolean) {
+  const found = await q1<{ paper_id: string }>('select paper_id from paper_drafts where id = $1', [id], cx);
+  if (!found) return [];
+  await lockPaper(cx, found.paper_id);
+  const p = await q1<JoinRow & { paper_id: string; joined: boolean; joined_from: Snapshot | null }>('select * from paper_drafts where id = $1 for update', [id], cx);
+  if (!p?.joined || !p.joined_from) return [];
+  const { before: b, part } = p.joined_from;
+  await cx.query(
+    `update paper_drafts set number_label = $2, kind = $3, text = $4, options = $5, needs_diagram = $6, ai_note = $7, answer_checked = $8,
+                             question_boxes = $9::jsonb, figure_box = $10::jsonb, cont_next = $11, cont_prev = $12, joined = false, joined_from = null
+      where id = $1`,
+    [id, b.number_label, b.kind, b.text, b.options, b.needs_diagram, b.ai_note, b.answer_checked, asJson(b.question_boxes), asJson(b.figure_box), b.cont_next, b.cont_prev],
+  );
+  const rest = await q1(
+    `insert into paper_drafts (paper_id, page_no, seq, number_label, kind, text, options, chapter_id, ai_chapter_guess, needs_diagram, ai_note,
+                               answer_checked, question_boxes, figure_box, cont_next, cont_prev, keep_apart)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15, $16, $17) returning *`,
+    [p.paper_id, part.page_no, part.seq, part.number_label, part.kind, part.text, part.options, part.chapter_id, part.ai_chapter_guess, part.needs_diagram,
+      part.ai_note, part.answer_checked, asJson(part.question_boxes), asJson(part.figure_box), part.cont_next, part.cont_prev, keepApart],
+  );
+  return [await q1('select * from paper_drafts where id = $1', [id], cx), rest];
+}
+
 /** Reads one page with AI and replaces that page's unchecked drafts. */
 paperRoutes.post('/papers/:id/pages/:n/read', async (c) => {
   const T = tuitionOf(c).id;
@@ -783,6 +909,15 @@ paperRoutes.post('/papers/:id/pages/:n/read', async (c) => {
 
   const byName = new Map(chapters.map((ch) => [ch.name.toLowerCase(), ch.id]));
   await tx(async (cx) => {
+    // Pages are read side by side: one at a time here, so two never join the same pair of questions.
+    await lockPaper(cx, id);
+    // A question joined from this page and the next is taken apart first, so reading a page again starts from what the pages say.
+    const joinedHere = await q<{ id: string }>(
+      `select id from paper_drafts where paper_id = $1 and joined and status = 'draft' and (page_no = $2 or (joined_from #>> '{part,page_no}')::int = $2)`,
+      [id, pageNo],
+      cx,
+    );
+    for (const r of joinedHere) await unjoin(r.id, cx, false);
     // The page's unchecked drafts go, and so do its repeats that were skipped for being repeats.
     await cx.query(
       `delete from paper_drafts where paper_id = $1 and page_no = $2 and (status = 'draft' or (status = 'discarded' and ai_note = 'duplicate'))`,
@@ -792,28 +927,39 @@ paperRoutes.post('/papers/:id/pages/:n/read', async (c) => {
     for (const it of items) {
       // Hindi and Tamil digits become 0 to 9, which every solver and the maths renderer read.
       const text = asciiDigits(clip(it.text, 4000));
-      if (!text) continue;
       let options = Array.isArray(it.options) ? it.options.map((o) => asciiDigits(clip(o, 500))).filter(Boolean) : [];
+      // A question can run over the page edge: this page holds its first part, or its first item is the rest of one from the page before.
+      const cutNext = it.continues_on_next_page === true;
+      const cutPrev = it.continues_from_previous_page === true;
+      // The rest of a question can be only its last options.
+      if (!text && !(cutPrev && options.length)) continue;
       const kind = it.kind === 'mcq' && options.length === 4 ? 'mcq' : 'other';
-      if (kind === 'other') options = [];
+      // Half a question keeps the options it has, for the join (or the tutor) to finish.
+      if (kind === 'other' && !cutNext && !cutPrev) options = [];
       const guess = clip(it.chapter_guess, 120);
       const printed = kind === 'mcq' ? answerIndex(it.printed_answer, options) : null;
       // Part of it could not be read (still a box in it, or AI filled something in): an answer
       // worked out from a guess would be a guess too, so AI leaves it until the teacher has checked
       // the question and says it looks right (PATCH /drafts/:id with confirmed).
       const unclear = it.unclear === true || [text, ...options].some((s) => s.includes(BOX));
+      // Half a question is not answered either, until it is joined to its other half (see joinSplits).
+      const held = unclear || cutNext || cutPrev;
+      // Where the question is on the page, and where its figure is (only for a question that needs one): the app shows and cuts from these.
+      const whole = placed(pageNo, it.question_box);
+      const figure = it.needs_diagram === true ? placed(pageNo, it.diagram_box) : null;
       await cx.query(
         `insert into paper_drafts (paper_id, page_no, seq, number_label, kind, text, options, chapter_id, ai_chapter_guess, needs_diagram,
-                                   correct_option, answer_source, answer_checked, ai_note)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+                                   correct_option, answer_source, answer_checked, ai_note, question_boxes, figure_box, cont_next, cont_prev)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16::jsonb, $17, $18)`,
         [id, pageNo, seq++, clip(it.number, 20) || null, kind, text, options, byName.get(guess.toLowerCase()) ?? page.paper_chapter ?? null,
-          guess || null, it.needs_diagram === true, printed, printed == null ? null : 'key', printed != null || unclear,
-          unclear ? 'unclear' : null],
+          guess || null, it.needs_diagram === true, printed, printed == null ? null : 'key', printed != null || held,
+          unclear ? 'unclear' : null, asJson(whole ? [whole] : null), asJson(figure), cutNext, cutPrev],
       );
     }
     // Pages are read side by side, so repeats between pages are skipped by the next answers call,
     // which sees every page that has finished by then.
     await cx.query(`update paper_pages set ai_status = 'done', read_at = now(), answer_key = $2 where id = $1`, [page.id, JSON.stringify(key)]);
+    await joinSplits(id, cx);
   });
   const drafts = await q('select * from paper_drafts where paper_id = $1 and page_no = $2 order by seq', [id, pageNo]);
   return c.json({ page_no: pageNo, drafts, answer_key: key.length });
@@ -1021,6 +1167,7 @@ paperRoutes.post('/papers/:id/answers', async (c) => {
   const p = await tq1(T, `select ${PAPER_COLS} from papers p where p.id = $1 and p.tuition_id = @T`, [id]);
   if (!p) throw notFound('This paper');
   if (p.class_level == null && !p.course_id) throw new HttpError(409, 'needs_details', 'Choose the class of this paper first.');
+  await tx((cx) => joinSplits(id, cx));
   await skipRepeats(id, pool);
   const fromKey = await applyAnswerKeys(id);
   await fillChapters(id);
@@ -1312,9 +1459,16 @@ paperRoutes.patch('/drafts/:id', async (c) => {
   const reworded = confirmed || text !== d.text || kind !== d.kind || JSON.stringify(options ?? []) !== JSON.stringify(d.options ?? []);
   // A question the teacher has marked, reworded or brought back is hers now: AI never replaces it (see /papers/:id/replace).
   const handled = reworded || marking || (d.status === 'discarded' && status === 'draft');
+  // Where the figure was cut from, so cutting it again starts there. null forgets it.
+  let figure: Placed | null | undefined;
+  if ('figure_box' in b) {
+    figure = b.figure_box === null ? null : cleanPlaced(b.figure_box);
+    if (b.figure_box !== null && !figure) throw bad('figure_box must give the page and a box of four fractions of it.');
+  }
   const row = await q1(
     `update paper_drafts set text = $2, options = $3, kind = $4, correct_option = $5, chapter_id = $6,
-                             needs_diagram = $7, image_key = $8, status = $9,
+                             needs_diagram = $7, image_key = $8, status = $9, figure_box = $13::jsonb,
+                             cont_next = cont_next and not $11::boolean, cont_prev = cont_prev and not $11::boolean,
                              answer_source = case when $10 then (case when $5::smallint is null then null else 'teacher' end) else answer_source end,
                              ai_confidence = case when $10 then null else ai_confidence end,
                              ai_note = case when $11 or ($10 and $5::smallint is not null and ai_note in ('disagree', 'unsure', 'writer_differs'))
@@ -1337,9 +1491,24 @@ paperRoutes.patch('/drafts/:id', async (c) => {
       marking,
       reworded,
       handled,
+      asJson(figure === undefined ? d.figure_box : figure),
     ],
   );
   return c.json({ draft: { ...row, image_url: await maybeViewUrl(row.image_key) } });
+});
+
+/** The tutor says a question AI joined from two pages was two: it goes back to what it was, and the second part to its own page. */
+paperRoutes.post('/drafts/:id/unjoin', async (c) => {
+  const id = uuid(c.req.param('id'), 'draft id');
+  const d = await tq1(
+    tuitionOf(c).id,
+    'select d.* from paper_drafts d join papers p on p.id = d.paper_id where d.id = $1 and p.tuition_id = @T',
+    [id],
+  );
+  if (!d) throw notFound('This question');
+  if (!d.joined || d.status !== 'draft') throw new HttpError(409, 'not_joined', 'This question was not joined from two pages.');
+  const rows = (await tx((cx) => unjoin(id, cx, true))).filter(Boolean);
+  return c.json({ drafts: await Promise.all(rows.map(async (r: any) => ({ ...r, image_url: await maybeViewUrl(r.image_key) }))) });
 });
 
 /** Saves every checked multiple-choice draft into the question bank. */

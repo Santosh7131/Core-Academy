@@ -74,4 +74,8 @@ abstract final class Ph {
   static const graduationCap = IconData(0xe62c, fontFamily: _family);
   static const userMinus = IconData(0xe4ce, fontFamily: _family);
   static const circle = IconData(0xe18a, fontFamily: _family);
+  static const arrowsOutSimple = IconData(0xe0a6, fontFamily: _family);
+  static const linkSimple = IconData(0xe2e6, fontFamily: _family);
+  static const scissors = IconData(0xeae0, fontFamily: _family);
+  static const calendarBlank = IconData(0xe10a, fontFamily: _family);
 }

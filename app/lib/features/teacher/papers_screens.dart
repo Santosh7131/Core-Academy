@@ -13,8 +13,10 @@ import '../../theme.dart';
 import '../../ui/kit.dart';
 import '../../ui/math_text.dart';
 import '../../ui/option_mark.dart';
+import '../../ui/plain_math.dart';
 import '../../ui/tokens.dart';
 import 'common.dart';
+import 'page_pictures.dart';
 import 'paper_runner.dart' show suggestedLimit;
 import 'pdf_pages.dart';
 import 'questions_screens.dart' show MathToolbar, insertInto, pickAndUploadImage;
@@ -260,9 +262,12 @@ enum _Filter { toCheck, ready, other, saved, skipped }
 /// find), reads every page and looks for the answers; the teacher checks and saves. Once every
 /// question is saved it shows the paper as a named set that can be published as a test.
 class PaperReviewScreen extends StatefulWidget {
-  const PaperReviewScreen({super.key, required this.id, this.autoRead = false});
+  const PaperReviewScreen({super.key, required this.id, this.autoRead = false, this.pictures});
   final String id;
   final bool autoRead;
+
+  /// The paper's page pictures. Left out, each page is downloaded from its address; the tests and the picture harness hand in their own.
+  final PaperPictures? pictures;
 
   @override
   State<PaperReviewScreen> createState() => _PaperReviewScreenState();
@@ -312,6 +317,13 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
 
   /// Looking at the AI drafts of a paper that is already a finished set.
   bool _review = false;
+
+  /// The pages as pictures: the check cards show parts of them, and figures are cut out of them.
+  late final _pictures = widget.pictures ?? PaperPictures();
+
+  /// Figures being cut out of their pages right now, and the ones already tried (a cut that failed is not tried again by itself).
+  final Set<String> _cutting = {};
+  final Set<String> _cutTried = {};
 
   @override
   void initState() {
@@ -421,6 +433,8 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
         _tests = (d['tests'] as List? ?? const []).cast<Map<String, dynamic>>();
         _error = null;
       });
+      _pictures.setPages(_pages);
+      _cutFigures();
     } on ApiException catch (e) {
       if (mounted) setState(() => _error = e.message);
     }
@@ -695,17 +709,23 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
 
   /// Points the list at what needs the tutor first, or at the ready questions when nothing does.
   void _summarise() {
-    final open = _drafts.where((d) => d['status'] == 'draft' && d['kind'] == 'mcq' && d['correct_option'] == null).length;
+    final open = _drafts.where((d) => (d['status'] == 'draft' && d['kind'] == 'mcq' && d['correct_option'] == null) || _isCut(d)).length;
     setState(() => _filter = open > 0 ? _Filter.toCheck : _Filter.ready);
   }
 
   bool _isReady(Map<String, dynamic> d) =>
       d['status'] == 'draft' && d['kind'] == 'mcq' && d['correct_option'] != null && (d['needs_diagram'] != true || d['image_key'] != null);
 
+  /// A question that runs over a page edge and was not put together.
+  bool _isCut(Map<String, dynamic> d) => d['status'] == 'draft' && (d['cont_next'] == true || d['cont_prev'] == true);
+
+  /// A question that needs the tutor: one to answer or fix, or one cut off at the page edge.
+  bool _needsYou(Map<String, dynamic> d) => d['status'] == 'draft' && ((d['kind'] == 'mcq' && !_isReady(d)) || _isCut(d));
+
   bool _matches(Map<String, dynamic> d) => switch (_filter) {
-        _Filter.toCheck => d['status'] == 'draft' && d['kind'] == 'mcq' && !_isReady(d),
+        _Filter.toCheck => _needsYou(d),
         _Filter.ready => _isReady(d),
-        _Filter.other => d['status'] == 'draft' && d['kind'] == 'other',
+        _Filter.other => d['status'] == 'draft' && d['kind'] == 'other' && !_isCut(d),
         _Filter.saved => d['status'] == 'saved',
         _Filter.skipped => d['status'] == 'discarded',
       };
@@ -769,29 +789,119 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
     if (c?.value != null) _patch(d, {'chapter_id': c!.value});
   }
 
+  /// Where to start cutting a question's figure: where AI said it is, else the question itself, else the middle of its page.
+  ({int page, PageBox box}) _figureStart(Map<String, dynamic> d) {
+    final at = placedOf(d['figure_box']);
+    if (at != null) return at;
+    final parts = questionParts(d);
+    if (parts.isNotEmpty) return parts.first;
+    return (page: d['page_no'] as int, box: const [0.1, 0.25, 0.9, 0.55]);
+  }
+
   Future<void> _addDiagram(Map<String, dynamic> d) async {
-    final source = await showCentredCard<ImageSource>(
+    final onPage = _pictures.url(_figureStart(d).page) != null;
+    final how = await showCentredCard<Object>(
       context,
       title: 'Add the diagram',
       builder: (ctx) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Fig('Photograph or crop just the figure for this question.', style: bodyStyle.copyWith(color: muted)),
+        Fig(onPage ? 'Cut just the figure out of the page, or take a photo of it.' : 'Photograph or crop just the figure for this question.', style: bodyStyle.copyWith(color: muted)),
         const SizedBox(height: 14),
+        if (onPage) ...[
+          SecondaryButton('Cut it from the page', icon: Ph.scissors, onTap: () => Navigator.of(ctx).pop('page')),
+          const SizedBox(height: 10),
+        ],
         SecondaryButton('Take a photo', icon: Ph.camera, onTap: () => Navigator.of(ctx).pop(ImageSource.camera)),
         const SizedBox(height: 10),
         SecondaryButton('Choose from gallery', icon: Ph.images, onTap: () => Navigator.of(ctx).pop(ImageSource.gallery)),
       ]),
     );
-    if (source == null || !mounted) return;
+    if (how == null || !mounted) return;
+    if (how == 'page') return _cutAgain(d);
     try {
-      final up = await pickAndUploadImage(context, source);
+      final up = await pickAndUploadImage(context, how as ImageSource);
       if (up != null) await _patch(d, {'image_key': up.key});
     } on ApiException catch (e) {
       if (mounted) showProblem(context, e);
     }
   }
 
+  /// Cuts out the figure of every question the reader marked one on, one after another, and attaches it. A cut that fails is not tried
+  /// again by itself: the card goes back to asking for the figure, and "Add the figure" cuts it by hand.
+  Future<void> _cutFigures() async {
+    for (final d in List<Map<String, dynamic>>.of(_drafts)) {
+      if (!mounted) return;
+      if (d['status'] != 'draft' || d['needs_diagram'] != true || d['image_key'] != null) continue;
+      if (placedOf(d['figure_box']) == null || _cutTried.contains('${d['id']}')) continue;
+      _cutTried.add('${d['id']}');
+      await _cutOne(d);
+    }
+  }
+
+  Future<void> _cutOne(Map<String, dynamic> d) async {
+    final at = placedOf(d['figure_box'])!;
+    final id = '${d['id']}';
+    setState(() => _cutting.add(id));
+    try {
+      final page = await _pictures.image(at.page);
+      final png = page == null ? null : await cutOut(page, at.box, margin: 0.01);
+      if (png == null) return;
+      final key = await uploadFigure(png);
+      if (!mounted) return;
+      await _patch(_drafts.firstWhere((x) => x['id'] == d['id'], orElse: () => d), {'image_key': key});
+    } on ApiException {
+      // The card asks for the figure again.
+    } finally {
+      if (mounted) setState(() => _cutting.remove(id));
+    }
+  }
+
+  /// The tutor places the cut herself: the page opens with a box to drag, and the figure is cut out of what it holds.
+  Future<void> _cutAgain(Map<String, dynamic> d) async {
+    final start = _figureStart(d);
+    if (_pictures.url(start.page) == null) {
+      showProblem(context, ApiException(0, 'no_page', 'The page is not here to cut from. Take a photo of the figure instead.'));
+      return;
+    }
+    final box = await Navigator.of(context).push<List<double>>(MaterialPageRoute(builder: (_) => FigureCutScreen(pictures: _pictures, page: start.page, start: start.box)));
+    if (box == null || !mounted) return;
+    final id = '${d['id']}';
+    setState(() => _cutting.add(id));
+    try {
+      final page = await _pictures.image(start.page);
+      final png = page == null ? null : await cutOut(page, box);
+      if (png == null) throw ApiException(0, 'no_page', 'The page did not load. Try again.');
+      final key = await uploadFigure(png);
+      if (mounted) await _patch(d, {'image_key': key, 'figure_box': {'page': start.page, 'box': box}});
+    } on ApiException catch (e) {
+      if (mounted) showProblem(context, e);
+    } finally {
+      if (mounted) setState(() => _cutting.remove(id));
+    }
+  }
+
+  Future<void> _removeFigure(Map<String, dynamic> d) => _patch(d, {'image_key': null});
+
+  void _wholePage(int n) {
+    final url = _pictures.url(n);
+    if (url != null) Navigator.of(context).push(MaterialPageRoute(builder: (_) => WholePageScreen(url: url, n: n)));
+  }
+
+  /// A question AI joined from two pages was two: it goes back to the two parts AI read.
+  Future<void> _unjoin(Map<String, dynamic> d) async {
+    if (d['edited'] == true) {
+      final ok = await confirmCard(context, title: 'Undo the join?', body: 'You changed this question. It goes back to the two parts AI read, without your changes.', confirm: 'Undo the join');
+      if (!ok || !mounted) return;
+    }
+    try {
+      await api.post('/teacher/drafts/${d['id']}/unjoin');
+      await _load();
+    } on ApiException catch (e) {
+      if (mounted) showProblem(context, e);
+    }
+  }
+
   Future<void> _edit(Map<String, dynamic> d) async {
-    final changed = await Navigator.of(context).push<Map<String, dynamic>>(MaterialPageRoute(builder: (_) => DraftEditor(draft: d)));
+    final changed = await Navigator.of(context).push<Map<String, dynamic>>(MaterialPageRoute(builder: (_) => DraftEditor(draft: d, pictures: _pictures)));
     if (changed == null) return;
     final now = await _patch(d, changed);
     // Reworded and still without an answer: AI has another go at it.
@@ -1004,11 +1114,11 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
     }
     final live = _drafts.where((d) => d['status'] != 'discarded').toList();
     final ready = live.where(_isReady).length;
-    final toCheck = live.where((d) => d['status'] == 'draft' && d['kind'] == 'mcq' && !_isReady(d)).length;
+    final toCheck = live.where(_needsYou).length;
     final counts = {
       _Filter.toCheck: toCheck,
       _Filter.ready: ready,
-      _Filter.other: live.where((d) => d['status'] == 'draft' && d['kind'] == 'other').length,
+      _Filter.other: live.where((d) => d['status'] == 'draft' && d['kind'] == 'other' && !_isCut(d)).length,
       _Filter.saved: live.where((d) => d['status'] == 'saved').length,
       _Filter.skipped: _drafts.where((d) => d['status'] == 'discarded').length,
     };
@@ -1062,7 +1172,7 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
     // Questions still needing the tutor, page by page: the badges on the page strip.
     final issues = <int, int>{};
     for (final d in live) {
-      if (d['status'] == 'draft' && d['kind'] == 'mcq' && !_isReady(d)) {
+      if (_needsYou(d)) {
         final n = d['page_no'] as int;
         issues[n] = (issues[n] ?? 0) + 1;
       }
@@ -1078,6 +1188,7 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
     Widget card(Map<String, dynamic> d) => _DraftCard(
           d: d,
           ready: _isReady(d),
+          pictures: _pictures,
           onMark: d['status'] == 'draft' ? (o) => _mark(d, o) : null,
           onChapter: d['status'] == 'draft' ? () => _chooseChapter(d) : null,
           onEdit: d['status'] == 'draft' ? () => _edit(d) : null,
@@ -1086,6 +1197,11 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
           onRestore: d['status'] == 'discarded' ? () => _restore(d) : null,
           onConfirm: d['status'] == 'draft' && d['ai_note'] == 'unclear' ? () => _confirm(d) : null,
           repeatOf: _repeatOf(d),
+          cutting: _cutting.contains('${d['id']}'),
+          onWholePage: _wholePage,
+          onCutAgain: d['status'] == 'draft' ? () => _cutAgain(d) : null,
+          onRemoveFigure: d['status'] == 'draft' ? () => _removeFigure(d) : null,
+          onUnjoin: d['status'] == 'draft' && d['joined'] == true ? () => _unjoin(d) : null,
         );
 
     final facts = reading ? _readerFacts(live) : null;
@@ -1175,7 +1291,7 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
             _PagesStrip(
               pages: _pages,
               issues: issues,
-              onOpen: (pg) => Navigator.of(context).push(MaterialPageRoute(builder: (_) => _PageView(url: '${pg['image_url']}', n: pg['page_no'] as int))),
+              onOpen: (pg) => Navigator.of(context).push(MaterialPageRoute(builder: (_) => WholePageScreen(url: '${pg['image_url']}', n: pg['page_no'] as int))),
             ),
           ],
           const SizedBox(height: 18),
@@ -1427,6 +1543,9 @@ class _ReadyRow extends StatelessWidget {
     final number = '${d['number_label'] ?? ''}'.replaceAll(RegExp(r'[.)\s]+$'), '');
     final source = d['answer_source'] as String?;
     final correct = d['correct_option'] as int?;
+    // A question AI joined from two pages says so here too, so it is not missed among the ready ones.
+    final partPage = ((d['joined_from'] as Map?)?['part'] as Map?)?['page_no'];
+    final meta = d['joined'] == true && partPage is int ? 'Pages ${d['page_no']} and $partPage · Joined' : '${d['chapter'] ?? 'Page ${d['page_no']}'}';
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       Pressable(
         onTap: onTap,
@@ -1441,7 +1560,7 @@ class _ReadyRow extends StatelessWidget {
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 MathText('${d['text']}', style: rowTitleStyle, maxLines: 2),
                 const SizedBox(height: 2),
-                Fig('${d['chapter'] ?? 'Page ${d['page_no']}'}', style: labelStyle, maxLines: 1),
+                Fig(meta, style: labelStyle, maxLines: 1),
               ]),
             ),
             const SizedBox(width: 10),
@@ -1643,6 +1762,7 @@ class _DraftCard extends StatelessWidget {
   const _DraftCard({
     required this.d,
     required this.ready,
+    required this.pictures,
     this.onMark,
     this.onChapter,
     this.onEdit,
@@ -1650,10 +1770,18 @@ class _DraftCard extends StatelessWidget {
     this.onDiscard,
     this.onRestore,
     this.onConfirm,
+    this.onWholePage,
+    this.onCutAgain,
+    this.onRemoveFigure,
+    this.onUnjoin,
+    this.cutting = false,
     this.repeatOf,
   });
   final Map<String, dynamic> d;
   final bool ready;
+
+  /// The paper's page pictures: a question AI could not read whole is shown as it is printed.
+  final PaperPictures pictures;
   final ValueChanged<int>? onMark;
   final VoidCallback? onChapter;
   final VoidCallback? onEdit;
@@ -1664,6 +1792,21 @@ class _DraftCard extends StatelessWidget {
   /// For a question AI could not read whole: the teacher says it looks right, and AI answers it.
   final VoidCallback? onConfirm;
 
+  /// Opens a whole page picture (its number).
+  final void Function(int page)? onWholePage;
+
+  /// Cuts the question's figure out of its page again, by hand.
+  final VoidCallback? onCutAgain;
+
+  /// Takes the figure off the question.
+  final VoidCallback? onRemoveFigure;
+
+  /// Takes a question AI joined from two pages apart again.
+  final VoidCallback? onUnjoin;
+
+  /// The question's figure is being cut out of its page right now.
+  final bool cutting;
+
   /// For a skipped repeat, the question it repeats ("Q 4 on page 1").
   final String? repeatOf;
 
@@ -1673,6 +1816,54 @@ class _DraftCard extends StatelessWidget {
   bool get _waiting => d['ai_votes'] != null && d['correct_option'] == null;
 
   bool get _needsFigure => d['needs_diagram'] == true && d['image_key'] == null;
+
+  /// The question runs over a page edge and was not put together: its other half was not found, or this is a rest with no beginning.
+  bool get _cut => d['status'] == 'draft' && (d['cont_next'] == true || d['cont_prev'] == true);
+
+  /// AI put this question together from two pages.
+  bool get _joined => d['joined'] == true;
+
+  /// A box AI left where the page could not be read (■) is in the text or an option.
+  bool get _hasBox => ['${d['text']}', for (final o in (d['options'] as List?) ?? const []) '$o'].any((s) => s.contains('■'));
+
+  /// A question AI could not read whole: the picture of it from the paper goes above what AI typed.
+  bool get _problem => d['status'] == 'draft' && (_cut || d['ai_note'] == 'unclear' || d['ai_note'] == 'no_option');
+
+  List<({int page, PageBox box})> get _parts => questionParts(d);
+
+  /// Whether there is a picture of the question from the paper to check it against.
+  bool get _pictureShown => _problem && _parts.isNotEmpty && pictures.url(_parts.first.page) != null;
+
+  String get _against => _pictureShown ? 'the picture' : 'the page';
+
+  /// "page 2", or "pages 1 and 2" for a question joined from two.
+  String get _pages {
+    final pages = <int>{..._parts.map((p) => p.page), d['page_no'] as int};
+    final part = ((d['joined_from'] as Map?)?['part'] as Map?)?['page_no'];
+    if (_joined && part is int) pages.add(part);
+    final list = pages.toList()..sort();
+    return list.length == 1 ? 'page ${list.first}' : 'pages ${list.sublist(0, list.length - 1).join(', ')} and ${list.last}';
+  }
+
+  /// For a joined question: which options came from the second page, and which page that was.
+  ({int from, int page})? get _join {
+    final snap = d['joined_from'];
+    if (!_joined || snap is! Map) return null;
+    final page = (snap['part'] as Map?)?['page_no'];
+    if (page is! int) return null;
+    return (from: ((snap['before'] as Map?)?['options'] as List? ?? const []).length, page: page);
+  }
+
+  String get _joinDetail {
+    final j = _join;
+    if (j == null) return '';
+    final total = ((d['options'] as List?) ?? const []).length;
+    final letters = [for (var i = j.from; i < total && i < 4; i++) _letter(i)];
+    const head = 'It ran over the page, so AI joined the two parts. ';
+    if (letters.isEmpty) return '${head}The end of it was on page ${j.page}.';
+    final list = letters.length == 1 ? letters.first : '${letters.sublist(0, letters.length - 1).join(', ')} and ${letters.last}';
+    return '$head${letters.length == 1 ? 'Option' : 'Options'} $list ${letters.length == 1 ? 'was' : 'were'} on page ${j.page}.';
+  }
 
   /// The option each check chose for a question it could not settle: writer, solver, checker, tiebreak (0 to 3).
   Map<String, int> get _picks => {
@@ -1701,20 +1892,23 @@ class _DraftCard extends StatelessWidget {
     final correct = d['correct_option'] as int?;
     if (d['status'] == 'discarded') return (d['ai_note'] == 'replaced' ? 'Replaced' : 'Skipped', Tone.neutral);
     if (d['status'] == 'saved') return ('Saved', Tone.success);
+    if (_cut) return ('Cut off', Tone.warning);
     if (d['kind'] != 'mcq') return ('Not multiple choice', Tone.neutral);
+    if (cutting) return ('Cutting the diagram', Tone.ai);
     if (correct == null) {
       if (_needsFigure) return ('Needs a figure', Tone.warning);
       if (_waiting) return ('Second look', Tone.ai);
       return switch (d['ai_note']) {
         'disagree' || 'unsure' => ('AI is split', Tone.warning),
         'unchecked' => ('Not checked yet', Tone.warning),
-        'unclear' => ('Part unreadable', Tone.warning),
+        'unclear' => (_hasBox ? 'Misprinted' : 'Check it', Tone.warning),
         'no_option' => ('May be misprinted', Tone.warning),
         _ => ('Mark the answer', Tone.warning),
       };
     }
     if (_needsFigure) return ('Needs a figure', Tone.warning);
     if (d['ai_note'] == 'writer_differs') return ('Check the answer', Tone.warning);
+    if (_joined) return ('Joined', Tone.ai);
     return ('Ready', Tone.success);
   }
 
@@ -1727,12 +1921,17 @@ class _DraftCard extends StatelessWidget {
     if (d['ai_note'] == 'replaced') return ('AI was not sure of the answer to this one, so a new question took its place. Bring it back if you want it anyway.', false);
     if (d['ai_note'] == 'duplicate') return ('Same as ${repeatOf ?? 'an earlier question'}, so it was skipped.', false);
     if (d['ai_note'] == 'in_bank') return ('You already have this question, so it was not saved again.', false);
-    if (correct == null && _needsFigure) return ('AI cannot see figures. Add a photo of it, or skip the question.', true);
+    if (_cut && d['cont_next'] == true) return ('This question runs over the page, and the rest of it was not found. Check it against $_against.', true);
+    if (_cut) return ('This looks like the rest of a question from the page before, and that question was not found. Check it against $_against.', true);
+    if (correct == null && _needsFigure) {
+      return cutting ? ('Cutting the diagram out of the page.', false) : ('AI cannot see figures. Cut the diagram from the page or add a photo of it, or skip the question.', true);
+    }
     if (correct == null && _waiting) return ('AI is taking a second look. You can mark it yourself meanwhile.', false);
     return switch (d['ai_note']) {
       'unchecked' => ('AI could not check this one just now. It tries again by itself a little later, or you can mark it yourself.', true),
-      'unclear' => ('Part of this could not be read, so AI did not answer it. Check it against the page.', true),
-      'no_option' => ('No option fits, so it may be misprinted. Check it against the page.', true),
+      'unclear' when _hasBox => ('Part of this question printed as boxes, so AI could not type it. Check it against $_against.', true),
+      'unclear' => ('Part of this could not be read, so AI did not answer it. Check it against $_against.', true),
+      'no_option' => ('No option fits, so it may be misprinted. Check it against $_against.', true),
       'disagree' => ('The AI checks chose different answers.${w == null ? '' : ' The question was written with ${_letter(w)}.'}', true),
       'unsure' => ('AI was not sure enough to mark this one.', true),
       'writer_differs' when correct != null => ('AI marked ${_letter(correct)}, but the question was written with ${w == null ? 'another option' : _letter(w)}. Check that ${_letter(correct)} is right.', true),
@@ -1751,6 +1950,24 @@ class _DraftCard extends StatelessWidget {
     ];
   }
 
+  /// What AI typed, plainly, with a box where it could not read.
+  Widget _typed(List<String> options) {
+    final text = plainSymbols('${d['text']}');
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Fig('What AI typed', style: labelStyle.copyWith(fontWeight: FontWeight.w600)),
+      const SizedBox(height: 3),
+      if (text.isNotEmpty) _Boxed(text, style: optionStyle.copyWith(fontWeight: FontWeight.w600, fontSize: 15)),
+      for (final (i, o) in options.indexed)
+        Padding(
+          padding: const EdgeInsets.only(top: 5),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            SizedBox(width: 22, child: Text(_letter(i), style: tagStyle.copyWith(fontSize: 12, color: muted))),
+            Expanded(child: _Boxed(plainSymbols(o), style: bodyStyle.copyWith(fontSize: 14, color: body))),
+          ]),
+        ),
+    ]);
+  }
+
   @override
   Widget build(BuildContext context) {
     final options = (d['options'] as List?)?.cast<String>() ?? const [];
@@ -1763,26 +1980,33 @@ class _DraftCard extends StatelessWidget {
     final source = d['answer_source'] as String?;
     final sure = d['ai_confidence'] is num ? ((d['ai_confidence'] as num) * 100).round() : null;
     final (tagText, tagTone) = _tag;
-    final showChips = !saved && mcq && (correct == null || d['ai_note'] == 'writer_differs');
     final draft = d['status'] == 'draft';
+    final problem = _problem;
+    final showChips = !saved && mcq && !problem && (correct == null || d['ai_note'] == 'writer_differs');
+    final figure = placedOf(d['figure_box']);
+    final join = _join;
+    final firstPage = _parts.isNotEmpty ? _parts.first.page : d['page_no'] as int;
 
     // The buttons that settle a question that needs the tutor.
     final actions = <(String, bool, VoidCallback)>[];
-    if (draft && mcq && correct == null) {
-      if (_needsFigure) {
-        if (onDiagram != null) actions.add(('Add the figure', true, onDiagram!));
+    if (draft && !cutting) {
+      if (_cut || (mcq && correct == null && !_needsFigure && (d['ai_note'] == 'no_option' || (d['ai_note'] == 'unclear' && _hasBox)))) {
+        if (onEdit != null) actions.add(('Fix it', true, onEdit!));
         if (onDiscard != null) actions.add(('Skip', false, onDiscard!));
-      } else if (d['ai_note'] == 'unclear') {
-        if (onConfirm != null) actions.add(('Looks right', true, onConfirm!));
-        if (onEdit != null) actions.add(('Edit', false, onEdit!));
-      } else if (d['ai_note'] == 'no_option') {
-        if (onEdit != null) actions.add(('Edit question', true, onEdit!));
-        if (onDiscard != null) actions.add(('Skip', false, onDiscard!));
-      } else if (!_waiting && onMark != null) {
-        for (final (i, c) in _candidates.take(3).indexed) {
-          actions.add(('Use ${_letter(c)}', i == 0, () => onMark!(c)));
+      } else if (mcq && correct == null) {
+        if (_needsFigure) {
+          if (onDiagram != null) actions.add(('Add the figure', true, onDiagram!));
+          if (onDiscard != null) actions.add(('Skip', false, onDiscard!));
+        } else if (d['ai_note'] == 'unclear') {
+          if (onConfirm != null) actions.add(('Looks right', true, onConfirm!));
+          if (onEdit != null) actions.add(('Fix it', false, onEdit!));
+        } else if (!_waiting && onMark != null) {
+          for (final (i, c) in _candidates.take(3).indexed) {
+            actions.add(('Use ${_letter(c)}', i == 0, () => onMark!(c)));
+          }
         }
       }
+      if (_joined && onUnjoin != null) actions.add(('Undo the join', false, onUnjoin!));
     }
 
     return Surface(
@@ -1791,17 +2015,48 @@ class _DraftCard extends StatelessWidget {
         SizedBox(
           width: double.infinity,
           child: Wrap(alignment: WrapAlignment.spaceBetween, crossAxisAlignment: WrapCrossAlignment.center, spacing: 10, runSpacing: 8, children: [
-            Kicker('$label · page ${d['page_no']}'),
+            Kicker('$label · $_pages'),
             TagChip(tagText, tone: tagTone),
           ]),
         ),
         const SizedBox(height: 11),
-        MathText('${d['text']}', style: optionStyle.copyWith(fontWeight: FontWeight.w600, fontSize: 15)),
+        if (problem) ...[
+          if (_pictureShown)
+            FromYourPaper(pictures: pictures, parts: _parts, onWholePage: (n) => onWholePage?.call(n))
+          else if (pictures.url(firstPage) != null && onWholePage != null)
+            Pressable(
+              onTap: () => onWholePage!(firstPage),
+              label: 'See page $firstPage',
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(Ph.arrowsOutSimple, size: 14, color: muted),
+                  const SizedBox(width: 6),
+                  Flexible(child: Fig('See page $firstPage', style: labelStyle.copyWith(color: muted, fontWeight: FontWeight.w600, fontSize: 12.5))),
+                ]),
+              ),
+            ),
+          const SizedBox(height: 12),
+          _typed(options),
+        ] else
+          MathText('${d['text']}', style: optionStyle.copyWith(fontWeight: FontWeight.w600, fontSize: 15)),
         if (d['image_url'] != null) ...[
           const SizedBox(height: 10),
-          ClipRRect(borderRadius: BorderRadius.circular(rSmall), child: Image.network('${d['image_url']}', height: 140, errorBuilder: (_, _, _) => const SizedBox())),
+          CutFigure(
+            url: '${d['image_url']}',
+            caption: figure != null ? 'From page ${figure.page}' : 'Your photo',
+            onCutAgain: draft && figure != null && !cutting ? onCutAgain : null,
+            onRemove: draft && !cutting ? onRemoveFigure : null,
+          ),
+        ] else if (cutting) ...[
+          const SizedBox(height: 10),
+          Row(children: [
+            Icon(Ph.scissors, size: 15, color: aiAccentInk),
+            const SizedBox(width: 8),
+            Expanded(child: Fig('Cutting the diagram out of the page', style: labelStyle.copyWith(color: aiAccentInk, fontWeight: FontWeight.w600))),
+          ]),
         ],
-        if (mcq) ...[
+        if (mcq && !problem) ...[
           const SizedBox(height: 8),
           for (final (i, o) in options.indexed)
             Pressable(
@@ -1825,6 +2080,7 @@ class _DraftCard extends StatelessWidget {
                   ),
                   if (showChips)
                     for (final c in _chipsFor(i)) ...[const SizedBox(width: 5), TagChip(c, tone: Tone.ai)],
+                  if (join != null && i >= join.from) ...[const SizedBox(width: 6), Fig('page ${join.page}', style: labelStyle.copyWith(color: faint, fontSize: 10.5), numColor: faint)],
                 ]),
               ),
             ),
@@ -1845,7 +2101,7 @@ class _DraftCard extends StatelessWidget {
         ],
         if (why != null)
           Padding(
-            padding: EdgeInsets.fromLTRB(mcq ? 10 : 0, 10, 0, 0),
+            padding: EdgeInsets.fromLTRB(mcq && !problem ? 10 : 0, 10, 0, 0),
             child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Padding(
                 padding: const EdgeInsets.only(top: 1),
@@ -1853,6 +2109,22 @@ class _DraftCard extends StatelessWidget {
               ),
               const SizedBox(width: 7),
               Expanded(child: Fig(why.$1, style: labelStyle.copyWith(color: why.$2 ? warning : muted))),
+            ]),
+          ),
+        if (_joined && join != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 11),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Icon(Ph.linkSimple, size: 15, color: aiAccentInk),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text.rich(
+                  TextSpan(style: labelStyle.copyWith(color: muted, fontWeight: FontWeight.w600, height: 1.4), children: [
+                    TextSpan(text: 'One question, not two. ', style: TextStyle(color: ink, fontWeight: FontWeight.w700)),
+                    TextSpan(text: _joinDetail),
+                  ]),
+                ),
+              ),
             ]),
           ),
         if (actions.isNotEmpty) ...[
@@ -1890,6 +2162,57 @@ class _DraftCard extends StatelessWidget {
   }
 }
 
+/// Text with a marked box wherever AI left a ■ because the page could not be read there. The box is drawn, not typed, so it looks the
+/// same on every phone whatever its fonts hold.
+class _Boxed extends StatelessWidget {
+  const _Boxed(this.text, {required this.style});
+  final String text;
+  final TextStyle style;
+
+  @override
+  Widget build(BuildContext context) {
+    final spans = <InlineSpan>[];
+    var run = StringBuffer();
+    void flush() {
+      if (run.isNotEmpty) spans.add(TextSpan(text: run.toString()));
+      run = StringBuffer();
+    }
+
+    for (final ch in text.characters) {
+      if (ch == '■') {
+        flush();
+        spans.add(WidgetSpan(alignment: PlaceholderAlignment.middle, child: _Unreadable(size: style.fontSize ?? 15)));
+      } else {
+        run.write(ch);
+      }
+    }
+    flush();
+    return Text.rich(TextSpan(style: style, children: spans));
+  }
+}
+
+/// A small marked square, the size of a letter: here the page could not be read.
+class _Unreadable extends StatelessWidget {
+  const _Unreadable({required this.size});
+  final double size;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        key: const ValueKey('unreadable box'),
+        padding: const EdgeInsets.symmetric(horizontal: 3),
+        child: Semantics(
+          label: 'a box where the page could not be read',
+          child: Container(
+            width: size * 0.95,
+            height: size * 0.95,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(color: warningSoft, borderRadius: BorderRadius.circular(4)),
+            child: Container(width: size * 0.5, height: size * 0.5, decoration: BoxDecoration(color: warning, borderRadius: BorderRadius.circular(2))),
+          ),
+        ),
+      );
+}
+
 /// A button inside a card that settles a question: the likeliest answer in black, the others quiet.
 class _CardButton extends StatelessWidget {
   const _CardButton({required this.label, required this.primary, required this.onTap});
@@ -1914,45 +2237,29 @@ class _CardButton extends StatelessWidget {
       );
 }
 
-class _PageView extends StatelessWidget {
-  const _PageView({required this.url, required this.n});
-  final String url;
-  final int n;
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-        body: SafeArea(
-          child: Column(children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(gutter, 8, gutter, 8),
-              child: Row(children: [
-                CircleBtn(icon: Ph.arrowLeft, label: 'Back', onTap: () => Navigator.of(context).pop()),
-                const SizedBox(width: 14),
-                Fig('Page $n', style: sectionStyle),
-              ]),
-            ),
-            Expanded(child: InteractiveViewer(maxScale: 5, child: Center(child: Image.network(url)))),
-          ]),
-        ),
-      );
-}
-
-/// Fix the AI's transcription: text, options, or whether it is multiple choice at all.
+/// Fix the AI's transcription: the question as it is printed on the paper, then its words and options in plain symbols. The tutor
+/// can tap the circle of the right answer here too.
 class DraftEditor extends StatefulWidget {
-  const DraftEditor({super.key, required this.draft});
+  const DraftEditor({super.key, required this.draft, this.pictures});
   final Map<String, dynamic> draft;
+
+  /// The paper's page pictures, for the question as it is printed above the boxes. Without them there is no picture.
+  final PaperPictures? pictures;
 
   @override
   State<DraftEditor> createState() => _DraftEditorState();
 }
 
 class _DraftEditorState extends State<DraftEditor> {
-  late final _text = TextEditingController(text: '${widget.draft['text']}');
-  late final _options = List.generate(4, (i) {
+  late final _bText = PlainBaseline('${widget.draft['text']}');
+  late final _text = TextEditingController(text: _bText.initial);
+  late final _bOptions = List.generate(4, (i) {
     final o = (widget.draft['options'] as List?)?.cast<String>() ?? const [];
-    return TextEditingController(text: i < o.length ? o[i] : '');
+    return PlainBaseline(i < o.length ? o[i] : '');
   });
+  late final _options = [for (final b in _bOptions) TextEditingController(text: b.initial)];
   late bool _mcq = widget.draft['kind'] == 'mcq';
+  late int? _correct = widget.draft['correct_option'] as int?;
   final _focus = List.generate(5, (_) => FocusNode());
   int _last = 0;
 
@@ -1986,29 +2293,60 @@ class _DraftEditorState extends State<DraftEditor> {
     return null;
   }
 
+  void _done() => Navigator.of(context).pop({
+        'text': _bText.value(_text),
+        'kind': _mcq ? 'mcq' : 'other',
+        'options': _mcq ? [for (final (i, o) in _options.indexed) _bOptions[i].value(o)] : <String>[],
+        // Only when she tapped a circle: otherwise AI is still free to look for the answer.
+        if (_correct != (widget.draft['correct_option'] as int?)) 'correct_option': _mcq ? _correct : null,
+      });
+
+  void _whole(int page) {
+    final url = widget.pictures?.url(page);
+    if (url != null) Navigator.of(context).push(MaterialPageRoute(builder: (_) => WholePageScreen(url: url, n: page)));
+  }
+
+  /// "Page 2" or "Pages 1 and 2", with the question's number.
+  String get _kicker {
+    final pages = <int>{...questionParts(widget.draft).map((p) => p.page), widget.draft['page_no'] as int};
+    final part = ((widget.draft['joined_from'] as Map?)?['part'] as Map?)?['page_no'];
+    if (widget.draft['joined'] == true && part is int) pages.add(part);
+    final list = pages.toList()..sort();
+    final where = list.length == 1 ? 'Page ${list.first}' : 'Pages ${list.sublist(0, list.length - 1).join(', ')} and ${list.last}';
+    final number = '${widget.draft['number_label'] ?? ''}'.replaceAll(RegExp(r'[.)\s]+$'), '');
+    return number.isEmpty ? where : '$where · question $number';
+  }
+
   @override
   Widget build(BuildContext context) {
     final missing = _missing;
+    final pics = widget.pictures;
+    final parts = questionParts(widget.draft);
+    final page = widget.draft['page_no'] as int;
     return PushedPanel(
-      kicker: 'AI draft',
+      kicker: _kicker,
       title: 'Fix question',
-      footer: PrimaryButton(
-        'Done',
-        onTap: missing == null
-            ? () => Navigator.of(context).pop({
-                  'text': _text.text.trim(),
-                  'kind': _mcq ? 'mcq' : 'other',
-                  'options': _mcq ? [for (final o in _options) o.text.trim()] : <String>[],
-                })
-            : null,
-        disabledReason: missing,
-      ),
+      footer: PrimaryButton('Save question', onTap: missing == null ? _done : null, disabledReason: missing),
       children: [
-        const FormLabel('Type'),
-        ChipRow(padding: EdgeInsets.zero, children: [
-          SegChip('Multiple choice', selected: _mcq, onTap: () => setState(() => _mcq = true)),
-          SegChip('Not multiple choice', selected: !_mcq, onTap: () => setState(() => _mcq = false)),
-        ]),
+        if (pics != null && parts.isNotEmpty && pics.url(parts.first.page) != null) ...[
+          const SizedBox(height: 14),
+          FromYourPaper(pictures: pics, parts: parts, onWholePage: _whole),
+        ] else if (pics != null && pics.url(page) != null)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Pressable(
+              onTap: () => _whole(page),
+              label: 'See page $page',
+              child: Padding(
+                padding: const EdgeInsets.only(top: 14),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(Ph.arrowsOutSimple, size: 14, color: muted),
+                  const SizedBox(width: 6),
+                  Flexible(child: Fig('See page $page', style: labelStyle.copyWith(color: muted, fontWeight: FontWeight.w600, fontSize: 12.5))),
+                ]),
+              ),
+            ),
+          ),
         const FormLabel('Question'),
         GroupedInputs(children: [
           BareField(controller: _text, focusNode: _focus[0], placeholder: 'Question', maxLines: null, minLines: 2, maxLength: 4000, capitalization: TextCapitalization.sentences),
@@ -2018,30 +2356,68 @@ class _DraftEditorState extends State<DraftEditor> {
           insertInto([_text, ..._options][_last], s);
           _focus[_last].requestFocus();
         }),
+        const SizedBox(height: 7),
+        Fig('Tap a symbol to put it in the box.', style: labelStyle.copyWith(fontWeight: FontWeight.w600)),
         if (_mcq) ...[
-          const FormLabel('Options'),
-          GroupedInputs(children: [
-            for (var i = 0; i < 4; i++) BareField(controller: _options[i], focusNode: _focus[i + 1], placeholder: 'Option ${'ABCD'[i]}'),
-          ]),
+          const FormLabel('Options. Tap the circle of the right answer.', top: 18),
+          for (var i = 0; i < 4; i++) ...[
+            if (i > 0) const SizedBox(height: 7),
+            _OptionRow(
+              index: i,
+              right: _correct == i,
+              onMark: () => setState(() => _correct = _correct == i ? null : i),
+              controller: _options[i],
+              focusNode: _focus[i + 1],
+            ),
+          ],
+          const SizedBox(height: 10),
+          Center(child: TextAction('This is not a multiple choice question', onTap: () => setState(() => _mcq = false))),
+        ] else ...[
+          const SizedBox(height: 18),
+          Surface(
+            shadow: e1,
+            padding: const EdgeInsets.fromLTRB(17, 8, 8, 8),
+            child: Row(children: [
+              Expanded(child: Fig('This is not a multiple choice question.', style: bodyStyle.copyWith(color: muted))),
+              TextAction('Make it multiple choice', color: ink, onTap: () => setState(() => _mcq = true)),
+            ]),
+          ),
         ],
-        const FormLabel('Preview'),
-        Surface(
-          shadow: e1,
-          padding: const EdgeInsets.fromLTRB(17, 15, 17, 15),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            MathText(_text.text, style: optionStyle),
-            if (_mcq)
-              for (var i = 0; i < 4; i++)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    SizedBox(width: 22, child: Text('ABCD'[i], style: tagStyle.copyWith(fontSize: 12, color: muted))),
-                    Expanded(child: MathText(_options[i].text.isEmpty ? '-' : _options[i].text, style: bodyStyle.copyWith(color: ink))),
-                  ]),
-                ),
-          ]),
-        ),
       ],
     );
   }
+}
+
+/// One option of the editor: a circle to tap for the right answer, and the option's words.
+class _OptionRow extends StatelessWidget {
+  const _OptionRow({required this.index, required this.right, required this.onMark, required this.controller, required this.focusNode});
+  final int index;
+  final bool right;
+  final VoidCallback onMark;
+  final TextEditingController controller;
+  final FocusNode focusNode;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        decoration: surface(radius: 15, shadow: e1),
+        child: Row(children: [
+          const SizedBox(width: 10),
+          Pressable(
+            onTap: onMark,
+            label: 'Mark option ${'ABCD'[index]} as right${right ? ', marked' : ''}',
+            child: Container(
+              width: 30,
+              height: 30,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: right ? success : null,
+                border: right ? null : Border.all(color: ringIdle, width: 1.8),
+              ),
+              child: right ? const Icon(Ph.check, size: 16, color: Colors.white) : Text('ABCD'[index], style: tagStyle.copyWith(fontSize: 12, color: muted)),
+            ),
+          ),
+          Expanded(child: BareField(controller: controller, focusNode: focusNode, placeholder: 'Option ${'ABCD'[index]}')),
+        ]),
+      );
 }

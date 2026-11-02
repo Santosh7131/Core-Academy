@@ -8,26 +8,28 @@ import 'package:image_picker/image_picker.dart';
 import '../../core/api.dart';
 import '../../theme.dart';
 import '../../ui/kit.dart';
-import '../../ui/math_text.dart';
+import '../../ui/plain_math.dart';
 import '../../ui/tokens.dart';
 import 'common.dart';
 import 'subjects.dart';
 
 // ---------------------------------------------------------------- editor
 
-/// Inserts self-contained `$...$` snippets so no LaTeX knowledge is needed.
+/// The symbols the tutor taps to put in a question: plain characters, written the way they are on paper. Nobody has to know
+/// LaTeX, and nobody meets a dollar sign. The first nine are the ones shown without scrolling.
 const mathSnippets = <(String, String)>[
-  ('a/b', r'$\frac{1}{2}$'),
-  ('x²', r'$x^{2}$'),
-  ('√', r'$\sqrt{2}$'),
-  ('×', r'$\times$'),
-  ('÷', r'$\div$'),
-  ('π', r'$\pi$'),
-  ('θ', r'$\theta$'),
-  ('≤', r'$\le$'),
-  ('≥', r'$\ge$'),
-  ('≠', r'$\ne$'),
-  ('°', r'$^\circ$'),
+  ('x²', '²'),
+  ('√', '√'),
+  ('½', '½'),
+  ('×', '×'),
+  ('÷', '÷'),
+  ('π', 'π'),
+  ('°', '°'),
+  ('≤', '≤'),
+  ('≥', '≥'),
+  ('x³', '³'),
+  ('θ', 'θ'),
+  ('≠', '≠'),
 ];
 
 class MathToolbar extends StatelessWidget {
@@ -98,6 +100,11 @@ class _QuestionEditorState extends State<QuestionEditor> {
   List<Subject> _subjects = [];
   String? _chapterId;
   int? _correct;
+
+  /// What each box first showed, and the text that stood for, so a box she does not touch keeps its formulas as they were.
+  PlainBaseline _bText = PlainBaseline();
+  List<PlainBaseline> _bOptions = List.generate(4, (_) => PlainBaseline());
+  PlainBaseline _bSolution = PlainBaseline();
   num _marks = 1;
   String? _imageKey;
   String? _imageUrl;
@@ -153,12 +160,15 @@ class _QuestionEditorState extends State<QuestionEditor> {
     try {
       final r = await api.get('/teacher/questions/${widget.id}');
       final q = Map<String, dynamic>.from(r['question']);
-      _text.text = '${q['text']}';
+      _bText = PlainBaseline('${q['text']}');
+      _text.text = _bText.initial;
       final opts = (q['options'] as List).cast<String>();
+      _bOptions = [for (var i = 0; i < 4; i++) PlainBaseline(opts[i])];
       for (var i = 0; i < 4; i++) {
-        _options[i].text = opts[i];
+        _options[i].text = _bOptions[i].initial;
       }
-      _solution.text = '${q['solution'] ?? ''}';
+      _bSolution = PlainBaseline('${q['solution'] ?? ''}');
+      _solution.text = _bSolution.initial;
       _inCourse = q['course_id'] != null;
       _class = q['class_level'] as int?;
       _subjectId = q['subject_id'] as String?;
@@ -250,12 +260,13 @@ class _QuestionEditorState extends State<QuestionEditor> {
 
   Future<void> _save() async {
     setState(() => _busy = true);
+    final solution = _bSolution.value(_solution);
     final body = {
       if (!_inCourse) ...{'class_level': _class, 'subject_id': _subjectId, 'chapter_id': _chapterId},
-      'text': _text.text.trim(),
-      'options': [for (final o in _options) o.text.trim()],
+      'text': _bText.value(_text),
+      'options': [for (final (i, o) in _options.indexed) _bOptions[i].value(o)],
       'correct_option': _correct,
-      'solution': _solution.text.trim().isEmpty ? null : _solution.text.trim(),
+      'solution': solution.isEmpty ? null : solution,
       'marks': _marks,
       'image_key': _imageKey,
     };
@@ -381,6 +392,8 @@ class _QuestionEditorState extends State<QuestionEditor> {
           insertInto(_focused, s);
           _focus[_lastFocus].requestFocus();
         }),
+        const SizedBox(height: 7),
+        Fig('Tap a symbol to put it in the box.', style: labelStyle.copyWith(fontWeight: FontWeight.w600)),
         const FormLabel('Options. Tap the circle next to the right answer.'),
         GroupedInputs(children: [
           for (var i = 0; i < 4; i++)
@@ -406,23 +419,6 @@ class _QuestionEditorState extends State<QuestionEditor> {
               Expanded(child: BareField(controller: _options[i], focusNode: _focus[i + 1], placeholder: 'Option ${'ABCD'[i]}')),
             ]),
         ]),
-        const FormLabel('Preview'),
-        Surface(
-          shadow: e1,
-          padding: const EdgeInsets.fromLTRB(17, 15, 17, 15),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            MathText(_text.text.isEmpty ? 'The question appears here' : _text.text, style: optionStyle.copyWith(color: _text.text.isEmpty ? faint : ink)),
-            const SizedBox(height: 10),
-            for (var i = 0; i < 4; i++)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  SizedBox(width: 22, child: Text('ABCD'[i], style: tagStyle.copyWith(fontSize: 12, color: _correct == i ? success : muted))),
-                  Expanded(child: MathText(_options[i].text.isEmpty ? '-' : _options[i].text, style: bodyStyle.copyWith(color: ink))),
-                ]),
-              ),
-          ]),
-        ),
         const FormLabel('Diagram (optional)'),
         if (_imageBytes != null || _imageUrl != null)
           Stack(children: [

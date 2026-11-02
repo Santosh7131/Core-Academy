@@ -297,14 +297,78 @@ class _TestEditorState extends State<TestEditor> {
     }
   }
 
+  /// The time limits offered as buttons; "Other" has the rest.
+  static const _limitChoices = [15, 20, 30, 45, 60];
+
+  /// Changes a start or an end: its day and its time, chosen in a card, kept when Done is tapped.
+  Future<void> _changeWhen(String title, DateTime? value, ValueChanged<DateTime?> set, {String? noneLabel}) async {
+    var draft = value;
+    await showCentredCard<void>(
+      context,
+      title: title,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setCard) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          DayTimeChooser(value: draft, noneLabel: noneLabel, onChanged: (v) => setCard(() => draft = v)),
+          const SizedBox(height: 20),
+          PrimaryButton('Done', onTap: () {
+            set(draft);
+            Navigator.of(ctx).pop();
+          }),
+        ]),
+      ),
+    );
+  }
+
+  /// Any time to finish, for the ones the buttons do not have.
+  Future<void> _otherLimit() async {
+    final c = await showChoices<int>(
+      context,
+      title: 'Time to finish',
+      options: [
+        const Choice(-1, 'No limit'),
+        for (final m in {5, 10, 15, 20, 25, 30, 40, 45, 50, 60, 75, 90, 120, 150, 180, ?_limit}.toList()..sort()) Choice(m, '$m min'),
+      ],
+      selected: _limit ?? -1,
+    );
+    if (c?.value != null) setState(() => _limit = c!.value == -1 ? null : c.value);
+  }
+
+  /// Who the test goes to, in a few words.
+  String get _whoValue {
+    if (_isCourse) {
+      final size = _courseSize;
+      return '${_courseName == null ? 'Everyone in the course' : 'Everyone in $_courseName'}${size == null ? '' : ' · ${f.count(size, 'person', 'people')}'}';
+    }
+    if (_class == null || _subjectName == null) return 'Choose a class and subject first';
+    if (_groupSize == 0) return 'No students in the group yet';
+    if (_audience == 'group') return _groupSize == 1 ? 'The 1 student in the group' : 'All $_groupSize students';
+    final chosen = _group.where((s) => _studentIds.contains(s['id'])).length;
+    return '$chosen of ${f.count(_groupSize, 'student')}';
+  }
+
+  Future<void> _chooseWho() async {
+    final r = await Navigator.of(context).push<({String audience, Set<String> ids})>(
+      MaterialPageRoute(builder: (_) => _AudienceScreen(group: _group, audience: _audience, ids: _studentIds)),
+    );
+    if (r != null) {
+      setState(() {
+        _audience = r.audience;
+        _studentIds = r.ids;
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) return const PushedPanel(title: 'Test', children: [LoadingState()]);
     final missing = _missing;
     final locked = _attempts > 0;
     final isNew = widget.id == null;
-    // The settings come first; the questions are folded at the bottom, two at a time.
-    final shown = _allQuestions ? _questions : _questions.take(2).toList();
+    // Questions come from the group's class and subject (a course has its own), so those are chosen first.
+    final canPick = _isCourse || (_class != null && _subjectId != null);
+    final chips = {..._limitChoices, ?_limit}.toList()..sort();
+    const rule = EdgeInsets.fromLTRB(0, 26, 0, 11);
+    final line = labelStyle.copyWith(fontSize: 13, fontWeight: FontWeight.w600);
     return PushedPanel(
       kicker: isNew
           ? (_isCourse && _courseName != null ? 'New test · $_courseName' : 'New test')
@@ -323,12 +387,9 @@ class _TestEditorState extends State<TestEditor> {
           Center(child: TextAction('Save as a draft for now', onTap: () => _save(publish: false))),
       ]),
       children: [
-        const SizedBox(height: 22),
-        GroupedInputs(children: [
-          BareField(controller: _title, placeholder: 'Test name, e.g. Unit test 3', maxLength: 100, capitalization: TextCapitalization.sentences),
-        ]),
         if (isNew && !_isCourse) ...[
-          const FormLabel('Class'),
+          // A new group's test: its class and subject first, because they decide which questions can be chosen.
+          const SizedBox(height: 22),
           ClassField(
             value: _class,
             enabled: !locked,
@@ -343,7 +404,7 @@ class _TestEditorState extends State<TestEditor> {
               _loadStudents();
             },
           ),
-          const FormLabel('Subject'),
+          const SizedBox(height: 10),
           SubjectField(
             subjects: _subjects,
             value: _subjectId,
@@ -353,120 +414,113 @@ class _TestEditorState extends State<TestEditor> {
               _subjectId = v;
             }),
           ),
-        ],
-        const FormLabel('Time limit'),
-        SelectField(
-          value: _limit == null ? 'No limit' : '$_limit min',
-          onTap: () async {
-            final c = await showChoices<int>(
-              context,
-              title: 'Time limit',
-              options: [
-                const Choice(-1, 'No limit'),
-                for (final m in {10, 15, 20, 30, 45, 60, 90, ?_limit}.toList()..sort()) Choice(m, '$m min'),
-              ],
-              selected: _limit ?? -1,
-            );
-            if (c?.value != null) setState(() => _limit = c!.value == -1 ? null : c.value);
-          },
-        ),
-        const FormLabel('Opens'),
-        DayTimeChooser(value: _opens, noneLabel: 'Now', onChanged: (v) => setState(() => _opens = v)),
-        const FormLabel('Closes'),
-        DayTimeChooser(value: _closes, onChanged: (v) => setState(() => _closes = v)),
-        Padding(
-          padding: const EdgeInsets.only(top: 10),
-          child: Fig(
-            '${_opens == null ? 'Opens as soon as you post it' : 'Opens ${f.whenDate(_opens!)}'}.'
-            '${_closes == null ? '' : '\nCloses ${f.whenDate(_closes!)}.'}'
-            '\nStudents see their marks and the right answers as soon as they hand it in.',
-            style: labelStyle,
-          ),
-        ),
-        const FormLabel('Order'),
-        ChipRow(padding: EdgeInsets.zero, children: [
-          SegChip('Shuffle for each student', selected: _shuffle, onTap: () => setState(() => _shuffle = true)),
-          SegChip('Same order for all', selected: !_shuffle, onTap: () => setState(() => _shuffle = false)),
-        ]),
-        const FormLabel('Who writes it'),
-        if (_isCourse) ...[
-          // A course's test goes to everyone in the course: there is no one to choose.
-          ChipRow(padding: EdgeInsets.zero, children: [
-            SegChip(_courseName == null ? 'Everyone in the course' : 'Everyone in $_courseName', count: _courseSize, selected: true),
+          const SizedBox(height: 14),
+        ] else
+          const SizedBox(height: 16),
+        // The test in one card: its name, when it opens, how many questions it has.
+        Surface(
+          shadow: e1,
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            BareField(
+              controller: _title,
+              placeholder: 'Test name, e.g. Unit test 3',
+              maxLength: 100,
+              capitalization: TextCapitalization.sentences,
+              style: rowTitleStyle.copyWith(fontWeight: FontWeight.w700, fontSize: 17),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(17, 0, 15, 12),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Padding(padding: const EdgeInsets.only(top: 1), child: Icon(Ph.calendarBlank, size: 16, color: faint)),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text.rich(TextSpan(style: line, children: [
+                      const TextSpan(text: 'Opens '),
+                      figSpan(_opens == null ? 'as soon as you post it' : f.whenTitle(_opens!), line.copyWith(color: ink)),
+                    ])),
+                  ),
+                ]),
+                const SizedBox(height: 6),
+                Row(children: [
+                  Icon(Ph.listChecks, size: 16, color: faint),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Fig(
+                      _questions.isEmpty ? (canPick ? 'No questions yet' : 'Choose a class and subject first') : f.count(_questions.length, 'question'),
+                      style: line.copyWith(color: _questions.isEmpty ? muted : ink),
+                    ),
+                  ),
+                  if (!locked) TextAction(_questions.isEmpty ? 'Choose' : 'Change', color: canPick ? ink : faint, onTap: canPick ? _pickQuestions : null),
+                ]),
+              ]),
+            ),
           ]),
+        ),
+        if (locked)
+          Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: InlineNotice('Students have started this test, so its questions cannot change.', tone: Tone.neutral, icon: Ph.lock),
+          ),
+        if (_questions.isNotEmpty)
+          Center(
+            child: TextAction(_allQuestions ? 'Hide the questions' : 'See the questions', onTap: () => setState(() => _allQuestions = !_allQuestions)),
+          ),
+        if (_allQuestions)
+          for (final (i, q) in _questions.indexed) ...[
+            if (i > 0) const SizedBox(height: 8),
+            RowTile(
+              leading: Text((i + 1).toString().padLeft(2, '0'), style: numStyle(size: 13, color: muted)),
+              titleWidget: MathText('${q['text']}', style: rowTitleStyle, maxLines: 2),
+              meta: q['chapter'] == null ? null : '${q['chapter']}',
+            ),
+          ],
+        SectionRule('When', padding: rule),
+        _SettingRow(
+          label: 'Opens',
+          value: _opens == null ? 'As soon as you post it' : f.whenTitle(_opens!),
+          onTap: () => _changeWhen('Opens', _opens, (v) => setState(() => _opens = v), noneLabel: 'Now'),
+        ),
+        const SizedBox(height: 8),
+        _SettingRow(
+          label: 'Closes',
+          value: _closes == null ? 'Choose when it closes' : f.whenTitle(_closes!),
+          onTap: () => _changeWhen('Closes', _closes, (v) => setState(() => _closes = v)),
+        ),
+        SectionRule('Time to finish, in minutes', padding: rule, trailing: TextAction('Other', onTap: _otherLimit)),
+        Wrap(spacing: 6, runSpacing: 6, children: [
+          _TimeChip('No limit', selected: _limit == null, onTap: () => setState(() => _limit = null)),
+          for (final m in chips) _TimeChip('$m', selected: _limit == m, onTap: () => setState(() => _limit = m)),
+        ]),
+        SectionRule('Who and how', padding: rule),
+        // Nobody to choose between for a course, or before a class and subject, or for a group with no students.
+        _SettingRow(value: _whoValue, onTap: _isCourse || _class == null || _subjectName == null || _groupSize == 0 ? null : _chooseWho),
+        if (_isCourse) ...[
           const SizedBox(height: 10),
+          // A course's test goes to everyone in the course: there is no one to choose.
           if (_courseSize == 0)
             InlineNotice('No one is in this course yet, so nobody will see this test. Add people to the course first.', icon: Ph.warning)
           else
             Fig('People added to the course before it closes get the test too.', style: labelStyle),
-        ] else ...[
-          ChipRow(padding: EdgeInsets.zero, children: [
-            SegChip(
-              _class == null || _subjectName == null ? 'The group' : '${groupName(_class!, _subjectName!)} group',
-              count: _class == null ? null : _groupSize,
-              selected: _audience == 'group',
-              onTap: () => setState(() => _audience = 'group'),
-            ),
-            SegChip('Some of them', selected: _audience == 'students', onTap: () => setState(() => _audience = 'students')),
-          ]),
-          if (_audience == 'group' && _class != null && _subjectName != null && _groupSize == 0) ...[
-            const SizedBox(height: 10),
-            InlineNotice(
-              'No ${className(_class)} student takes $_subjectName yet, so nobody will see this test. Add students to the group first.',
-              icon: Ph.warning,
-            ),
-          ],
-          if (_audience == 'students') ...[
-            const SizedBox(height: 10),
-            if (_group.isEmpty)
-              Text(
-                _class == null || _subjectName == null ? 'Choose a class and subject first.' : 'No ${className(_class)} student takes $_subjectName yet.',
-                style: labelStyle,
-              )
-            else
-              for (final (i, s) in _group.indexed) ...[
-                if (i > 0) const SizedBox(height: 8),
-                RowTile(
-                  leading: Tick(on: _studentIds.contains(s['id'])),
-                  title: '${s['display_name']}',
-                  onTap: () => setState(() {
-                    final id = '${s['id']}';
-                    _studentIds.contains(id) ? _studentIds.remove(id) : _studentIds.add(id);
-                  }),
-                ),
-              ],
-          ],
-        ],
-        FormLabel(_questions.isEmpty ? 'Questions' : 'Questions · ${_questions.length}', top: 30),
-        if (locked)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: InlineNotice('Students have started this test, so its questions cannot change.', tone: Tone.neutral, icon: Ph.lock),
-          ),
-        for (final (i, q) in shown.indexed) ...[
-          if (i > 0) const SizedBox(height: 8),
-          RowTile(
-            leading: Text((i + 1).toString().padLeft(2, '0'), style: numStyle(size: 13, color: muted)),
-            titleWidget: MathText('${q['text']}', style: rowTitleStyle, maxLines: 2),
-            meta: q['chapter'] == null ? null : '${q['chapter']}',
+        ] else if (_audience == 'group' && _class != null && _subjectName != null && _groupSize == 0) ...[
+          const SizedBox(height: 10),
+          InlineNotice(
+            'No ${className(_class)} student takes $_subjectName yet, so nobody will see this test. Add students to the group first.',
+            icon: Ph.warning,
           ),
         ],
-        if (_questions.length > 2)
-          Center(
-            child: TextAction(
-              _allQuestions ? 'Show fewer questions' : 'Show all ${_questions.length} questions',
-              onTap: () => setState(() => _allQuestions = !_allQuestions),
-            ),
+        // A little more room after a note about the people, so it stays with the row above it.
+        SizedBox(height: _isCourse || (_audience == 'group' && _class != null && _subjectName != null && _groupSize == 0) ? 14 : 8),
+        _SwitchRow(label: 'Mix the questions up for each student', on: _shuffle, onChanged: (v) => setState(() => _shuffle = v)),
+        const SizedBox(height: 14),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Fig(
+            'Students see their marks and the right answers as soon as they hand it in.',
+            style: labelStyle.copyWith(fontSize: 11.5, fontWeight: FontWeight.w600, height: 1.45),
+            textAlign: TextAlign.center,
           ),
-        if (!locked) ...[
-          if (_questions.isNotEmpty) const SizedBox(height: 10),
-          SecondaryButton(
-            _questions.isEmpty ? 'Choose questions' : 'Change questions',
-            icon: Ph.listChecks,
-            onTap: !_isCourse && (_class == null || _subjectId == null) ? null : _pickQuestions,
-          ),
-          if (!_isCourse && _class == null) Padding(padding: const EdgeInsets.only(top: 8), child: Text('Choose a class first.', style: labelStyle)),
-        ],
+        ),
         if (widget.id != null) ...[
           const SizedBox(height: 30),
           Center(child: TextAction('Delete this test', color: danger, onTap: _delete)),
@@ -494,6 +548,151 @@ class _TestEditorState extends State<TestEditor> {
     } on ApiException catch (e) {
       if (mounted) showProblem(context, e);
     }
+  }
+}
+
+/// One setting as a row: its name small above its value, with a chevron when a tap changes it.
+class _SettingRow extends StatelessWidget {
+  const _SettingRow({this.label, required this.value, this.onTap});
+  final String? label;
+  final String value;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final shown = Fig(value, style: rowTitleStyle.copyWith(fontSize: 14.5, fontWeight: FontWeight.w600), maxLines: 3);
+    return RowTile(
+      titleWidget: label == null ? shown : Fig(label!, style: labelStyle.copyWith(fontSize: 11.5, fontWeight: FontWeight.w600)),
+      metaWidget: label == null ? null : shown,
+      chevron: onTap != null,
+      onTap: onTap,
+    );
+  }
+}
+
+/// A time to finish as a pill: 38 high so it is easy to hit, one line.
+class _TimeChip extends StatelessWidget {
+  const _TimeChip(this.label, {required this.selected, required this.onTap});
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Pressable(
+        onTap: onTap,
+        label: label,
+        child: Container(
+          height: 38,
+          padding: const EdgeInsets.symmetric(horizontal: 13),
+          decoration: selected
+              ? BoxDecoration(color: actionFill, borderRadius: BorderRadius.circular(rPill), boxShadow: e2)
+              : surface(radius: rPill, shadow: e1),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Text(label, style: chipStyle.copyWith(fontSize: 13.5, fontWeight: FontWeight.w600, color: selected ? actionInk : ink)),
+          ]),
+        ),
+      );
+}
+
+/// A setting that is on or off, as a row with a switch.
+class _SwitchRow extends StatelessWidget {
+  const _SwitchRow({required this.label, required this.on, required this.onChanged});
+  final String label;
+  final bool on;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) => Pressable(
+        onTap: () => onChanged(!on),
+        label: '$label, ${on ? 'on' : 'off'}',
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(17, 14, 15, 14),
+          decoration: surface(radius: rCard, shadow: e1),
+          child: Row(children: [
+            Expanded(child: Fig(label, style: rowTitleStyle.copyWith(fontSize: 14.5, fontWeight: FontWeight.w600), maxLines: 3)),
+            const SizedBox(width: 12),
+            AnimatedContainer( // motion: approved
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOutCubic,
+              width: 46,
+              height: 28,
+              padding: const EdgeInsets.all(3),
+              alignment: on ? Alignment.centerRight : Alignment.centerLeft,
+              decoration: BoxDecoration(color: on ? success : faint, borderRadius: BorderRadius.circular(999)),
+              child: Container(
+                width: 22,
+                height: 22,
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                  boxShadow: [BoxShadow(color: Color(0x2E000000), blurRadius: 3, offset: Offset(0, 1))],
+                ),
+              ),
+            ),
+          ]),
+        ),
+      );
+}
+
+/// Who writes the test: all of the group, or some of them picked from a list. Pops with the choice.
+class _AudienceScreen extends StatefulWidget {
+  const _AudienceScreen({required this.group, required this.audience, required this.ids});
+  final List<Map<String, dynamic>> group;
+  final String audience;
+  final Set<String> ids;
+
+  @override
+  State<_AudienceScreen> createState() => _AudienceScreenState();
+}
+
+class _AudienceScreenState extends State<_AudienceScreen> {
+  late String _audience = widget.audience;
+  late final Set<String> _ids = {...widget.ids};
+
+  int get _chosen => widget.group.where((s) => _ids.contains(s['id'])).length;
+
+  @override
+  Widget build(BuildContext context) {
+    final n = widget.group.length;
+    final some = _audience == 'students';
+    final stuck = some && _chosen == 0;
+    return PushedPanel(
+      title: 'Who writes it',
+      footer: PrimaryButton(
+        'Done',
+        onTap: stuck ? null : () => Navigator.of(context).pop((audience: _audience, ids: _ids)),
+        disabledReason: stuck ? 'Choose at least one student.' : null,
+      ),
+      children: [
+        const SizedBox(height: 18),
+        RowTile(
+          leading: Tick(on: !some),
+          title: n == 1 ? 'The 1 student in the group' : 'All $n students',
+          onTap: () => setState(() => _audience = 'group'),
+        ),
+        const SizedBox(height: 8),
+        RowTile(
+          leading: Tick(on: some),
+          title: 'Some of them',
+          meta: some ? '$_chosen chosen' : null,
+          onTap: () => setState(() => _audience = 'students'),
+        ),
+        if (some) ...[
+          SectionRule('Students', count: n, padding: const EdgeInsets.fromLTRB(0, 26, 0, 11)),
+          for (final (i, s) in widget.group.indexed) ...[
+            if (i > 0) const SizedBox(height: 8),
+            RowTile(
+              leading: Tick(on: _ids.contains('${s['id']}')),
+              title: '${s['display_name']}',
+              onTap: () => setState(() {
+                final id = '${s['id']}';
+                _ids.contains(id) ? _ids.remove(id) : _ids.add(id);
+              }),
+            ),
+          ],
+        ],
+      ],
+    );
   }
 }
 

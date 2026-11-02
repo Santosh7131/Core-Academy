@@ -28,6 +28,7 @@ import 'package:core_academy/features/teacher/home_screen.dart';
 import 'package:core_academy/features/teacher/join_requests_screen.dart';
 import 'package:core_academy/features/teacher/make_test.dart' show TestTarget;
 import 'package:core_academy/features/teacher/make_tests_screen.dart';
+import 'package:core_academy/features/teacher/page_pictures.dart' show FigureCutScreen, cutOut;
 import 'package:core_academy/features/teacher/papers_screens.dart';
 import 'package:core_academy/features/teacher/settings_screen.dart';
 import 'package:core_academy/features/teacher/teacher_routes.dart';
@@ -46,6 +47,8 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../support/make_fakes.dart';
+import '../support/page_images.dart' show FakePages, cacheNetworkImage, forgetNetworkImages, settle;
+import '../support/printed_pages.dart';
 
 final _shots = Platform.environment['SHOTS'] == '1';
 
@@ -94,6 +97,15 @@ Map<String, Object?> _tuition({int pending = 2, bool open = true, String role = 
       'role': role, 'pending': pending, 'students': 18, 'tutors': 2, 'groups': 4,
     };
 
+/// The app's theme, with the maths package's faces to fall back on for the symbols Geist does not have (the box a reader leaves where a
+/// page could not be read, theta): the phone's own fonts fill those in, and a test has none.
+ThemeData _theme(bool dark) {
+  final base = buildTheme(dark ? Brightness.dark : Brightness.light);
+  return base.copyWith(
+    textTheme: base.textTheme.apply(fontFamilyFallback: const ['packages/flutter_math_fork/KaTeX_AMS', 'packages/flutter_math_fork/KaTeX_Main', 'packages/flutter_math_fork/KaTeX_Math']),
+  );
+}
+
 Future<void> _show(WidgetTester t, Widget screen, {bool dark = false, double height = 2400}) async {
   setResolvedDark(dark);
   t.view.physicalSize = _landscape ? const Size(2400, 1080) : Size(_widthDp * _ratio, _keyboard > 0 ? 800 * _ratio : height);
@@ -106,7 +118,7 @@ Future<void> _show(WidgetTester t, Widget screen, {bool dark = false, double hei
   addTearDown(t.view.reset);
   await t.pumpWidget(RepaintBoundary(
     key: _boundary,
-    child: MaterialApp(debugShowCheckedModeBanner: false, theme: buildTheme(dark ? Brightness.dark : Brightness.light), builder: _scaled, home: screen),
+    child: MaterialApp(debugShowCheckedModeBanner: false, theme: _theme(dark), builder: _scaled, home: screen),
   ));
   await _settle(t);
   if (_keyboard > 0) {
@@ -606,6 +618,124 @@ void main() {
     await _both(t, 'paper-not-checked', () => const PaperReviewScreen(id: 'p-4'), height: 2600);
   });
 
+  // ---- the question builder (design/comps/q1-*.html): a misprinted question beside its picture from the paper, a figure cut out of its
+  // page, a question joined from two pages (and two that could not be), the editor that opens with the picture on top, and the page
+  // with the box to drag. The pages are made up for the pictures (test/support/printed_pages.dart).
+  shotTest('tutor: question builder', (t) async {
+    addTearDown(forgetNetworkImages);
+    _sessionAs(role: 'teacher', tuitions: [{'id': 't-1', 'name': 'Priya Maths Classes', 'role': 'owner', 'status': 'active'}]);
+    final p1 = PrintedPage(header: '10th Standard  ·  Physics  ·  Unit Test 2  ·  page 1')
+      ..question('q1', '1', 'Which of these is a vector quantity?', options: ['(a) mass', '(b) speed', '(c) force', '(d) time'])
+      ..question('q2', '2', 'In the circuit shown, the equivalent resistance between the points A and B is', options: ['(a) 2 Ω', '(b) 4 Ω', '(c) 11 Ω', '(d) 1 Ω'], figure: drawCircuit)
+      ..space(0.27)
+      ..question('q4a', '4', 'A student finds the focal length of a convex lens by focusing a distant object on a screen. The sharp image is 15 cm from the lens. The power of the lens is nearly',
+          options: ['(a) 6.67 D', '(b) 0.15 D']);
+    final p2 = PrintedPage(header: '10th Standard  ·  Physics  ·  Unit Test 2  ·  page 2')
+      ..continuation('q4b', ['(c) 1.5 D', '(d) 15 D'])
+      ..question('q5', '5', 'The speed of light in vacuum is nearly', options: ['(a) 300 000 km/s', '(b) 3 000 km/s', '(c) 30 000 km/s', '(d) 300 km/s'])
+      ..question('q7', '7', 'The sum of the first n terms of an AP is 3n² + 5n. Its 10th term is', options: ['(a) 62', '(b) 65', '(c) 59', '(d) 68']);
+    final pages = (await t.runAsync(() async => {1: await p1.png(), 2: await p2.png()}))!;
+    final fake = FakePages(pages);
+    await t.runAsync(fake.warm);
+    // The circuit as the app cuts it out of page 1, found at the address its card asks for.
+    final cut = (await t.runAsync(() async => cutOut((await fake.pictures.image(1))!, p1.boxes['q2.figure']!, margin: 0.01)))!;
+    await cacheNetworkImage(t, 'https://figs.test/figs/q2.png', cut);
+    for (final n in pages.keys) {
+      await cacheNetworkImage(t, fake.url(n), pages[n]!); // the strip of pages under the title
+    }
+    if (_shots) {
+      await t.runAsync(() async {
+        File('../tools/out/shots/qb-page-1.png')
+          ..createSync(recursive: true)
+          ..writeAsBytesSync(pages[1]!);
+        File('../tools/out/shots/qb-page-2.png').writeAsBytesSync(pages[2]!);
+        File('../tools/out/shots/qb-figure-cut.png').writeAsBytesSync(cut);
+      });
+    }
+
+    var seq = 0;
+    Map<String, Object?> d(String n, int page, String text, List<String> opts,
+            {int? correct, String? note, Map<String, int>? picks, List<Map<String, Object?>>? boxes, bool diagram = false, Map<String, Object?>? figure, String? imageKey,
+            bool joined = false, Map<String, Object?>? joinedFrom, bool cutNext = false, bool cutPrev = false, String status = 'draft', String paper = 'p-q1'}) =>
+        {
+          'id': '$paper-${++seq}', 'paper_id': paper, 'page_no': page, 'seq': seq, 'number_label': n, 'kind': 'mcq', 'status': status, 'text': text, 'options': opts,
+          'correct_option': correct, 'answer_source': correct == null ? null : 'ai', 'ai_confidence': correct == null ? null : 0.98, 'ai_note': note, 'ai_picks': picks,
+          'ai_votes': null, 'proposed_option': null, 'answer_checked': true, 'needs_diagram': diagram, 'image_key': imageKey,
+          'image_url': imageKey == null ? null : 'https://figs.test/$imageKey', 'chapter': null, 'chapter_id': null, 'ai_chapter_guess': null, 'edited': false,
+          'question_boxes': boxes, 'figure_box': figure, 'cont_next': cutNext, 'cont_prev': cutPrev, 'joined': joined, 'joined_from': joinedFrom,
+        };
+    List<Map<String, Object?>> at(int page, String id) => [
+          {'page': page, 'box': (page == 1 ? p1 : p2).boxes[id]},
+        ];
+
+    const lensText = 'A student finds the focal length of a convex lens by focusing a distant object on a screen. The sharp image is 15 cm from the lens. The power of the lens is nearly';
+    final misprint = d('7', 2, 'The sum of the first ■ terms of an AP is 3■² + 5■. Its 10th term is', ['62', '65', '59', '68'], note: 'unclear', boxes: at(2, 'q7'));
+    final fillers = [
+      for (final (i, q) in [
+        'Which of these is a vector quantity?',
+        'The SI unit of force is',
+        'A body at rest has a speed of',
+        'Light travels fastest in',
+        'The unit of electric current is',
+        'The image in a plane mirror is',
+        'The energy of a moving body is called',
+        'Sound cannot travel through',
+        'The bending of light is called',
+        'The unit of resistance is',
+        'The lens used in a magnifying glass is',
+      ].indexed)
+        d('${i + 8}', 2, q, ['Option A', 'Option B', 'Option C', 'Option D'], correct: i % 4),
+    ];
+    final drafts = [
+      misprint,
+      d('9', 2, 'The focal length of a plane mirror is', ['0', '10 cm', 'infinite', '1 m'], note: 'disagree', picks: {'solver': 2, 'checker': 0}),
+      d('12', 2, 'A ray of light passes through the centre of a lens. It', ['bends up', 'bends down', 'goes straight', 'stops']),
+      d('2', 1, 'In the circuit shown, the equivalent resistance between the points A and B is', ['2 Ω', '4 Ω', '11 Ω', '1 Ω'],
+          correct: 1, diagram: true, imageKey: 'figs/q2.png', figure: {'page': 1, 'box': p1.boxes['q2.figure']}, boxes: at(1, 'q2')),
+      d('4', 1, lensText, ['6.67 D', '0.15 D', '1.5 D', '15 D'],
+          correct: 0,
+          joined: true,
+          boxes: [...at(1, 'q4a'), ...at(2, 'q4b')],
+          joinedFrom: {
+            'before': {'options': ['6.67 D', '0.15 D']},
+            'part': {'page_no': 2},
+          }),
+      ...fillers,
+      d('3', 1, 'The unit of work is', ['watt', 'joule', 'newton', 'pascal'], status: 'discarded'),
+      d('6', 2, 'The unit of frequency is', ['metre', 'second', 'hertz', 'kelvin'], status: 'discarded'),
+    ];
+    Map<String, Object?> paper(String id) => {
+          'id': id, 'class_level': 10, 'exam_name': 'Unit Test 2', 'category': null, 'subject': 'Physics', 'subject_id': 'sub-0', 'chapter': null, 'chapter_id': null,
+          'ai_details': {'ok': true}, 'page_count': 2, 'missing': <String>[],
+        };
+    routes['/teacher/papers/p-q1'] = (_) => {'paper': paper('p-q1'), 'pages': fake.rows(), 'drafts': drafts, 'chapters': <Object?>[], 'questions': <Object?>[], 'tests': <Object?>[]};
+    final cutOff = [
+      d('4', 1, lensText, ['6.67 D', '0.15 D'], note: 'unclear', cutNext: true, boxes: at(1, 'q4a'), paper: 'p-q2'),
+      d('', 2, '', ['1.5 D', '15 D'], note: 'unclear', cutPrev: true, boxes: at(2, 'q4b'), paper: 'p-q2'),
+      d('5', 2, 'The speed of light in vacuum is nearly', ['300 000 km/s', '3 000 km/s', '30 000 km/s', '300 km/s'], correct: 0, paper: 'p-q2'),
+    ];
+    routes['/teacher/papers/p-q2'] = (_) => {'paper': paper('p-q2'), 'pages': fake.rows(), 'drafts': cutOff, 'chapters': <Object?>[], 'questions': <Object?>[], 'tests': <Object?>[]};
+    for (final id in ['p-q1', 'p-q2']) {
+      routes['POST /teacher/papers/$id/answers'] = (_) => {'from_key': 0, 'by_ai': 0, 'tried': 0, 'left': 0, 'second': 0};
+      routes['POST /teacher/papers/$id/second-opinion'] = (_) => {'by_ai': 0, 'tried': 0, 'asked': 0, 'left': 0};
+    }
+
+    Future<void> pictures(WidgetTester t) => settle(t, rounds: 4);
+    Future<void> readyRow(WidgetTester t, String text) async {
+      await t.tap(find.text('Ready'));
+      await settle(t, rounds: 3);
+      await t.tap(find.textContaining(text, findRichText: true));
+      await settle(t, rounds: 8);
+    }
+
+    await _both(t, 'qb-misprint', () => PaperReviewScreen(id: 'p-q1', pictures: fake.pictures), height: 3000, then: pictures);
+    await _both(t, 'qb-figure', () => PaperReviewScreen(id: 'p-q1', pictures: fake.pictures), height: 3000, then: (t) => readyRow(t, 'In the circuit shown'));
+    await _both(t, 'qb-joined', () => PaperReviewScreen(id: 'p-q1', pictures: fake.pictures), height: 3000, then: (t) => readyRow(t, 'A student finds the focal length'));
+    await _both(t, 'qb-cutoff', () => PaperReviewScreen(id: 'p-q2', pictures: fake.pictures), height: 3600, then: pictures);
+    await _both(t, 'qb-fix', () => DraftEditor(draft: misprint, pictures: fake.pictures), height: 2800, then: pictures);
+    await _both(t, 'qb-cut', () => FigureCutScreen(pictures: fake.pictures, page: 1, start: p1.boxes['q2.figure']!), height: 2400, then: pictures);
+  });
+
   shotTest('student profile', (t) async {
     _sessionAs(role: 'student', tuitions: [
       {'id': 't-1', 'name': 'Priya Maths Classes', 'role': 'student', 'status': 'active', 'class_level': 9},
@@ -703,7 +833,7 @@ void main() {
   shotTest('tutor home', (t) async {
     _sessionAs(role: 'teacher', tuitions: tutorTuition);
     routes['/teacher/home'] = (_) => busyHome();
-    await _both(t, 'home-full', () => const Scaffold(body: TutorHome()), height: 3200);
+    await _both(t, 'home-full', () => const Scaffold(body: TutorHome()), height: 2700);
     // Nothing open right now.
     routes['/teacher/home'] = (_) => busyHome(open: false);
     await _both(t, 'home-quiet', () => const Scaffold(body: TutorHome()), height: 3000);
@@ -976,6 +1106,56 @@ void main() {
           'students': <Object?>[],
         };
     await _both(t, 'test-times', () => const TestEditor(id: 't-9'));
+  });
+
+  // The settings of a group's test as they are meant to be read: the test in one card, then When, Time to finish and Who and how.
+  // Also the card a tap on Closes opens, and "Who writes it" with two students chosen.
+  shotTest('tests: test settings', (t) async {
+    _sessionAs(role: 'teacher', tuitions: tutorTuition);
+    final maths = {'id': 'sub-Maths', 'name': 'Maths', 'is_default': true};
+    routes['/teacher/subjects'] = (_) => {'subjects': [maths]};
+    routes['/teacher/students'] = (_) => {
+          'students': [
+            for (var i = 0; i < 12; i++)
+              {'id': 's$i', 'display_name': people[i], 'username': 's$i', 'class_level': 10, 'active': true, 'subjects': [maths], 'courses': <Object?>[]},
+          ],
+        };
+    Map<String, Object?> groupTest({String status = 'draft', int attempts = 0, Duration opens = const Duration(days: 1)}) => {
+          'test': {
+            'id': 't-8', 'title': 'Unit 2 quiz', 'course_id': null, 'course': null, 'class_level': 10, 'subject_id': 'sub-Maths',
+            'time_limit_min': 30, 'opens_at': _iso(opens), 'closes_at': _iso(const Duration(days: 4)), 'status': status,
+            'shuffle': true, 'assign_group': true, 'assign_all': false, 'attempts': attempts,
+          },
+          'questions': [
+            for (var i = 1; i <= 20; i++) {'id': 'q$i', 'text': 'Question number $i', 'chapter': i.isEven ? 'Real numbers' : null},
+          ],
+          'students': <Object?>[],
+        };
+    routes['/teacher/tests/t-8'] = (_) => groupTest();
+    await _both(t, 'test-settings', () => const TestEditor(id: 't-8'), height: 2700);
+    // With large text the screen is longer than the window: scroll to each thing before tapping it.
+    Future<void> tapScrolled(WidgetTester t, String text) async {
+      await t.scrollUntilVisible(find.text(text), 100, scrollable: find.byType(Scrollable).first, maxScrolls: 30);
+      await t.ensureVisible(find.text(text));
+      await t.pump(const Duration(milliseconds: 100));
+      await t.tap(find.text(text));
+      await _settle(t);
+    }
+
+    await _both(t, 'test-settings-when', () => const TestEditor(id: 't-8'), height: 2700, then: (t) async {
+      await tapScrolled(t, 'Closes');
+    });
+    await _both(t, 'test-settings-who', () => const TestEditor(id: 't-8'), height: 2700, then: (t) async {
+      await tapScrolled(t, 'All 12 students');
+      await tapScrolled(t, 'Some of them');
+      await tapScrolled(t, 'Aarav Kumar');
+      await tapScrolled(t, 'Diya Nair');
+    });
+    // A new test for a group (no link leads to it in the app, but the page is there): its class and subject come first.
+    await _both(t, 'test-settings-new', () => const TestEditor(), height: 2700);
+    // One students have started: its questions are fixed, it is saved with "Save changes", and it can still be deleted.
+    routes['/teacher/tests/t-8'] = (_) => groupTest(status: 'published', attempts: 3, opens: const Duration(days: -1));
+    await _both(t, 'test-settings-posted', () => const TestEditor(id: 't-8'), height: 2700);
   });
 
   // A posted test that opened yesterday and closes in three hours: the kicker and the Opens and Closes rows name the day and date.

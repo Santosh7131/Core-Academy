@@ -952,10 +952,11 @@ teacherRoutes.delete('/questions/:id', async (c) => {
   return c.json({ ok: true, removed_from_tests: removed });
 });
 
-/** A direct upload URL for a question diagram. */
+/** A direct upload URL for a question diagram. A figure cut out of a page is sent as a PNG (`type: 'png'`), so its lines stay sharp; a photo is a JPEG. */
 teacherRoutes.post('/uploads', async (c) => {
   const key = newImageKey(tuitionOf(c).id);
-  return c.json({ key, put_url: await uploadUrl(key, 'image/jpeg', declaredSize((await readBody(c)).size) ?? undefined) });
+  const b = await readBody(c);
+  return c.json({ key, put_url: await uploadUrl(key, b.type === 'png' ? 'image/png' : 'image/jpeg', declaredSize(b.size) ?? undefined) });
 });
 
 // ---------------------------------------------------------------- tests
