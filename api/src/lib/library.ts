@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { pool, q, tq, tq1, type Db } from './db.ts';
 import { bad, notFound } from './http.ts';
-import { abortMultipart, deleteObjects } from './storage.ts';
+import { orphansAmong } from './orphans.ts';
+import { abortMultipart, deleteObjects, listObjects } from './storage.ts';
 import { ensureGroup } from './tuition.ts';
 
 // The Library: files a tutor puts on the shelf of a group or a course, for its people to read and download
@@ -160,7 +161,7 @@ export async function discardObjects(files: { object_key: string; upload_id: str
   await deleteObjects(files.map((f) => f.object_key)).catch(() => {});
 }
 
-/** Throws away uploads nobody finished: their rows, and the parts or the object they left in storage. */
+/** Throws away uploads nobody finished: their rows, and the parts or the object they left in storage. Then the leftovers (sweepOrphans). */
 export async function sweepStaleUploads(tuition: string) {
   const old = await tq<{ id: string; object_key: string; upload_id: string | null }>(
     tuition,
@@ -168,6 +169,28 @@ export async function sweepStaleUploads(tuition: string) {
       returning id, object_key, upload_id`,
   );
   if (old.length) await discardObjects(old);
+  await sweepOrphans(tuition);
+}
+
+/** How often one tuition's storage is looked through for leftovers (per server instance), and how many objects one look reads. */
+const ORPHAN_SWEEP_EVERY_MS = 30 * 60 * 1000;
+const ORPHAN_LOOK_AT = 10_000;
+const lastOrphanSweep = new Map<string, number>();
+
+/**
+ * Throws away bytes no file points to. A signed upload link keeps working for a while after its file was deleted or refused, so the bytes
+ * can be sent again, and nothing else would ever remove them or count them against the quota (it counts rows). Leftovers older than
+ * ORPHAN_AFTER_MS go, so the most that stays is what arrived in the last hour or so.
+ */
+export async function sweepOrphans(tuition: string, now = Date.now()) {
+  if (now - (lastOrphanSweep.get(tuition) ?? 0) < ORPHAN_SWEEP_EVERY_MS) return;
+  lastOrphanSweep.set(tuition, now);
+  const stored = await listObjects(`library/${tuition}/`, ORPHAN_LOOK_AT);
+  if (!stored.length) return;
+  // The rows are read after the list: a row is made before any link is given out, so an object in the list that has no row now never will have one.
+  const known = new Set((await tq<{ object_key: string }>(tuition, 'select object_key from class_files where tuition_id = @T')).map((r) => r.object_key));
+  const gone = orphansAmong(stored, known, now);
+  if (gone.length) await deleteObjects(gone);
 }
 
 /** The keys (and upload ids) of every file on a shelf, so a group's or course's files can be thrown away with it. */

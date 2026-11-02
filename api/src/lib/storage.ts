@@ -144,14 +144,14 @@ export async function deleteObjects(keys: string[]) {
   }
 }
 
-/** Every object under a prefix: its key, size and when it was written. */
-export async function listObjects(prefix = ''): Promise<{ key: string; size: number; modified: Date | null }[]> {
+/** Every object under a prefix (or the first pages holding `max` of them): its key, size and when it was written. */
+export async function listObjects(prefix = '', max = Infinity): Promise<{ key: string; size: number; modified: Date | null }[]> {
   const out: { key: string; size: number; modified: Date | null }[] = [];
   let token: string | undefined;
   do {
     const r = await s3.send(new ListObjectsV2Command({ Bucket: BUCKET, Prefix: prefix || undefined, ContinuationToken: token }));
     for (const o of r.Contents ?? []) out.push({ key: o.Key ?? '', size: o.Size ?? 0, modified: o.LastModified ?? null });
     token = r.IsTruncated ? r.NextContinuationToken : undefined;
-  } while (token);
+  } while (token && out.length < max);
   return out;
 }

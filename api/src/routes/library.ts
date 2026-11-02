@@ -164,6 +164,7 @@ async function uploadPlan(f: Pick<FileRow, 'object_key' | 'upload_id' | 'content
  */
 libraryRoutes.post('/library/sections/:id/files', async (c) => {
   const T = tuitionOf(c).id;
+  waitUntil(sweepStaleUploads(T).catch(() => {}));
   const sec = await ownSection(T, uuid(c.req.param('id'), 'section id'));
   const b = await readBody(c);
   const name = str(b, 'name', { max: 120 })!;
