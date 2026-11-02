@@ -56,7 +56,15 @@ class _TabItem extends StatelessWidget {
       child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
         Icon(icon, size: 24, color: fg),
         const SizedBox(height: 3),
-        Text(label, style: tagStyle.copyWith(fontSize: 12.5, fontWeight: FontWeight.w600, color: fg)),
+        // One line, and the same size in every tab: the names grow with large text to 1.3 times at most, and a long one
+        // ("Groups & courses") shrinks a little more to fit its tab, so the bar never overflows.
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: MediaQuery.withClampedTextScaling(
+            maxScaleFactor: 1.3,
+            child: FittedBox(fit: BoxFit.scaleDown, child: Text(label, maxLines: 1, style: tagStyle.copyWith(fontSize: 12.5, fontWeight: FontWeight.w600, color: fg))),
+          ),
+        ),
       ]),
     );
   }

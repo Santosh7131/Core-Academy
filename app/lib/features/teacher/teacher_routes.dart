@@ -29,9 +29,9 @@ GoRoute _page(String path, Widget Function(GoRouterState s) build) =>
 
 int? _int(GoRouterState s, String key) => int.tryParse(s.uri.queryParameters[key] ?? '');
 
-/// Two tabs inside the shell, Home and Classes; everything else is pushed full-screen above it.
+/// Two tabs inside the shell, Home and Groups & courses; everything else is pushed full-screen above it.
 /// Students, tests, uploads and test questions all live inside a group or a course. The Groups and Courses tabs of
-/// the versions before 1.8.0 are the Classes tab now.
+/// the versions before 1.8.0 are one tab now, with a switch between the two kinds (its route is still /t/classes).
 final teacherRoutes = <RouteBase>[
   StatefulShellRoute.indexedStack(
     builder: (context, state, shell) => TeacherShell(shell: shell),

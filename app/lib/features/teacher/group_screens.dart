@@ -4,9 +4,11 @@ import 'package:go_router/go_router.dart';
 import '../../core/api.dart';
 import '../../core/changes.dart';
 import '../../core/format.dart' as f;
+import '../../core/library.dart';
 import '../../theme.dart';
 import '../../ui/kit.dart';
 import 'common.dart';
+import 'library_tab.dart';
 import 'make_test.dart';
 import 'subjects.dart';
 import 'tests_screens.dart' show classTests;
@@ -90,13 +92,16 @@ class _GroupScreenState extends State<GroupScreen> with WidgetsBindingObserver, 
   String? _error;
   bool _allFinished = false;
 
-  /// The tab showing: 0 for the tests, 1 for the students.
+  /// The tab showing: 0 for the tests, 1 for the Library, 2 for the students.
   int _tab = 0;
+
+  /// Counts the times the page has loaded, so the Library tab loads its shelf again with it.
+  int _loads = 0;
 
   String get _name => groupName(widget.classLevel, widget.subjectName);
 
   @override
-  Set<Area> get refreshAreas => {Area.tests, Area.students, Area.papers};
+  Set<Area> get refreshAreas => {Area.tests, Area.students, Area.papers, Area.library};
 
   @override
   Duration? get pollEvery => const Duration(seconds: 30);
@@ -118,6 +123,7 @@ class _GroupScreenState extends State<GroupScreen> with WidgetsBindingObserver, 
         setState(() {
           _d = Map<String, dynamic>.from(d);
           _error = null;
+          _loads++;
         });
       }
     } on ApiException catch (e) {
@@ -183,16 +189,22 @@ class _GroupScreenState extends State<GroupScreen> with WidgetsBindingObserver, 
   List<Widget> _head(Map<String, dynamic> d) {
     final students = (d['students'] as List).cast<Map<String, dynamic>>();
     final tests = (d['tests'] as List).cast<Map<String, dynamic>>();
+    final files = _n(d['library']);
     return [
       const SizedBox(height: 18),
       PrimaryButton('Make tests', leadingIcon: Ph.plus, onTap: _makeTest),
       const SizedBox(height: 18),
-      SegmentedToggle(labels: const ['Tests', 'Students'], counts: [tests.length, students.length], index: _tab, onChanged: (i) => setState(() => _tab = i)),
+      SegmentedToggle(
+        labels: const ['Tests', 'Library', 'Students'],
+        counts: [tests.length, files > 0 ? files : null, students.length],
+        index: _tab,
+        onChanged: (i) => setState(() => _tab = i),
+      ),
       const SizedBox(height: 14),
     ];
   }
 
-  /// The chosen tab: the tests, or the students with the button to add one; an empty group can be removed from either.
+  /// The chosen tab: the tests, the Library, or the students with the button to add one; an empty group can be removed from any.
   List<Widget> _content(Map<String, dynamic> d) {
     final students = (d['students'] as List).cast<Map<String, dynamic>>();
     final tests = (d['tests'] as List).cast<Map<String, dynamic>>();
@@ -206,6 +218,8 @@ class _GroupScreenState extends State<GroupScreen> with WidgetsBindingObserver, 
           go: _go,
           empty: 'Tap Make tests above. Students you add on the Students tab can take them.',
         )
+      else if (_tab == 1)
+        LibraryTab(shelf: LibShelf.group(widget.classLevel, widget.subjectId), className: _name, reload: _loads)
       else ...[
         if (students.isEmpty) Fig('No students in this group yet.', style: bodyStyle.copyWith(color: muted)),
         for (final (i, s) in students.indexed) ...[
@@ -225,7 +239,7 @@ class _GroupScreenState extends State<GroupScreen> with WidgetsBindingObserver, 
         const SizedBox(height: gapRow),
         SecondaryButton('Add student', icon: Ph.userPlus, onTap: () => _go('/t/students/new?$_query')),
       ],
-      if (students.isEmpty && tests.isEmpty) ...[
+      if (students.isEmpty && tests.isEmpty && _n(d['library']) == 0) ...[
         const SizedBox(height: 22),
         Center(child: TextAction('Remove this group', color: danger, onTap: _remove)),
       ],

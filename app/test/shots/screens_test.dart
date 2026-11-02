@@ -9,15 +9,18 @@ import 'dart:ui' as ui;
 
 import 'package:core_academy/core/api.dart';
 import 'package:core_academy/core/format.dart' show time;
+import 'package:core_academy/core/library.dart' show LibFile, LibraryEnv, UploadJob, UploadState;
 import 'package:core_academy/core/session.dart';
 import 'package:core_academy/core/updater.dart';
 import 'package:core_academy/features/auth/login_screen.dart';
 import 'package:core_academy/features/auth/start_screen.dart';
 import 'package:core_academy/features/auth/signup_screen.dart';
 import 'package:core_academy/features/auth/update_required_screen.dart';
+import 'package:core_academy/features/library/file_viewer.dart' show FileViewerArgs, FileViewerScreen, pdfPages;
 import 'package:core_academy/features/student/course_screen.dart';
 import 'package:core_academy/features/student/home_screen.dart';
 import 'package:core_academy/features/student/join_screen.dart';
+import 'package:core_academy/features/student/library_screens.dart' show LibraryClassScreen;
 import 'package:core_academy/features/student/profile_screen.dart';
 import 'package:core_academy/features/student/result_screen.dart';
 import 'package:core_academy/features/student/test_screen.dart';
@@ -37,6 +40,7 @@ import 'package:core_academy/features/teacher/students_screens.dart';
 import 'package:core_academy/features/teacher/share_code_screen.dart';
 import 'package:core_academy/features/teacher/tests_screens.dart';
 import 'package:core_academy/theme.dart';
+import 'package:core_academy/ui/kit.dart' show Pressable;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -46,6 +50,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../support/library_fakes.dart' as lib;
 import '../support/make_fakes.dart';
 import '../support/page_images.dart' show FakePages, cacheNetworkImage, forgetNetworkImages, settle;
 import '../support/printed_pages.dart';
@@ -79,9 +84,14 @@ final holds = <String, Future<void>>{};
 /// While a scene of making several tests at once is drawn, a stand-in for the whole paper side of the server answers instead.
 PaperServer? makeServer;
 
+/// While a scene of the Library is drawn, a stand-in for the Library side of the server answers instead.
+lib.LibraryServer? libraryServer;
+
 Future<http.Response> _answer(http.Request r) async {
   final fake = makeServer;
   if (fake != null) return fake.handle(r);
+  final shelf = libraryServer;
+  if (shelf != null) return shelf.handle(r);
   final key = '${r.method} ${r.url.path}';
   final hold = holds[key] ?? holds[r.url.path];
   if (hold != null) await hold;
@@ -853,12 +863,20 @@ void main() {
     // The first day: no class at all.
     routes['/teacher/home'] = (_) => home();
     await _both(t, 'home-first-day', () => const Scaffold(body: TutorHome()));
+    // ... and its one button asks which kind to add.
+    await _both(t, 'home-add-choice', () => const Scaffold(body: TutorHome()), then: (t) async {
+      final add = find.text('Add a group or course');
+      await t.ensureVisible(add);
+      await t.pump();
+      await t.tap(add);
+      await _settle(t);
+    });
   });
 
-  shotTest('tutor: the Classes tab', (t) async {
+  shotTest('tutor: groups and courses', (t) async {
     _sessionAs(role: 'teacher', tuitions: tutorTuition);
     routes['/teacher/home'] = (_) => home();
-    await _both(t, 'classes-empty', () => const Scaffold(body: ClassesScreen()));
+    await _both(t, 'gc-empty', () => const Scaffold(body: ClassesScreen()));
     routes['/teacher/home'] = (_) => busyHome();
     // A button is scrolled to before it is tapped: on a phone on its side, or with very large text, it may start below the edge.
     Future<void> tapIt(WidgetTester t, Finder f) async {
@@ -868,15 +886,20 @@ void main() {
       await _settle(t);
     }
 
-    await _both(t, 'classes-add', () => const Scaffold(body: ClassesScreen()), then: (t) async {
-      await tapIt(t, find.text('Add a class').last);
+    // The groups show first; the switch changes the list to the courses.
+    await _both(t, 'gc-groups', () => const Scaffold(body: ClassesScreen()));
+    await _both(t, 'gc-courses', () => const Scaffold(body: ClassesScreen()), then: (t) async {
+      await tapIt(t, find.text('Courses'));
     });
-    await _both(t, 'classes-new-course', () => const Scaffold(body: ClassesScreen()), then: (t) async {
-      await tapIt(t, find.text('Add a class').last);
-      await tapIt(t, find.text('A course'));
+    await _both(t, 'gc-new-course', () => const Scaffold(body: ClassesScreen()), then: (t) async {
+      await tapIt(t, find.text('Courses'));
+      await tapIt(t, find.text('Add a course'));
     });
-    routes['/teacher/home'] = (_) => busyHome();
-    await _both(t, 'classes-full', () => const Scaffold(body: ClassesScreen()));
+    // Groups but no course yet, and the Courses side of that.
+    routes['/teacher/home'] = (_) => home(groups: [group(10, 'Maths', 12), group(9, 'Science', 9)]);
+    await _both(t, 'gc-no-courses', () => const Scaffold(body: ClassesScreen()), then: (t) async {
+      await tapIt(t, find.text('Courses'));
+    });
   });
 
   shotTest('tutor: the two tabs', (t) async {
@@ -1285,6 +1308,182 @@ void main() {
     // ... and who has been taken out of every course has nothing yet.
     routes['/student/home'] = (_) => {'server_now': _iso(Duration.zero), 'tuition': {'id': 't-1', 'name': 'Priya Maths Classes'}, 'tests': <Object?>[], 'courses': 0};
     await _both(t, 'courses-student-nothing', () => const StudentHome());
+  });
+
+  // ---- the Library (design/comps/w4-library.html and w4-s-library*.html): the real screens against a stand-in for the Library side of the
+  // server and for the phone, so each picture is what a person would see.
+  Finder buttonCalled(String text) => find.byWidgetPredicate((w) => w is Pressable && w.label == text);
+
+  Future<void> press(WidgetTester t, Finder f) async {
+    await t.ensureVisible(f);
+    await t.pump();
+    await t.tap(f);
+    await _settle(t);
+  }
+
+  shotTest('library: the tutor\'s shelf', (t) async {
+    _sessionAs(role: 'teacher', tuitions: tutorTuition);
+    final server = lib.LibraryServer()
+      ..people = 12
+      ..tests = [for (var i = 0; i < 5; i++) courseTest('g$i', 'Test ${i + 1}', closes: Duration(days: -3 - i), submitted: 12, assigned: 12)];
+    libraryServer = server;
+    LibraryEnv.store = lib.FakeStore();
+    LibraryEnv.uploads.clear();
+    addTearDown(() {
+      libraryServer = null;
+      LibraryEnv.uploads.clear();
+    });
+    Widget group() => const GroupScreen(classLevel: 10, subjectId: 'sub-maths', subjectName: 'Maths');
+    Future<void> openLibrary(WidgetTester t) => press(t, find.text('Library'));
+
+    // Nothing on the shelf yet, and the card that makes its first section.
+    await _both(t, 'lib-t-empty', group, height: 2000, then: openLibrary);
+    await _both(t, 'lib-t-new-section', group, height: 2000, then: (t) async {
+      await openLibrary(t);
+      await press(t, buttonCalled('Add a section'));
+      await t.enterText(find.byType(TextField), 'Test papers');
+      await _settle(t);
+    });
+
+    // Three sections with their files, and what can be done from them.
+    server.seed('PDFs', [('Chapter 4 notes.pdf', (3.8 * lib.mb).round())]);
+    server.seed('Books', [('NCERT Mathematics Class 10.pdf', (62.4 * lib.mb).round())]);
+    server.seed('Test papers', [('Mid-term 2025.pdf', (2.1 * lib.mb).round()), ('Blueprint (photo).jpg', (3.4 * lib.mb).round())]);
+    void dated(int section, int file, String day) => (server.sections[section]['files'] as List)[file]['created_at'] = '${day}T10:00:00Z';
+    dated(0, 0, '2026-10-29');
+    dated(1, 0, '2026-10-28');
+    dated(2, 0, '2026-10-27');
+    dated(2, 1, '2026-10-27');
+    await _both(t, 'lib-t-shelf', group, height: 3000, then: openLibrary);
+    await _both(t, 'lib-t-add-file', group, height: 3000, then: (t) async {
+      await openLibrary(t);
+      await press(t, buttonCalled('Add a file').at(1));
+    });
+    await _both(t, 'lib-t-file-menu', group, height: 3000, then: (t) async {
+      await openLibrary(t);
+      await press(t, buttonCalled('Options for Chapter 4 notes.pdf'));
+    });
+    await _both(t, 'lib-t-section-menu', group, height: 3000, then: (t) async {
+      await openLibrary(t);
+      await press(t, buttonCalled('Options for Books'));
+    });
+
+    // Two files on their way into Books: one 41% sent, one stopped for lack of signal.
+    (server.sections[1]['files'] as List)[0]['name'] = 'Maths formulas.pdf';
+    final big = LibraryEnv.fake('NCERT Mathematics Class 10.pdf', (62.4 * lib.mb).round());
+    final workbook = LibraryEnv.fake('Algebra workbook.pdf', (18.3 * lib.mb).round());
+    LibraryEnv.uploads.jobs
+      ..add(UploadJob('group:10:sub-maths', 's2', big)
+        ..state = UploadState.sending
+        ..sent = (big.size * 0.412).round())
+      ..add(UploadJob('group:10:sub-maths', 's2', workbook)
+        ..state = UploadState.stopped
+        ..sent = (workbook.size * 0.182).round()
+        ..offline = true
+        ..problem = 'no signal');
+    await _both(t, 'lib-t-uploading', group, height: 3000, then: openLibrary);
+  });
+
+  shotTest('library: the student\'s Library', (t) async {
+    _sessionAs(role: 'student', tuitions: [
+      {'id': 't-1', 'name': 'Priya Maths Classes', 'role': 'student', 'status': 'active', 'class_level': 10},
+    ]);
+    session.user = {...session.user!, 'display_name': 'Aarav Kumar', 'class_level': 10};
+    final server = lib.LibraryServer();
+    libraryServer = server;
+    LibraryEnv.store = lib.FakeStore();
+    final firstViewer = pdfPages;
+    addTearDown(() {
+      libraryServer = null;
+      pdfPages = firstViewer;
+    });
+    Map<String, dynamic> file(String id, String section, String name, double size, String day) =>
+        {...lib.LibraryServer.fileJson(id, section, name, (size * lib.mb).round()), 'created_at': '${day}T10:00:00Z'};
+    server.student = {
+      'groups': [
+        {
+          'class_level': 10,
+          'subject_id': 'sub-maths',
+          'subject': 'Maths',
+          'sections': [
+            {'id': 's1', 'name': 'PDFs', 'files': [file('f1', 's1', 'Chapter 4 notes.pdf', 3.8, '2026-10-29')]},
+            {'id': 's2', 'name': 'Books', 'files': [file('f2', 's2', 'NCERT Mathematics Class 10.pdf', 62.4, '2026-10-28')]},
+            {
+              'id': 's3',
+              'name': 'Test papers',
+              'files': [file('f3', 's3', 'Mid-term 2025.pdf', 2.1, '2026-10-27'), file('f4', 's3', 'Blueprint (photo).jpg', 3.4, '2026-10-27')],
+            },
+          ],
+        },
+      ],
+      'courses': [
+        {
+          'id': 'c-1',
+          'name': 'Spoken English, Batch 1',
+          'sections': [
+            {'id': 's4', 'name': 'Handouts', 'files': [file('f5', 's4', 'Grammar basics.pdf', 1.2, '2026-10-26'), file('f6', 's4', 'Everyday phrases.pdf', 0.8, '2026-10-26')]},
+          ],
+        },
+      ],
+    };
+    Map<String, Object?> done(String id, String title, int score, Duration ago) => {
+          'id': id, 'course_id': null, 'title': title, 'class_level': 10, 'time_limit_min': 15, 'opens_at': null, 'closes_at': _iso(ago), 'question_count': 10,
+          'max_marks': 10, 'state': 'done', 'retake': false, 'results_open': true,
+          'attempt': {'id': 'att-$id', 'attempt_no': 1, 'submitted_at': _iso(ago), 'deadline_at': null, 'score': score, 'max_score': 10},
+        };
+    server.home = {
+      'server_now': _iso(Duration.zero),
+      'tuition': {'id': 't-1', 'name': 'Priya Maths Classes'},
+      'tests': [
+        {
+          'id': 'a', 'title': 'Linear equations', 'course_id': null, 'class_level': 10, 'time_limit_min': 20, 'opens_at': null, 'closes_at': _iso(const Duration(hours: 3, minutes: 10)),
+          'question_count': 12, 'max_marks': 12, 'state': 'open', 'retake': false, 'results_open': true, 'attempt': null,
+        },
+        done('d1', 'Number systems', 8, const Duration(days: -11)),
+        done('d2', 'Polynomials', 6, const Duration(days: -14)),
+      ],
+      'courses': 2,
+      'library': 6,
+    };
+    server.courseList = [
+      {'id': 'c-1', 'name': 'Spoken English, Batch 1', 'open': 1, 'closes_at': _iso(const Duration(hours: 9))},
+      {'id': 'c-2', 'name': 'Olympiad Prep', 'open': 0, 'closes_at': null},
+    ];
+
+    // Home with Courses and Library in the bar; the Library tab; and Home with only the Library next to it.
+    await _both(t, 'lib-s-home', () => const StudentHome());
+    await _both(t, 'lib-s-list', () => const StudentHome(), then: (t) async {
+      await press(t, find.text('Library'));
+    });
+    server.home = {...server.home, 'courses': 0};
+    await _both(t, 'lib-s-home-only', () => const StudentHome());
+
+    // One class's files, and the note after a download.
+    const classPage = LibraryClassScreen(shelfKey: 'group:10:sub-maths', name: '10th Maths');
+    await _both(t, 'lib-s-class', () => classPage);
+    await _both(t, 'lib-s-class-saved', () => classPage, then: (t) async {
+      await press(t, buttonCalled('Download Chapter 4 notes.pdf'));
+    });
+
+    // A PDF opened in the app. Its own pages need the phone, so a page is drawn here in their place.
+    pdfPages = (file, onPage) => Builder(builder: (context) {
+          onPage(3, 12);
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(22, 24, 22, 24),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              FractionallySizedBox(widthFactor: 0.5, child: Container(height: 16, decoration: BoxDecoration(color: ink, borderRadius: BorderRadius.circular(4)))),
+              for (var p = 0; p < 4; p++) ...[
+                SizedBox(height: p == 0 ? 22 : 36),
+                for (var l = 0; l < 3; l++) ...[
+                  if (l > 0) const SizedBox(height: 8),
+                  FractionallySizedBox(widthFactor: l == 2 ? 0.6 : 1, child: Container(height: 6, decoration: BoxDecoration(color: hairline, borderRadius: BorderRadius.circular(3)))),
+                ],
+              ],
+            ]),
+          );
+        });
+    final chapter = LibFile.fromJson(file('f1', 's1', 'Chapter 4 notes.pdf', 3.8, '2026-10-29'));
+    await _both(t, 'lib-s-viewer', () => FileViewerScreen(args: FileViewerArgs(chapter, where: '10th Maths · PDFs', teacher: false)));
   });
 
   shotTest('courses: the update screen', (t) async {

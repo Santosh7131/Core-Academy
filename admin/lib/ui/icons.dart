@@ -78,6 +78,7 @@ abstract final class Ph {
   static const linkSimple = IconData(0xe2e6, fontFamily: _family);
   static const scissors = IconData(0xeae0, fontFamily: _family);
   static const calendarBlank = IconData(0xe10a, fontFamily: _family);
+  static const folderSimple = IconData(0xe25a, fontFamily: _family);
   static const gauge = IconData(0xe628, fontFamily: _family);
   static const deviceMobile = IconData(0xe1e0, fontFamily: _family);
   static const hardDrives = IconData(0xe2a0, fontFamily: _family);

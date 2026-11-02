@@ -6,9 +6,11 @@ import 'features/auth/login_screen.dart';
 import 'features/auth/signup_screen.dart';
 import 'features/auth/start_screen.dart';
 import 'features/auth/update_required_screen.dart';
+import 'features/library/file_viewer.dart';
 import 'features/student/course_screen.dart';
 import 'features/student/home_screen.dart';
 import 'features/student/join_screen.dart';
+import 'features/student/library_screens.dart';
 import 'features/student/profile_screen.dart';
 import 'features/student/result_screen.dart';
 import 'features/student/results_screen.dart';
@@ -51,6 +53,9 @@ GoRouter buildRouter() => GoRouter(
         page('/update', (_) => const UpdateRequiredScreen()),
         page('/s', (_) => const StudentHome()),
         page('/s/courses/:id', (s) => StudentCourseScreen(id: s.pathParameters['id']!, name: s.uri.queryParameters['name'] ?? '')),
+        page('/s/library/class', (s) => LibraryClassScreen(shelfKey: s.uri.queryParameters['k'] ?? '', name: s.uri.queryParameters['name'] ?? '')),
+        // A Library file, opened from either side: what to open comes with the route (features/library/file_viewer.dart).
+        page('/library/file', (s) => s.extra is FileViewerArgs ? FileViewerScreen(args: s.extra! as FileViewerArgs) : const SizedBox.shrink()),
         page('/s/write/:id', (s) => TestScreen(testId: s.pathParameters['id']!)),
         page('/s/result/:id', (s) => ResultScreen(attemptId: s.pathParameters['id']!, autoSubmitted: s.uri.queryParameters['auto'] == '1')),
         page('/s/review/:id', (s) => ReviewScreen(attemptId: s.pathParameters['id']!, start: int.tryParse(s.uri.queryParameters['n'] ?? '') ?? 1)),

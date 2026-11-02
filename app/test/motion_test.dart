@@ -253,7 +253,7 @@ void main() {
     await t.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('the Classes tab: each class comes in one after another', (t) async {
+  testWidgets('the Groups & courses tab: each row comes in one after another', (t) async {
     tutorSession();
     _routes['/teacher/home'] = () => {
           'server_now': DateTime.now().toUtc().toIso8601String(),
@@ -270,7 +270,7 @@ void main() {
     for (var i = 0; i < 20 && find.text('Course 0').evaluate().isEmpty; i++) {
       await t.pump(const Duration(milliseconds: 16));
     }
-    expect(find.text('Course 0'), findsOneWidget, reason: 'the Classes tab never loaded');
+    expect(find.text('Course 0'), findsOneWidget, reason: 'the Groups & courses tab never loaded');
     final built = [for (var i = 0; i < 12; i++) if (find.text('Course $i').evaluate().isNotEmpty) i];
     expect(built.length, greaterThan(4));
     for (final i in built) {

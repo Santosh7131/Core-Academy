@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'api.dart';
 import 'brand.dart';
 import 'changes.dart';
+import 'library.dart';
 
 enum ThemeChoice { system, light, dark }
 
@@ -208,6 +209,8 @@ class Session extends ChangeNotifier {
   }
 
   Future<void> _clear() async {
+    // Files on their way to a shelf belong to the person who started them.
+    LibraryEnv.uploads.clear();
     api.token = null;
     api.tuitionId = null;
     user = null;

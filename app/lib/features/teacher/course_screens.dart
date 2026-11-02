@@ -5,9 +5,11 @@ import '../../core/api.dart';
 import '../../core/changes.dart';
 import '../../core/format.dart' as f;
 import '../../core/levels.dart';
+import '../../core/library.dart';
 import '../../theme.dart';
 import '../../ui/kit.dart';
 import 'common.dart';
+import 'library_tab.dart';
 import 'make_test.dart';
 import 'students_screens.dart' show randomPin, usernameGuess;
 import 'tests_screens.dart' show Tick, classTests;
@@ -126,13 +128,16 @@ class _CourseScreenState extends State<CourseScreen> with WidgetsBindingObserver
   String? _error;
   bool _allFinished = false;
 
-  /// The tab showing: 0 for the tests, 1 for the people.
+  /// The tab showing: 0 for the tests, 1 for the Library, 2 for the people.
   int _tab = 0;
+
+  /// Counts the times the page has loaded, so the Library tab loads its shelf again with it.
+  int _loads = 0;
 
   String get _name => _d == null ? widget.name : '${_d!['course']['name']}';
 
   @override
-  Set<Area> get refreshAreas => {Area.courses, Area.tests, Area.students, Area.papers};
+  Set<Area> get refreshAreas => {Area.courses, Area.tests, Area.students, Area.papers, Area.library};
 
   // Students start and hand in tests all the time: check every 30 s while this is on screen.
   @override
@@ -155,6 +160,7 @@ class _CourseScreenState extends State<CourseScreen> with WidgetsBindingObserver
         setState(() {
           _d = Map<String, dynamic>.from(d);
           _error = null;
+          _loads++;
         });
       }
     } on ApiException catch (e) {
@@ -180,10 +186,11 @@ class _CourseScreenState extends State<CourseScreen> with WidgetsBindingObserver
 
   /// The course, its tests and everyone's results go; the people keep their logins and any groups they are in.
   Future<void> _delete() async {
+    final files = _n(_d?['library']);
     final yes = await confirmCard(
       context,
       title: 'Delete this course?',
-      body: 'This deletes $_name, its tests and everyone\'s results. The people in it stay as students, with their logins and any groups they are in. This cannot be undone.',
+      body: 'This deletes $_name, its tests${files > 0 ? ', its Library files' : ''} and everyone\'s results. The people in it stay as students, with their logins and any groups they are in. This cannot be undone.',
       confirm: 'Delete course',
       destructive: true,
     );
@@ -222,18 +229,24 @@ class _CourseScreenState extends State<CourseScreen> with WidgetsBindingObserver
   List<Widget> _head(Map<String, dynamic> d) {
     final people = (d['people'] as List).cast<Map<String, dynamic>>();
     final tests = (d['tests'] as List).cast<Map<String, dynamic>>();
+    final files = _n(d['library']);
     return [
       const SizedBox(height: 4),
       Align(alignment: Alignment.centerLeft, child: _RenameLink(onTap: _rename)),
       const SizedBox(height: 10),
       PrimaryButton('Make tests', leadingIcon: Ph.plus, onTap: _makeTest),
       const SizedBox(height: 18),
-      SegmentedToggle(labels: const ['Tests', 'People'], counts: [tests.length, people.length], index: _tab, onChanged: (i) => setState(() => _tab = i)),
+      SegmentedToggle(
+        labels: const ['Tests', 'Library', 'People'],
+        counts: [tests.length, files > 0 ? files : null, people.length],
+        index: _tab,
+        onChanged: (i) => setState(() => _tab = i),
+      ),
       const SizedBox(height: 14),
     ];
   }
 
-  /// The chosen tab: the tests, or the people with the button to add more; the delete link ends the page either way.
+  /// The chosen tab: the tests, the Library, or the people with the button to add more; the delete link ends the page whichever it is.
   List<Widget> _content(Map<String, dynamic> d) {
     final people = (d['people'] as List).cast<Map<String, dynamic>>();
     final tests = (d['tests'] as List).cast<Map<String, dynamic>>();
@@ -247,6 +260,8 @@ class _CourseScreenState extends State<CourseScreen> with WidgetsBindingObserver
           go: _go,
           empty: 'Tap Make tests above. People you add on the People tab can take them.',
         )
+      else if (_tab == 1)
+        LibraryTab(shelf: LibShelf.course(widget.id), className: _name, reload: _loads)
       else ...[
         if (people.isEmpty) Fig('No one is in this course yet. Add the people who join it.', style: bodyStyle.copyWith(color: muted)),
         for (final (i, s) in people.indexed) ...[

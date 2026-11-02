@@ -10,11 +10,15 @@ import '../../theme.dart';
 import '../../ui/floating_tabs.dart';
 import '../../ui/kit.dart';
 import '../../ui/update_card.dart';
+import 'library_screens.dart';
 import 'start_card.dart';
 import 'test_sections.dart';
 
 /// A course's page, with its name so the page has its title before it has loaded.
 String studentCoursePath(Map<String, dynamic> c) => '/s/courses/${c['id']}?name=${Uri.encodeComponent('${c['name']}')}';
+
+/// What the floating bar can show: Home always, Courses for a student in a class and a course, Library once there are files to read.
+enum _Tab { home, courses, library }
 
 class StudentHome extends StatefulWidget {
   const StudentHome({super.key});
@@ -29,8 +33,11 @@ class _StudentHomeState extends State<StudentHome> with WidgetsBindingObserver, 
   /// The courses the student is in. A student with none sees the class's tests and nothing else.
   List<Map<String, dynamic>> _courses = const [];
 
-  /// Which of the two a student in a class and a course is looking at: 0 Tests, 1 Courses.
-  int _tab = 0;
+  /// The classes (groups and courses) that have files to read. The Library tab shows only when there are some.
+  List<ClassShelf> _shelves = const [];
+
+  /// The tab showing.
+  _Tab _tab = _Tab.home;
   String? _error;
   bool _loading = false;
 
@@ -60,6 +67,8 @@ class _StudentHomeState extends State<StudentHome> with WidgetsBindingObserver, 
       // The server says how many courses the student is in (an older server says nothing: none).
       final n = (r['courses'] as num?)?.toInt() ?? 0;
       _courses = n == 0 ? const [] : ((await api.get('/student/courses'))['courses'] as List).cast<Map<String, dynamic>>();
+      // And how many files the student can read (an older server says nothing: none).
+      _shelves = ((r['library'] as num?)?.toInt() ?? 0) == 0 ? const [] : await loadShelves();
       _error = null;
     } on ApiException catch (e) {
       _error = e.message;
@@ -95,20 +104,26 @@ class _StudentHomeState extends State<StudentHome> with WidgetsBindingObserver, 
     final user = session.user ?? {};
     final tests = _tests;
     // A person with no class (only in courses) opens straight on their courses. A student in a class and in a
-    // course has two tabs, kept apart so a course never looks like part of the class.
+    // course has a Courses tab, kept apart so a course never looks like part of the class. Files to read add a Library tab.
     final inClass = session.classLevel != null;
-    final tabs = inClass && _courses.isNotEmpty;
+    final tabs = [_Tab.home, if (inClass && _courses.isNotEmpty) _Tab.courses, if (_shelves.isNotEmpty) _Tab.library];
+    final tab = tabs.contains(_tab) ? _tab : _Tab.home;
+    final bar = tabs.length > 1;
     final coursesOnly = !inClass;
-    final showCourses = coursesOnly || (tabs && _tab == 1);
-    final kicker = inClass && !showCourses ? '${session.tuitionName} · ${className(session.classLevel)}' : session.tuitionName;
-    final title = showCourses && !coursesOnly ? 'Courses' : session.firstName;
+    final showCourses = tab == _Tab.courses || (tab == _Tab.home && coursesOnly);
+    final kicker = inClass && tab == _Tab.home ? '${session.tuitionName} · ${className(session.classLevel)}' : session.tuitionName;
+    final title = switch (tab) {
+      _Tab.library => 'Library',
+      _Tab.courses => 'Courses',
+      _Tab.home => session.firstName,
+    };
     return Scaffold(
       body: Stack(children: [
         Positioned.fill(
           child: SafeArea(
             child: PullToRefresh(
               onRefresh: _load,
-              child: ListView(padding: EdgeInsets.only(top: 8, bottom: tabs ? 110 : 32), physics: const AlwaysScrollableScrollPhysics(), children: [
+              child: ListView(padding: EdgeInsets.only(top: 8, bottom: bar ? 110 : 32), physics: const AlwaysScrollableScrollPhysics(), children: [
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: gutter),
                   child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
@@ -148,19 +163,30 @@ class _StudentHomeState extends State<StudentHome> with WidgetsBindingObserver, 
                       padding: const EdgeInsets.fromLTRB(gutter, 18, gutter, 0),
                       child: InlineNotice(_error!, icon: Ph.warning),
                     ),
-                  ...(showCourses ? _courseSections(withNote: tabs) : _sections(tests)),
+                  ...(tab == _Tab.library
+                      ? staggered(libraryRows(_shelves, onOpen: (shelf) => _open(libraryClassPath(shelf))), scope: this, prefix: 'library', stepMs: 70)
+                      : showCourses
+                          ? _courseSections(withNote: tab == _Tab.courses)
+                          : _sections(tests)),
                 ],
               ]),
             ),
           ),
         ),
-        if (tabs)
+        if (bar)
           FloatingTabs.positioned(
             context,
             child: FloatingTabs(
-              items: const [(Ph.exam, 'Tests'), (Ph.graduationCap, 'Courses')],
-              index: _tab,
-              onTap: (i) => setState(() => _tab = i),
+              items: [
+                for (final t in tabs)
+                  switch (t) {
+                    _Tab.home => (Ph.house, 'Home'),
+                    _Tab.courses => (Ph.graduationCap, 'Courses'),
+                    _Tab.library => (Ph.books, 'Library'),
+                  },
+              ],
+              index: tabs.indexOf(tab),
+              onTap: (i) => setState(() => _tab = tabs[i]),
             ),
           ),
       ]),

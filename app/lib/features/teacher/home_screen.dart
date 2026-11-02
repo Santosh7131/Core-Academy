@@ -10,7 +10,7 @@ import '../../core/session.dart';
 import '../../theme.dart';
 import '../../ui/kit.dart';
 import '../../ui/update_card.dart';
-import 'classes_screen.dart' show addClass;
+import 'classes_screen.dart' show addGroupOrCourse;
 import 'common.dart';
 import 'make_test.dart';
 import 'papers_screens.dart' show paperGroup, paperName;
@@ -21,7 +21,7 @@ int _n(Object? v) => v is num ? v.toInt() : int.tryParse('$v') ?? 0;
 // ---------------------------------------------------------------- home
 
 /// The tutor's home, in the order a tutor needs it: one button to make a test, what needs her, the tests students can write now,
-/// the ones coming up and the ones that finished lately. The classes themselves are on the Classes tab.
+/// the ones coming up and the ones that finished lately. The groups and courses themselves are on the Groups & courses tab.
 class TutorHome extends StatefulWidget {
   const TutorHome({super.key});
 
@@ -78,8 +78,8 @@ class _TutorHomeState extends State<TutorHome> with WidgetsBindingObserver, Auto
     if (await makeTest(context, _targets(d)) && mounted) _load();
   }
 
-  Future<void> _addClass() async {
-    await addClass(context);
+  Future<void> _addGroupOrCourse() async {
+    await addGroupOrCourse(context);
     if (mounted) _load();
   }
 
@@ -219,9 +219,9 @@ class _TutorHomeState extends State<TutorHome> with WidgetsBindingObserver, Auto
       if (!hasClass)
         EmptyState(
           icon: Ph.users,
-          title: 'No classes yet',
-          body: 'Add a class, like 10th Maths. Then you can add your students and make your first test.',
-          action: PrimaryButton('Add a class', leadingIcon: Ph.plus, onTap: _addClass),
+          title: 'No groups or courses yet',
+          body: 'Add a group, like 10th Maths, or a course. Then you can add your people and make your first test.',
+          action: PrimaryButton('Add a group or course', leadingIcon: Ph.plus, onTap: _addGroupOrCourse),
         )
       else
         pad(PrimaryButton('Make tests', leadingIcon: Ph.plus, onTap: () => _make(d)), top: 18),
@@ -242,7 +242,7 @@ class _TutorHomeState extends State<TutorHome> with WidgetsBindingObserver, Auto
       ],
       if (finished.isNotEmpty)
         pad(
-          Fig('Older tests are on each class\'s page, under Classes.', style: labelStyle),
+          Fig('Older tests are on each group\'s or course\'s page, under Groups & courses.', style: labelStyle),
           top: 12,
         ),
       if (hasClass && open.isEmpty && coming.isEmpty && finished.isEmpty)

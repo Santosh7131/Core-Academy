@@ -10,6 +10,7 @@ import { pool, q, q1, tq, tq1, tx } from '../lib/db.ts';
 import { papersToFinish, recentFinished } from '../lib/home.ts';
 import { bad, bool, date, hasNul, HttpError, int, notFound, optionList, str, uuid, uuidOpt } from '../lib/http.ts';
 import { assertLevel, CLASS_MIN, CUSTOM_MAX, levelIn, levelLabel, levelParam } from '../lib/levels.ts';
+import { groupFileCount, groupLibraryCount, subjectFileCount } from '../lib/library.ts';
 import { afterTestChange } from '../lib/notify.ts';
 import { pushConfigured, pushToUsers } from '../lib/push.ts';
 import { mustKeepOrder } from '../lib/questions.ts';
@@ -493,6 +494,7 @@ teacherRoutes.delete('/subjects/:id', async (c) => {
     [id],
   );
   if (used.n > 0) throw new HttpError(409, 'in_use', 'This subject has chapters, questions, papers or tests. Delete those first.');
+  if ((await subjectFileCount(T, id)) > 0) throw new HttpError(409, 'in_use', 'This subject has files in a Library. Delete those first.');
   await tx(async (cx) => {
     await tq(T, 'delete from groups where tuition_id = @T and subject_id = $1', [id], cx);
     await tq(T, 'delete from student_subjects where tuition_id = @T and subject_id = $1', [id], cx);
@@ -536,6 +538,7 @@ teacherRoutes.delete('/groups/:cls/:subject', async (c) => {
     [cls, subjectId],
   );
   if (used.n > 0) throw new HttpError(409, 'in_use', 'This group has students or tests. Move or delete those first.');
+  if ((await groupFileCount(T, cls, subjectId)) > 0) throw new HttpError(409, 'in_use', 'This group has files in its Library. Delete those first.');
   const gone = await tq1(T, 'delete from groups where tuition_id = @T and class_level = $1 and subject_id = $2 returning id', [cls, subjectId]);
   if (!gone) throw notFound('This group');
   return c.json({ ok: true });
@@ -636,7 +639,7 @@ teacherRoutes.get('/groups/:cls/:subject', async (c) => {
       limit 100`,
     [cls, subjectId],
   );
-  return c.json({ group: { class_level: cls, subject_id: subjectId, subject: subject.name }, students, tests });
+  return c.json({ group: { class_level: cls, subject_id: subjectId, subject: subject.name }, students, tests, library: await groupLibraryCount(T, cls, subjectId) });
 });
 
 // ---------------------------------------------------------------- tutors

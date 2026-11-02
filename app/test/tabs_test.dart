@@ -42,10 +42,12 @@ Future<void> _settle(WidgetTester t, [int ms = 1500]) async {
   }
 }
 
-Future<GoRouter> _open(WidgetTester t, {String at = '/t'}) async {
-  t.view.physicalSize = const Size(411 * 2.625, 900 * 2.625);
+Future<GoRouter> _open(WidgetTester t, {String at = '/t', double width = 411, double scale = 1}) async {
+  t.view.physicalSize = Size(width * 2.625, 900 * 2.625);
   t.view.devicePixelRatio = 2.625;
+  t.platformDispatcher.textScaleFactorTestValue = scale;
   addTearDown(t.view.reset);
+  addTearDown(t.platformDispatcher.clearAllTestValues);
   final router = GoRouter(initialLocation: at, routes: teacherRoutes);
   await t.pumpWidget(MaterialApp.router(theme: buildTheme(Brightness.light), routerConfig: router));
   await _settle(t);
@@ -72,20 +74,20 @@ void main() {
     session.tuitionId = 't-1';
   });
 
-  testWidgets('the tab bar has two tabs, Home and Classes, and no Groups or Courses', (t) async {
+  testWidgets('the tab bar has two tabs, Home and Groups & courses, and no separate Groups or Courses tab', (t) async {
     await _open(t);
     expect(_tab('Home'), findsOneWidget);
-    expect(_tab('Classes'), findsOneWidget);
+    expect(_tab('Groups & courses'), findsOneWidget);
     expect(_tab('Groups'), findsNothing);
     expect(_tab('Courses'), findsNothing);
     expect(find.byType(TutorHome), findsOneWidget);
     await t.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('tapping Classes shows the classes, and tapping Home brings Home back', (t) async {
+  testWidgets('tapping Groups & courses shows them, and tapping Home brings Home back', (t) async {
     await _open(t);
     expect(find.byType(ClassesScreen), findsNothing);
-    await t.tap(_tab('Classes'));
+    await t.tap(_tab('Groups & courses'));
     await _settle(t);
     expect(find.byType(ClassesScreen), findsOneWidget);
     expect(find.byType(TutorHome), findsNothing);
@@ -98,18 +100,18 @@ void main() {
   });
 
   for (final old in ['/t/groups', '/t/courses']) {
-    testWidgets('the old address $old lands on the Classes tab', (t) async {
+    testWidgets('the old address $old lands on the Groups & courses tab', (t) async {
       final router = await _open(t, at: old);
       expect(router.state.uri.path, '/t/classes');
       expect(find.byType(ClassesScreen), findsOneWidget);
-      expect(_tab('Classes'), findsOneWidget);
+      expect(_tab('Groups & courses'), findsOneWidget);
       await t.pumpWidget(const SizedBox.shrink());
     });
   }
 
   testWidgets('a page pushed over a tab (the papers waiting) comes back to that tab', (t) async {
     final router = await _open(t);
-    await t.tap(_tab('Classes'));
+    await t.tap(_tab('Groups & courses'));
     await _settle(t);
     unawaited(router.push('/t/papers'));
     await _settle(t);
@@ -118,7 +120,17 @@ void main() {
     router.pop();
     await _settle(t);
     expect(find.byType(ClassesScreen), findsOneWidget);
-    expect(_tab('Classes'), findsOneWidget);
+    expect(_tab('Groups & courses'), findsOneWidget);
+    await t.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('at the largest text on a narrow phone the second tab\'s name shrinks to stay inside its half of the bar', (t) async {
+    await _open(t, width: 320, scale: 2.0);
+    final bar = t.getRect(find.byType(FloatingTabs));
+    final label = t.getRect(_tab('Groups & courses'));
+    expect(label.left, greaterThanOrEqualTo(bar.center.dx), reason: 'the second tab is the right half of the bar');
+    expect(label.right, lessThanOrEqualTo(bar.right));
+    expect(t.takeException(), isNull, reason: 'no overflow');
     await t.pumpWidget(const SizedBox.shrink());
   });
 }

@@ -672,7 +672,7 @@ class _MakeTestsScreenState extends State<MakeTestsScreen> {
     return PushedPanel(
       kicker: _kicker(1),
       kickerLines: 2,
-      title: 'Which class are the tests for?',
+      title: 'Which group or course are the tests for?',
       onBack: _back,
       footer: _footer(
         PrimaryButton(
@@ -684,7 +684,7 @@ class _MakeTestsScreenState extends State<MakeTestsScreen> {
                     _step = _Step.papers;
                   }),
         ),
-        'Every paper you add becomes a test for this class.',
+        'Every paper you add becomes a test for this group or course.',
       ),
       children: [
         _head(1),
@@ -700,7 +700,7 @@ class _MakeTestsScreenState extends State<MakeTestsScreen> {
               RowTile(
                 leading: _Radio(selected: identical(t, _picked)),
                 title: t.name,
-                meta: t.isCourse ? '${t.sizeLabel} · course' : t.sizeLabel,
+                meta: '${t.sizeLabel} · ${t.isCourse ? 'course' : 'group'}',
                 onTap: () => setState(() => _picked = t),
               ),
             ],

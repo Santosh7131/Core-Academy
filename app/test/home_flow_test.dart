@@ -24,6 +24,9 @@ Future<http.Response> _answer(http.Request r) async {
   if (r.url.path == '/teacher/home') {
     return http.Response.bytes(utf8.encode(jsonEncode(_home)), 200, headers: {'content-type': 'application/json'});
   }
+  if (r.url.path == '/teacher/subjects') {
+    return http.Response(jsonEncode({'subjects': [{'id': 'sub-Maths', 'name': 'Maths', 'is_default': true}]}), 200, headers: {'content-type': 'application/json'});
+  }
   return http.Response(jsonEncode({'error': {'code': 'not_found', 'message': 'No stub for ${r.url.path}'}}), 404);
 }
 
@@ -94,10 +97,12 @@ GoRouter _router(Widget home) {
   ]);
 }
 
-Future<void> _open(WidgetTester t, Widget home, {double height = 900}) async {
-  t.view.physicalSize = Size(411 * 2.625, height * 2.625);
+Future<void> _open(WidgetTester t, Widget home, {double height = 900, double width = 411, double scale = 1}) async {
+  t.view.physicalSize = Size(width * 2.625, height * 2.625);
   t.view.devicePixelRatio = 2.625;
+  t.platformDispatcher.textScaleFactorTestValue = scale;
   addTearDown(t.view.reset);
+  addTearDown(t.platformDispatcher.clearAllTestValues);
   _at = null;
   await t.pumpWidget(MaterialApp.router(theme: buildTheme(Brightness.light), routerConfig: _router(home)));
   await _settle(t);
@@ -140,11 +145,11 @@ void main() {
       _home = _data(groups: [_group(10, 'Maths', 12), _group(9, 'Science', 9)], courses: [_course('c-1', 'Spoken English, Batch 1', 14)]);
       await _open(t, const TutorHome());
       await _tap(t, find.text('Make tests'));
-      expect(find.text('Which class are the tests for?'), findsOneWidget);
+      expect(find.text('Which group or course are the tests for?'), findsOneWidget);
       expect(find.text('10th Maths'), findsWidgets);
       expect(find.text('Spoken English, Batch 1'), findsWidgets);
       expect(find.text('14 people · course'), findsOneWidget);
-      expect(find.text('12 students'), findsOneWidget);
+      expect(find.text('12 students · group'), findsOneWidget);
       await _tap(t, find.text('9th Science'));
       await _tap(t, find.text('Next'));
       expect(find.text('Add the papers'), findsOneWidget);
@@ -167,7 +172,7 @@ void main() {
       _home = _data(groups: [_group(10, 'Maths', 12)]);
       await _open(t, const TutorHome());
       await _tap(t, find.text('Make tests'));
-      expect(find.text('Which class are the tests for?'), findsNothing);
+      expect(find.text('Which group or course are the tests for?'), findsNothing);
       expect(find.text('Add the papers'), findsOneWidget);
       expect(find.text('10TH MATHS · STEP 2 OF 4'), findsOneWidget);
       await t.pumpWidget(const SizedBox.shrink());
@@ -198,19 +203,32 @@ void main() {
       await _tap(t, find.text('Next'));
       expect(find.text('Add the papers'), findsOneWidget);
       await _tap(t, find.byIcon(Ph.arrowLeft));
-      expect(find.text('Which class are the tests for?'), findsOneWidget);
+      expect(find.text('Which group or course are the tests for?'), findsOneWidget);
       await _tap(t, find.byIcon(Ph.arrowLeft));
-      expect(find.text('Which class are the tests for?'), findsNothing);
+      expect(find.text('Which group or course are the tests for?'), findsNothing);
       expect(find.text('Make tests'), findsOneWidget, reason: 'back on Home');
       await t.pumpWidget(const SizedBox.shrink());
     });
 
-    testWidgets('a tuition with no class says to add one first, and has no Make tests button', (t) async {
+    testWidgets('a tuition with no group or course says to add one first, and has no Make tests button', (t) async {
       _home = _data();
       await _open(t, const TutorHome());
-      expect(find.text('No classes yet'), findsOneWidget);
-      expect(find.text('Add a class'), findsOneWidget);
+      expect(find.text('No groups or courses yet'), findsOneWidget);
+      expect(find.text('Add a group or course'), findsOneWidget);
       expect(find.text('Make tests'), findsNothing);
+      await t.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('Add a group or course asks which one, and a course asks for its name', (t) async {
+      _home = _data();
+      await _open(t, const TutorHome());
+      await _tap(t, find.text('Add a group or course'));
+      expect(find.text('Which one?'), findsOneWidget);
+      expect(find.text('A group'), findsOneWidget);
+      expect(find.text('A course'), findsOneWidget);
+      await _tap(t, find.text('A course'));
+      expect(find.text('New course'), findsOneWidget);
+      expect(find.text('Course name'), findsOneWidget);
       await t.pumpWidget(const SizedBox.shrink());
     });
   });
@@ -375,55 +393,140 @@ void main() {
     });
   });
 
-  group('Classes', () {
-    testWidgets('lists groups and courses, with how many are open, and opens each', (t) async {
-      _home = _data(
-        groups: [_group(10, 'Maths', 12, live: [_test('x1', 'Practice Paper 2', closes: const Duration(hours: 3))]), _group(9, 'Science', 9)],
-        courses: [_course('c-1', 'Spoken English, Batch 1', 14, posted: [_test('y2', 'Unit 2 quiz', opens: const Duration(days: 1), closes: const Duration(days: 1, hours: 4))])],
-      );
+  group('Groups & courses', () {
+    // Two groups and two courses: a group and a course each have a test open or coming up.
+    Map<String, Object?> busy() => _data(
+          groups: [_group(10, 'Maths', 12, live: [_test('x1', 'Practice Paper 2', closes: const Duration(hours: 3))]), _group(9, 'Science', 9)],
+          courses: [
+            _course('c-1', 'Spoken English, Batch 1', 14, posted: [_test('y2', 'Unit 2 quiz', opens: const Duration(days: 1), closes: const Duration(days: 1, hours: 4))]),
+            _course('c-2', 'Olympiad Prep', 8),
+          ],
+        );
+
+    testWidgets('shows the groups first, the count of each kind on the switch, and opens each group', (t) async {
+      final semantics = t.ensureSemantics();
+      _home = busy();
       await _open(t, const ClassesScreen());
-      expect(find.text('3 CLASSES'), findsOneWidget);
-      // One list, no small headings: each row's tag says whether it is a group or a course.
-      expect(find.text('GROUPS'), findsNothing);
-      expect(find.text('COURSES'), findsNothing);
-      expect(find.text('Group'), findsNWidgets(2));
-      expect(find.text('Course'), findsOneWidget);
+      expect(find.text('4 IN ALL'), findsOneWidget);
+      expect(find.text('Groups & courses'), findsOneWidget);
+      expect(find.bySemanticsLabel(RegExp('^Groups, 2')), findsOneWidget);
+      expect(find.bySemanticsLabel(RegExp('^Courses, 2')), findsOneWidget);
+      // Only groups are listed, and no row says "Group": the switch already says it.
+      expect(find.text('10th Maths'), findsOneWidget);
+      expect(find.text('9th Science'), findsOneWidget);
+      expect(find.text('Spoken English, Batch 1'), findsNothing);
+      expect(find.text('Group'), findsNothing);
+      expect(find.text('Course'), findsNothing);
       expect(find.text('12 students'), findsOneWidget);
       expect(find.text('1 open'), findsOneWidget);
-      expect(find.text('14 people · 1 coming up'), findsOneWidget);
+      expect(find.text('Add a group'), findsOneWidget);
+      expect(find.text('Add a course'), findsNothing);
       await _tap(t, find.text('10th Maths'));
       expect(_at, '/t/groups/10/sub-Maths?name=Maths');
+      semantics.dispose();
       await t.pumpWidget(const SizedBox.shrink());
     });
 
-    testWidgets('a course opens its own page', (t) async {
-      _home = _data(courses: [_course('c-1', 'Spoken English, Batch 1', 14)]);
+    testWidgets('the switch shows the courses instead, with their own Add button, and a course opens its page', (t) async {
+      _home = busy();
       await _open(t, const ClassesScreen());
-      expect(find.text('Group'), findsNothing);
-      expect(find.text('Course'), findsOneWidget);
+      await _tap(t, find.text('Courses'));
+      expect(find.text('Spoken English, Batch 1'), findsOneWidget);
+      expect(find.text('Olympiad Prep'), findsOneWidget);
+      expect(find.text('10th Maths'), findsNothing);
+      expect(find.text('9th Science'), findsNothing);
+      expect(find.text('14 people · 1 coming up'), findsOneWidget);
+      expect(find.text('8 people'), findsOneWidget);
+      expect(find.text('Add a course'), findsOneWidget);
+      expect(find.text('Add a group'), findsNothing);
       await _tap(t, find.text('Spoken English, Batch 1'));
       expect(_at, '/t/courses/c-1?name=Spoken%20English%2C%20Batch%201');
       await t.pumpWidget(const SizedBox.shrink());
     });
 
-    testWidgets('Add a class asks what kind, and a course asks for its name', (t) async {
+    testWidgets('and back to the groups', (t) async {
+      _home = busy();
+      await _open(t, const ClassesScreen());
+      await _tap(t, find.text('Courses'));
+      await _tap(t, find.text('Groups'));
+      expect(find.text('10th Maths'), findsOneWidget);
+      expect(find.text('Olympiad Prep'), findsNothing);
+      await t.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('a tutor with only courses lands on the courses, and Groups says there are none', (t) async {
+      _home = _data(courses: [_course('c-1', 'Spoken English, Batch 1', 14)]);
+      await _open(t, const ClassesScreen());
+      expect(find.text('Spoken English, Batch 1'), findsOneWidget);
+      expect(find.text('Add a course'), findsOneWidget);
+      await _tap(t, find.text('Groups'));
+      expect(find.text('No groups yet'), findsOneWidget);
+      expect(find.text('Add a group'), findsOneWidget, reason: 'one button, in the middle of the page');
+      expect(find.text('Spoken English, Batch 1'), findsNothing);
+      await t.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('a tutor with only groups sees No courses yet on the Courses side, with the one button to add one', (t) async {
       _home = _data(groups: [_group(10, 'Maths', 12)]);
       await _open(t, const ClassesScreen());
-      await _tap(t, find.text('Add a class'));
-      expect(find.text('What kind?'), findsOneWidget);
-      expect(find.text('A group'), findsOneWidget);
-      expect(find.text('A course'), findsOneWidget);
-      await _tap(t, find.text('A course'));
+      expect(find.text('10th Maths'), findsOneWidget);
+      await _tap(t, find.text('Courses'));
+      expect(find.text('No courses yet'), findsOneWidget);
+      expect(find.text('Add a course'), findsOneWidget);
+      await t.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('a tuition with nothing yet says so, and has the one Add a group button in the middle of the page', (t) async {
+      _home = _data();
+      await _open(t, const ClassesScreen());
+      expect(find.text('0 IN ALL'), findsOneWidget);
+      expect(find.text('No groups yet'), findsOneWidget);
+      expect(find.text('Add a group'), findsOneWidget);
+      await t.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('Add a group asks for a class and a subject', (t) async {
+      _home = busy();
+      await _open(t, const ClassesScreen());
+      await _tap(t, find.text('Add a group'));
+      expect(find.text('New group'), findsOneWidget);
+      expect(find.text('A class and a subject, like 10th Maths'), findsOneWidget);
+      await t.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('Add a course asks for its name', (t) async {
+      _home = busy();
+      await _open(t, const ClassesScreen());
+      await _tap(t, find.text('Courses'));
+      await _tap(t, find.text('Add a course'));
       expect(find.text('New course'), findsOneWidget);
       expect(find.text('Course name'), findsOneWidget);
       await t.pumpWidget(const SizedBox.shrink());
     });
 
-    testWidgets('a tuition with no class has an Add a class button in the middle of the page', (t) async {
-      _home = _data();
+    testWidgets('the tutor\'s choice stays when the lists load again', (t) async {
+      _home = busy();
       await _open(t, const ClassesScreen());
-      expect(find.text('No classes yet'), findsOneWidget);
-      expect(find.text('Add a class'), findsOneWidget);
+      await _tap(t, find.text('Courses'));
+      _home = _data(
+        groups: [_group(10, 'Maths', 12)],
+        courses: [_course('c-1', 'Spoken English, Batch 1', 14), _course('c-3', 'Debate Club', 6)],
+      );
+      await t.fling(find.byType(ListView), const Offset(0, 500), 1000);
+      await _settle(t, 3000);
+      expect(find.text('Debate Club'), findsOneWidget, reason: 'the lists loaded again');
+      expect(find.text('10th Maths'), findsNothing, reason: 'and the Courses side is still showing');
+      await t.pumpWidget(const SizedBox.shrink());
+    });
+
+    // (The test font is wider than the app's own, so how the title wraps is checked in the pictures, not here.)
+    testWidgets('at the largest text on a narrow phone nothing overflows, and both kinds can still be reached', (t) async {
+      _home = busy();
+      await _open(t, const ClassesScreen(), width: 320, scale: 2.0);
+      expect(find.text('10th Maths'), findsOneWidget);
+      await _tap(t, find.text('Courses'));
+      expect(find.text('Olympiad Prep'), findsOneWidget);
+      expect(t.takeException(), isNull, reason: 'no overflow');
       await t.pumpWidget(const SizedBox.shrink());
     });
   });

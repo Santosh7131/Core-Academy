@@ -1,4 +1,7 @@
-import { DeleteObjectsCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import {
+  AbortMultipartUploadCommand, CompleteMultipartUploadCommand, CreateMultipartUploadCommand, DeleteObjectsCommand, GetObjectCommand,
+  HeadObjectCommand, ListObjectsV2Command, ListPartsCommand, PutObjectCommand, S3Client, UploadPartCommand,
+} from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { HttpError } from './http.ts';
 
@@ -43,6 +46,70 @@ export function declaredSize(v: unknown): number | null {
 export const viewUrl = (key: string, seconds = 3600) =>
   getSignedUrl(s3, new GetObjectCommand({ Bucket: BUCKET, Key: key }), { expiresIn: seconds });
 
+/**
+ * A link that reads a stored file under the name and type the person should see. With `download` the answer says "attachment",
+ * so a browser saves it with that name instead of showing it; without, it says "inline".
+ */
+export const fileUrl = (key: string, o: { name: string; contentType: string; download: boolean }, seconds = 3600) =>
+  getSignedUrl(
+    s3,
+    new GetObjectCommand({
+      Bucket: BUCKET,
+      Key: key,
+      ResponseContentType: o.contentType,
+      ResponseContentDisposition: contentDisposition(o.name, o.download),
+    }),
+    { expiresIn: seconds },
+  );
+
+/** `attachment; filename="Chapter 4 notes.pdf"; filename*=UTF-8''...`: plain ASCII for old readers, the real name for the rest. */
+export function contentDisposition(name: string, download: boolean): string {
+  const ascii = name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
+  return `${download ? 'attachment' : 'inline'}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name).replace(/['()*]/g, (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`)}`;
+}
+
+// ---------------------------------------------------------------- multipart: a big file goes up in parts
+
+/** Starts an upload in parts and returns the storage's id for it. */
+export async function startMultipart(key: string, contentType: string): Promise<string> {
+  const r = await s3.send(new CreateMultipartUploadCommand({ Bucket: BUCKET, Key: key, ContentType: contentType }));
+  if (!r.UploadId) throw new Error('Storage did not start the upload.');
+  return r.UploadId;
+}
+
+/** A URL the phone can PUT one part to, signed for exactly that many bytes. Parts are numbered from 1. */
+export const partUrl = (key: string, uploadId: string, part: number, size: number, seconds = 3600) =>
+  getSignedUrl(s3, new UploadPartCommand({ Bucket: BUCKET, Key: key, UploadId: uploadId, PartNumber: part, ContentLength: size }), { expiresIn: seconds });
+
+/** The parts storage has received so far for an upload in progress: their numbers, sizes and ETags. */
+export async function uploadedParts(key: string, uploadId: string): Promise<{ part: number; size: number; etag: string }[]> {
+  const out: { part: number; size: number; etag: string }[] = [];
+  let marker: string | undefined;
+  for (;;) {
+    const r = await s3.send(new ListPartsCommand({ Bucket: BUCKET, Key: key, UploadId: uploadId, PartNumberMarker: marker }));
+    for (const p of r.Parts ?? []) out.push({ part: p.PartNumber ?? 0, size: p.Size ?? 0, etag: p.ETag ?? '' });
+    if (!r.IsTruncated || r.NextPartNumberMarker === undefined) return out;
+    marker = r.NextPartNumberMarker;
+  }
+}
+
+/** Puts the parts together into the finished object. */
+export async function finishMultipart(key: string, uploadId: string, parts: { part: number; etag: string }[]) {
+  await s3.send(
+    new CompleteMultipartUploadCommand({
+      Bucket: BUCKET,
+      Key: key,
+      UploadId: uploadId,
+      MultipartUpload: { Parts: parts.map((p) => ({ PartNumber: p.part, ETag: p.etag })) },
+    }),
+  );
+}
+
+/** Throws away an upload that will not be finished, with every part it holds. An upload storage no longer knows is already gone. */
+export async function abortMultipart(key: string, uploadId: string) {
+  await s3.send(new AbortMultipartUploadCommand({ Bucket: BUCKET, Key: key, UploadId: uploadId })).catch(() => {});
+}
+
 export async function maybeViewUrl(key: string | null | undefined) {
   return key ? viewUrl(key) : null;
 }
@@ -52,6 +119,16 @@ export async function readObject(key: string, maxBytes = MAX_IMAGE_BYTES): Promi
   if ((r.ContentLength ?? 0) > maxBytes) throw new Error(`The stored file is larger than ${maxBytes} bytes.`);
   const bytes = Buffer.from(await r.Body!.transformToByteArray());
   return { bytes, type: r.ContentType ?? 'image/jpeg' };
+}
+
+/** The first bytes of a stored object, to see what kind of file it really is. Null when there is no such object. */
+export async function peekObject(key: string, bytes = 16): Promise<Buffer | null> {
+  try {
+    const r = await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: key, Range: `bytes=0-${bytes - 1}` }));
+    return Buffer.from(await r.Body!.transformToByteArray());
+  } catch {
+    return null;
+  }
 }
 
 export async function putObject(key: string, body: Buffer, contentType: string) {

@@ -5,6 +5,7 @@ import { assignedCte, TEST_COUNTS } from '../lib/attempts.ts';
 import { courseCards, ownCourse } from '../lib/courses.ts';
 import { q, q1, tq, tq1, tx } from '../lib/db.ts';
 import { bad, HttpError, notFound, str, uuid } from '../lib/http.ts';
+import { courseLibraryCount, discardObjects, shelfObjects } from '../lib/library.ts';
 import { afterTestChange } from '../lib/notify.ts';
 import { deleteObjects } from '../lib/storage.ts';
 import { createWithLogin, pinOf, planLogin } from '../lib/students.ts';
@@ -76,7 +77,7 @@ courseRoutes.get('/courses/:id', async (c) => {
       limit 100`,
     [id],
   );
-  return c.json({ course: { id: course.id, name: course.name, people: people.filter((p) => p.active).length }, people, tests });
+  return c.json({ course: { id: course.id, name: course.name, people: people.filter((p) => p.active).length }, people, tests, library: await courseLibraryCount(T, id) });
 });
 
 /**
@@ -118,9 +119,12 @@ courseRoutes.delete('/courses/:id', async (c) => {
   const keys = await q<{ k: string }>(
     `select pp.object_key as k from paper_pages pp join papers p on p.id = pp.paper_id where p.course_id = $1
      union all select d.image_key from paper_drafts d join papers p on p.id = d.paper_id where p.course_id = $1 and d.image_key is not null
-     union all select image_key from questions where course_id = $1 and image_key is not null`,
+     union all select image_key from questions where course_id = $1 and image_key is not null
+     union all select f.object_key from class_files f join class_sections s on s.id = f.section_id where s.course_id = $1`,
     [id],
   );
+  // A file still going up in parts holds storage until the upload is thrown away; the course's other objects have no such state.
+  const uploads = await shelfObjects({ column: 'course_id', id });
   const gone = await tx(async (cx) => {
     const people = await q1<{ n: number }>('select count(*) as n from course_members where course_id = $1', [id], cx);
     const tests = await cx.query('delete from tests where course_id = $1', [id]);
@@ -130,6 +134,7 @@ courseRoutes.delete('/courses/:id', async (c) => {
     return { people_kept: Number(people?.n ?? 0), tests_deleted: tests.rowCount ?? 0, questions_deleted: questions.rowCount ?? 0, papers_deleted: papers.rowCount ?? 0 };
   });
   await deleteObjects([...new Set(keys.map((k) => k.k))]).catch(() => {});
+  await discardObjects(uploads.filter((f) => f.upload_id)).catch(() => {});
   return c.json({ ok: true, results_deleted: n?.n ?? 0, ...gone });
 });
 

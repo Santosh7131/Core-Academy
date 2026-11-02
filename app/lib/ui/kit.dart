@@ -503,11 +503,13 @@ class RowTile extends StatelessWidget {
 /// A row with a tag at its right and, under the tag, one short line (a count or a figure). When the title or the details would be cut
 /// short beside them, as with large text on a small phone, the tag and the line sit under the details instead, so nothing is lost.
 class TaggedRow extends StatelessWidget {
-  const TaggedRow({super.key, required this.title, this.meta, required this.tag, this.note, this.noteColor, this.noteBold = false, this.chevron = false, this.onTap});
+  const TaggedRow({super.key, required this.title, this.meta, this.tag, this.note, this.noteColor, this.noteBold = false, this.chevron = false, this.onTap});
 
   final String title;
   final String? meta;
-  final TagChip tag;
+
+  /// The tag at the right; null for a row that has only a short line ("1 open").
+  final TagChip? tag;
 
   /// The short line under the tag: "3 writing now", "7/12 handed in", "1 open".
   final String? note;
@@ -541,7 +543,7 @@ class TaggedRow extends StatelessWidget {
     }
 
     return LayoutBuilder(builder: (context, box) {
-      final tagWidth = widthOf(tag.text, tagStyle) + 18 + (tag.outlined ? 2 : 0);
+      final tagWidth = tag == null ? 0.0 : widthOf(tag!.text, tagStyle) + 18 + (tag!.outlined ? 2 : 0);
       final trailingWidth = math.max(tagWidth, note == null ? 0.0 : widthOf(note!, noteStyle)) + 2;
       // What the row's own padding, the chevron and the tag leave for the title and the details.
       final room = box.maxWidth - 32 - (chevron ? 22 : 0) - 10 - trailingWidth;
@@ -549,10 +551,12 @@ class TaggedRow extends StatelessWidget {
         return RowTile(
           title: title,
           meta: meta,
-          trailing: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.end, children: [
-            tag,
-            if (note != null) ...[const SizedBox(height: 4), Fig(note!, style: noteStyle)],
-          ]),
+          trailing: tag == null && note == null
+              ? null
+              : Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.end, children: [
+                  ?tag,
+                  if (note != null) ...[if (tag != null) const SizedBox(height: 4), Fig(note!, style: noteStyle)],
+                ]),
           chevron: chevron,
           onTap: onTap,
         );
@@ -561,11 +565,13 @@ class TaggedRow extends StatelessWidget {
         title: title,
         metaWidget: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           if (meta != null) Fig(meta!, style: labelStyle.copyWith(color: muted), maxLines: 4),
-          const SizedBox(height: 8),
-          Wrap(spacing: 8, runSpacing: 4, crossAxisAlignment: WrapCrossAlignment.center, children: [
-            tag,
-            if (note != null) Fig(note!, style: noteStyle),
-          ]),
+          if (tag != null || note != null) ...[
+            const SizedBox(height: 8),
+            Wrap(spacing: 8, runSpacing: 4, crossAxisAlignment: WrapCrossAlignment.center, children: [
+              ?tag,
+              if (note != null) Fig(note!, style: noteStyle),
+            ]),
+          ],
         ]),
         chevron: chevron,
         onTap: onTap,

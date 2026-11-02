@@ -20,10 +20,13 @@ DateTime defaultClosing() {
 
 /// Header for a teacher tab: kicker, one display line, trailing actions.
 class TabHeader extends StatelessWidget {
-  const TabHeader({super.key, required this.kicker, required this.title, this.actions = const []});
+  const TabHeader({super.key, required this.kicker, required this.title, this.actions = const [], this.titleLines = 1});
   final String kicker;
   final String title;
   final List<Widget> actions;
+
+  /// How many lines the title may take: a longer title wraps between words instead of being cut short.
+  final int titleLines;
 
   @override
   Widget build(BuildContext context) => Padding(
@@ -33,7 +36,8 @@ class TabHeader extends StatelessWidget {
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Kicker(kicker),
               const SizedBox(height: 6),
-              Fig(title, style: displayStyle, maxLines: 1),
+              // A very large text size would break a long title in the middle of a word, so the title grows to 1.4 times at most.
+              MediaQuery.withClampedTextScaling(maxScaleFactor: 1.4, child: Fig(title, style: displayStyle, maxLines: titleLines)),
             ]),
           ),
           for (final (i, a) in actions.indexed) ...[if (i > 0) const SizedBox(width: 10), a],

@@ -684,14 +684,14 @@ void main() {
 
     testWidgets('lists every class with who is in it, the first one chosen', (t) async {
       await _open(t, targets: targets);
-      expect(find.text('Which class are the tests for?'), findsOneWidget);
+      expect(find.text('Which group or course are the tests for?'), findsOneWidget);
       expect(find.text('MAKE TESTS · STEP 1 OF 4'), findsOneWidget);
       expect(find.text('10th Maths'), findsOneWidget);
       expect(find.text('9th Science'), findsOneWidget);
       expect(find.text('Spoken English, Batch 1'), findsOneWidget);
-      expect(find.text('12 students'), findsOneWidget);
+      expect(find.text('12 students · group'), findsOneWidget);
       expect(find.text('14 people · course'), findsOneWidget);
-      expect(find.text('Every paper you add becomes a test for this class.'), findsOneWidget);
+      expect(find.text('Every paper you add becomes a test for this group or course.'), findsOneWidget);
       await _tap(t, find.text('Next'));
       expect(find.text('10TH MATHS · STEP 2 OF 4'), findsOneWidget);
     });
@@ -711,7 +711,7 @@ void main() {
       await _open(t, targets: targets);
       await _tap(t, find.text('Next'));
       await _tap(t, find.byIcon(Ph.arrowLeft));
-      expect(find.text('Which class are the tests for?'), findsOneWidget);
+      expect(find.text('Which group or course are the tests for?'), findsOneWidget);
       await _tap(t, find.byIcon(Ph.arrowLeft));
       expect(find.text('open make'), findsOneWidget);
     });

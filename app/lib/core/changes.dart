@@ -4,12 +4,14 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
 /// What a screen shows, so a change elsewhere in the app can tell it to load again.
-enum Area { tests, students, questions, papers, settings, student, courses }
+enum Area { tests, students, questions, papers, settings, student, courses, library }
 
 /// The areas a successful write to [path] changes.
 Set<Area> areasOf(String path) {
   final p = path.split('?').first;
   if (p.startsWith('/student')) return {Area.student};
+  // The Library (files on a group's or a course's shelf): only the screens that show a shelf, and the count on its tab, load again.
+  if (p.startsWith('/teacher/library') || RegExp(r'^/teacher/(groups/[^/]+/[^/]+|courses/[^/]+)/library').hasMatch(p)) return {Area.library};
   if (p.startsWith('/teacher/tests') || p.startsWith('/teacher/attempts')) return {Area.tests};
   // A course's people are students too; its tests, papers and questions have their own writes above.
   if (p.startsWith('/teacher/courses')) return {Area.courses, Area.students, Area.tests};

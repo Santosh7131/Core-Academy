@@ -17,7 +17,7 @@ const names = [
   'checkCircle', 'prohibit', 'arrowCounterClockwise', 'dotsThree', 'info', 'calendar', 'chartBar', 'student',
   'chalkboardTeacher', 'downloadSimple', 'export', 'listChecks', 'squaresFour', 'sortAscending', 'funnel', 'crop',
   'fileText', 'arrowCircleUp', 'dotsThreeVertical', 'sparkle', 'wifiSlash', 'clockCountdown', 'caretLeft', 'warningCircle', 'graduationCap', 'userMinus', 'circle',
-  'arrowsOutSimple', 'linkSimple', 'scissors', 'calendarBlank',
+  'arrowsOutSimple', 'linkSimple', 'scissors', 'calendarBlank', 'folderSimple',
 ];
 
 // The developer's admin app (admin/).

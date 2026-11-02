@@ -37,6 +37,8 @@ class MainActivity : FlutterActivity() {
                 result.notImplemented()
             }
         }
+        // Saving a downloaded Library file into the Downloads folder: see Files.kt and lib/core/library.dart.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, Files.CHANNEL).setMethodCallHandler { call, result -> Files.handle(this, call, result) }
         // In-app updates: see Updater.kt and lib/core/updater.dart.
         val updates = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, Updater.CHANNEL)
         updates.setMethodCallHandler { call, result -> Updater.handle(this, call, result) }

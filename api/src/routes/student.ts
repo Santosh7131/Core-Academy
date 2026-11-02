@@ -4,8 +4,10 @@ import { ASSIGNED, resultPayload, saveAnswers, startOrResume, submitAttempt } fr
 import { pool, q, q1, tq, tq1 } from '../lib/db.ts';
 import { HttpError, notFound, uuid } from '../lib/http.ts';
 import { LEVELS_JSON } from '../lib/levels.ts';
+import { studentFileCount } from '../lib/library.ts';
 import { readCode } from '../lib/tuition.ts';
 import { readBody } from './body.ts';
+import { studentLibrary } from './library.ts';
 
 // A student's tuitions, and asking to join one. These need no active tuition, so a student who is
 // still waiting to be let in can open them. Mounted before studentRoutes, whose middleware refuses
@@ -56,6 +58,8 @@ studentOpenRoutes.post('/join', requireUser('student', { tuition: 'none' }), asy
 
 export const studentRoutes = new Hono<AppEnv>();
 studentRoutes.use('*', requireUser('student'));
+// The Library: the files of the student's groups and courses, to read and download (routes/library.ts).
+studentRoutes.route('/', studentLibrary);
 
 type TestState = 'open' | 'in_progress' | 'upcoming' | 'done' | 'missed';
 
@@ -133,7 +137,11 @@ studentRoutes.get('/home', async (c) => {
     [me.id],
   );
   const now = await q1('select now()');
-  return c.json({ server_now: now.now, tuition: { id: t.id, name: t.name }, tests: present(rows), courses: Number(courses?.n ?? 0) });
+  // `library` is how many files the student can read: the Library tab shows only when there are some.
+  return c.json({
+    server_now: now.now, tuition: { id: t.id, name: t.name }, tests: present(rows), courses: Number(courses?.n ?? 0),
+    library: await studentFileCount(t.id, me.id, me.class_level),
+  });
 });
 
 /** The courses this student is in, each with how many of its tests they can write now and when the first of them closes. */
