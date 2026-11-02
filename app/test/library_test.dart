@@ -828,7 +828,7 @@ void main() {
       await _press(t, 'Download Chapter 1.pdf');
       expect(store.fetched, ['student:f1']);
       expect(store.saved, ['Chapter 1.pdf']);
-      expect(find.text('Chapter 1.pdf is saved in Downloads/Core Academy.'), findsOneWidget);
+      expect(find.text('Chapter 1.pdf is saved in Downloads.'), findsOneWidget);
       store.savedTo = null;
       await _press(t, 'Download Chapter 2.pdf');
       expect(store.saved, ['Chapter 1.pdf', 'Chapter 2.pdf']);
@@ -850,7 +850,7 @@ void main() {
       expect(find.text('Page 1 of 12'), findsOneWidget);
       await _press(t, 'Download');
       expect(store.saved, ['Chapter 1.pdf']);
-      expect(find.text('Saved to Downloads/Core Academy'), findsOneWidget);
+      expect(find.text('Saved to Downloads'), findsOneWidget);
       await _press(t, 'Back');
       expect(find.text('Chapter 1.pdf'), findsOneWidget, reason: 'back on the class page');
       await _end(t);
@@ -995,6 +995,20 @@ void main() {
       expect(photoName(DateTime(2026, 11, 2, 9, 5)), 'Photo 2 Nov 2026 9.05 am.jpg');
       expect(photoName(DateTime(2026, 11, 2, 12, 0)), 'Photo 2 Nov 2026 12.00 pm.jpg');
       expect(photoName(DateTime(2026, 11, 2, 0, 30)), 'Photo 2 Nov 2026 12.30 am.jpg');
+      expect(photoName(DateTime(2026, 11, 2, 17, 42), ext: 'png'), 'Photo 2 Nov 2026 5.42 pm.png');
+    });
+
+    test('galleryPhotoName keeps a real name, names a bare number by when it was picked, and numbers a repeat', () {
+      final t = DateTime(2026, 11, 2, 23, 34);
+      final used = <String, int>{};
+      expect(galleryPhotoName('Whiteboard photo.png', t, used), 'Whiteboard photo.png');
+      expect(galleryPhotoName('IMG_2041.jpg', t, used), 'IMG_2041.jpg');
+      expect(galleryPhotoName('1000000024.png', t, used), 'Photo 2 Nov 2026 11.34 pm.png');
+      expect(galleryPhotoName('1000000025.PNG', t, used), 'Photo 2 Nov 2026 11.34 pm (2).png');
+      expect(galleryPhotoName('1000000026.jpeg', t, used), 'Photo 2 Nov 2026 11.34 pm.jpg');
+      expect(galleryPhotoName('1000000027.png', t, used), 'Photo 2 Nov 2026 11.34 pm (3).png');
+      expect(galleryPhotoName('Whiteboard photo.png', t, used), 'Whiteboard photo (2).png');
+      expect(galleryPhotoName('2026.jpg', t, <String, int>{}), 'Photo 2 Nov 2026 11.34 pm.jpg', reason: 'a year is only a number too');
     });
 
     test('sliceOf cuts the bytes between two places out of a stream that can only be read from its start', () async {

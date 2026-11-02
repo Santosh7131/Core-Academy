@@ -13,13 +13,13 @@ import io.flutter.plugin.common.MethodChannel
 import java.io.File
 
 /**
- * Saves a file the app has downloaded (the Library's PDFs and photos) into the phone's Downloads folder, where the person finds it with any
- * file app (lib/core/library.dart downloads it first). Android 10 and later let an app add to Downloads through MediaStore without asking
- * for any permission. Older Android would need a storage permission, so there the answer is null and the app opens the share sheet instead.
+ * Saves a file the app has downloaded (the Library's PDFs and photos) straight into the phone's Downloads folder, with no folder of its own,
+ * where it shows as the newest item in the file app's Recent list like any other download (lib/core/library.dart downloads it first).
+ * Android 10 and later let an app add to Downloads through MediaStore without asking for any permission; a name that is already taken
+ * becomes "name (1).pdf". Older Android would need a storage permission, so there the answer is null and the app opens the share sheet instead.
  */
 object Files {
     const val CHANNEL = "core_academy/files"
-    private const val FOLDER = "Core Academy"
     private val main = Handler(Looper.getMainLooper())
 
     fun handle(activity: Activity, call: MethodCall, result: MethodChannel.Result) {
@@ -49,7 +49,7 @@ object Files {
             val values = ContentValues().apply {
                 put(MediaStore.Downloads.DISPLAY_NAME, name)
                 put(MediaStore.Downloads.MIME_TYPE, mime)
-                put(MediaStore.Downloads.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/$FOLDER")
+                put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
                 put(MediaStore.Downloads.IS_PENDING, 1)
             }
             val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
@@ -65,7 +65,7 @@ object Files {
                 resolver.delete(uri, null, null)
                 throw e
             }
-            main.post { result.success("${Environment.DIRECTORY_DOWNLOADS}/$FOLDER") }
+            main.post { result.success("Downloads") }
         } catch (e: Exception) {
             main.post { result.error("save_failed", e.message, null) }
         }

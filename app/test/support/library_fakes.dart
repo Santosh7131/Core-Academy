@@ -287,7 +287,7 @@ class FakeStore extends FileStore {
   String? failWith;
 
   /// Where saved files are said to go; null stands for a phone that opens its share sheet instead.
-  String? savedTo = 'Downloads/Core Academy';
+  String? savedTo = 'Downloads';
 
   late final File photo = (() {
     final f = File('${Directory.systemTemp.path}/library-test-photo.png');

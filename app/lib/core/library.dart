@@ -98,7 +98,19 @@ String? contentTypeOf(String name) => switch (RegExp(r'\.([A-Za-z0-9]+)$').first
     };
 
 /// "Photo 2 Nov 2026 5.42 pm.jpg": the name of a photo taken with the camera, which has none of its own worth keeping.
-String photoName(DateTime t) => 'Photo ${DateFormat('d MMM yyyy h.mm').format(t)} ${t.hour < 12 ? 'am' : 'pm'}.jpg';
+String photoName(DateTime t, {String ext = 'jpg'}) => 'Photo ${DateFormat('d MMM yyyy h.mm').format(t)} ${t.hour < 12 ? 'am' : 'pm'}.$ext';
+
+/// What a photo from the gallery is called on the shelf. The gallery hands some photos over under their database number ("1000000024.png"),
+/// which means nothing to a student, so those are named by the day and time they were picked, like a camera photo. A name already used by
+/// another photo of the same batch (`used` counts them) gets " (2)", " (3)" before its extension.
+String galleryPhotoName(String name, DateTime when, Map<String, int> used) {
+  final dot = name.lastIndexOf('.');
+  final ext = dot < 0 ? '' : name.substring(dot + 1).toLowerCase();
+  var out = RegExp(r'^\d+\.[A-Za-z0-9]+$').hasMatch(name) ? photoName(when, ext: ext == 'jpeg' ? 'jpg' : ext) : name;
+  final n = used.update(out, (c) => c + 1, ifAbsent: () => 1);
+  if (n > 1) out = out.replaceFirstMapped(RegExp(r'(\.[A-Za-z0-9]+)?$'), (m) => ' ($n)${m[1] ?? ''}');
+  return out;
+}
 
 // ---------------------------------------------------------------- a shelf
 
@@ -156,7 +168,8 @@ class LibrarySources {
   /// Photos from the gallery, several at once.
   Future<List<PickedFile>> pickPhotos() async {
     final xs = await ImagePicker().pickMultiImage();
-    return [for (final x in xs) await _picked(x.name, x.length(), () => x.path, x.openRead, type: x.mimeType)];
+    final used = <String, int>{};
+    return [for (final x in xs) await _picked(galleryPhotoName(x.name, await x.lastModified(), used), x.length(), () => x.path, x.openRead, type: x.mimeType)];
   }
 
   /// A photo taken with the camera, or null when the tutor came back without one.
@@ -555,7 +568,7 @@ class FileStore {
     }
   }
 
-  /// Puts a copy in the phone's Downloads folder and says where ("Downloads/Core Academy"). Where the phone cannot do that, its share
+  /// Puts a copy straight in the phone's Downloads folder and says where ("Downloads"). Where the phone cannot do that, its share
   /// sheet opens with the file instead and this answers null.
   Future<String?> save(File file, LibFile info) async {
     try {
