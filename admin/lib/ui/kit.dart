@@ -21,6 +21,24 @@ TextStyle get tagStyle => labelStyle.copyWith(fontSize: 10.5, fontWeight: FontWe
 TextStyle get cardTitleStyle => titleStyle.copyWith(fontSize: 23, letterSpacing: -0.97);
 TextStyle get emptyTitleStyle => titleStyle.copyWith(fontSize: 21, letterSpacing: -0.88);
 
+/// [text] in [style] with every figure in it set in mono tabular (rule 4).
+TextSpan figSpan(String text, TextStyle style, {Color? numColor}) {
+  final spans = <TextSpan>[];
+  var last = 0;
+  final fig = numStyle(
+    size: style.fontSize ?? 14,
+    weight: style.fontWeight ?? FontWeight.w600,
+    color: numColor ?? style.color,
+  ).copyWith(height: style.height);
+  for (final m in figurePattern.allMatches(text)) {
+    if (m.start > last) spans.add(TextSpan(text: text.substring(last, m.start)));
+    spans.add(TextSpan(text: m.group(0), style: fig));
+    last = m.end;
+  }
+  if (last < text.length) spans.add(TextSpan(text: text.substring(last)));
+  return TextSpan(style: style, children: spans);
+}
+
 /// Prose with every figure set in mono tabular (rule 4).
 class Fig extends StatelessWidget {
   const Fig(this.text, {super.key, required this.style, this.numColor, this.maxLines, this.textAlign});
@@ -32,27 +50,12 @@ class Fig extends StatelessWidget {
   final TextAlign? textAlign;
 
   @override
-  Widget build(BuildContext context) {
-    final spans = <TextSpan>[];
-    var last = 0;
-    final fig = numStyle(
-      size: style.fontSize ?? 14,
-      weight: style.fontWeight ?? FontWeight.w600,
-      color: numColor ?? style.color,
-    ).copyWith(height: style.height);
-    for (final m in figurePattern.allMatches(text)) {
-      if (m.start > last) spans.add(TextSpan(text: text.substring(last, m.start)));
-      spans.add(TextSpan(text: m.group(0), style: fig));
-      last = m.end;
-    }
-    if (last < text.length) spans.add(TextSpan(text: text.substring(last)));
-    return Text.rich(
-      TextSpan(style: style, children: spans),
-      maxLines: maxLines,
-      overflow: maxLines == null ? null : TextOverflow.ellipsis,
-      textAlign: textAlign,
-    );
-  }
+  Widget build(BuildContext context) => Text.rich(
+        figSpan(text, style, numColor: numColor),
+        maxLines: maxLines,
+        overflow: maxLines == null ? null : TextOverflow.ellipsis,
+        textAlign: textAlign,
+      );
 }
 
 /// Uppercase small-caps kicker; figures inside it stay mono.
@@ -351,10 +354,14 @@ class SegChip extends StatelessWidget {
 
 /// Two or three choices in one track, with a white thumb that slides under the chosen one.
 class SegmentedToggle extends StatelessWidget {
-  const SegmentedToggle({super.key, required this.labels, required this.index, required this.onChanged});
+  const SegmentedToggle({super.key, required this.labels, required this.index, required this.onChanged, this.counts});
   final List<String> labels;
   final int index;
   final ValueChanged<int> onChanged;
+
+  /// A small number after each label (tests, files, people), in the same order as [labels]; null for no numbers,
+  /// and a null entry for a label with none.
+  final List<int?>? counts;
 
   @override
   Widget build(BuildContext context) {
@@ -371,17 +378,27 @@ class SegmentedToggle extends StatelessWidget {
           child: FractionallySizedBox(
             widthFactor: 1 / n,
             heightFactor: 1,
-            child: Container(decoration: surface(radius: rSmall, shadow: e1, color: isDark ? cardHi : card)),
+            // The chosen thumb has to stand out from its track in the dark too: the card colour there is the track's own.
+            child: Container(decoration: surface(radius: rSmall, shadow: e1, color: isDark ? actionFill : card)),
           ),
         ),
         Row(children: [
           for (final (i, l) in labels.indexed)
             Expanded(
-              child: Pressable(
-                label: l,
-                onTap: () => onChanged(i),
-                child: Center(child: Text(l, style: chipStyle.copyWith(color: i == index ? ink : muted, fontWeight: FontWeight.w700))),
-              ),
+              child: Builder(builder: (context) {
+                final c = counts != null && i < counts!.length ? counts![i] : null;
+                final color = i == index ? ink : muted;
+                return Pressable(
+                  label: c == null ? l : '$l, $c',
+                  onTap: () => onChanged(i),
+                  child: Center(
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Flexible(child: Text(l, maxLines: 1, overflow: TextOverflow.ellipsis, style: chipStyle.copyWith(color: color, fontWeight: FontWeight.w700))),
+                      if (c != null) ...[const SizedBox(width: 6), Text('$c', style: numStyle(size: 12, color: color.withValues(alpha: 0.7)))],
+                    ]),
+                  ),
+                );
+              }),
             ),
         ]),
       ]),
@@ -393,23 +410,30 @@ enum Tone { neutral, success, danger, warning, ai }
 
 /// Labels carry no hue; only real state (or the AI reader) earns colour.
 class TagChip extends StatelessWidget {
-  const TagChip(this.text, {super.key, this.tone = Tone.neutral});
+  const TagChip(this.text, {super.key, this.tone = Tone.neutral, this.outlined = false, this.strong = false});
   final String text;
   final Tone tone;
+
+  /// No fill, a hairline instead: for a state that is over, like Finished, or a kind, like Group.
+  final bool outlined;
+
+  /// A neutral tag in full ink instead of grey: for a state worth reading at a glance, like Coming up.
+  final bool strong;
 
   @override
   Widget build(BuildContext context) {
     final (Color bg, Color fg) = switch (tone) {
-      Tone.neutral => (fill, muted),
+      Tone.neutral => (outlined ? Colors.transparent : fill, strong ? ink : muted),
       Tone.success => (successSoft, success),
       Tone.danger => (dangerSoft, danger),
       Tone.warning => (warningSoft, warning),
       Tone.ai => (aiAccentSoft, aiAccentInk),
     };
     return Container(
-      height: 22,
-      padding: const EdgeInsets.symmetric(horizontal: 9),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(rPill)),
+      // 22 high at the usual text size, and taller when the phone's text is larger, so the words are never cut off.
+      constraints: const BoxConstraints(minHeight: 22),
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 2),
+      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(rPill), border: outlined ? Border.all(color: hairline) : null),
       // As wide as its text, and cut short with an ellipsis when its row has less room than that.
       child: Center(widthFactor: 1, child: Fig(text, style: tagStyle.copyWith(color: fg), maxLines: 1)),
     );
@@ -475,6 +499,80 @@ class RowTile extends StatelessWidget {
           ]),
         ),
       );
+}
+
+/// A row with a tag at its right and, under the tag, one short line (a count or a figure). When the title or the details would be cut
+/// short beside them, as with large text on a small phone, the tag and the line sit under the details instead, so nothing is lost.
+class TaggedRow extends StatelessWidget {
+  const TaggedRow({super.key, required this.title, this.meta, required this.tag, this.note, this.noteColor, this.noteBold = false, this.chevron = false, this.onTap});
+
+  final String title;
+  final String? meta;
+  final TagChip tag;
+
+  /// The short line under the tag: "3 writing now", "7/12 handed in", "1 open".
+  final String? note;
+  final Color? noteColor;
+  final bool noteBold;
+  final bool chevron;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final noteStyle = labelStyle.copyWith(color: noteColor, fontWeight: noteBold ? FontWeight.w600 : null);
+    final scaler = MediaQuery.textScalerOf(context);
+
+    TextPainter paint(String text, TextStyle style, {int? lines, double width = double.infinity}) =>
+        TextPainter(text: figSpan(text, style), textDirection: TextDirection.ltr, textScaler: scaler, maxLines: lines)..layout(maxWidth: width);
+
+    double widthOf(String text, TextStyle style) {
+      final p = paint(text, style, lines: 1);
+      final w = p.width;
+      p.dispose();
+      return w;
+    }
+
+    // Whether [text] fits [width] on two lines at most, with no word broken in the middle.
+    bool fits(String text, TextStyle style, double width) {
+      if (width <= 0 || text.split(' ').any((word) => widthOf(word, style) > width)) return false;
+      final p = paint(text, style, lines: 2, width: width);
+      final cut = p.didExceedMaxLines;
+      p.dispose();
+      return !cut;
+    }
+
+    return LayoutBuilder(builder: (context, box) {
+      final tagWidth = widthOf(tag.text, tagStyle) + 18 + (tag.outlined ? 2 : 0);
+      final trailingWidth = math.max(tagWidth, note == null ? 0.0 : widthOf(note!, noteStyle)) + 2;
+      // What the row's own padding, the chevron and the tag leave for the title and the details.
+      final room = box.maxWidth - 32 - (chevron ? 22 : 0) - 10 - trailingWidth;
+      if (fits(title, rowTitleStyle, room) && (meta == null || fits(meta!, labelStyle, room))) {
+        return RowTile(
+          title: title,
+          meta: meta,
+          trailing: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.end, children: [
+            tag,
+            if (note != null) ...[const SizedBox(height: 4), Fig(note!, style: noteStyle)],
+          ]),
+          chevron: chevron,
+          onTap: onTap,
+        );
+      }
+      return RowTile(
+        title: title,
+        metaWidget: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          if (meta != null) Fig(meta!, style: labelStyle.copyWith(color: muted), maxLines: 4),
+          const SizedBox(height: 8),
+          Wrap(spacing: 8, runSpacing: 4, crossAxisAlignment: WrapCrossAlignment.center, children: [
+            tag,
+            if (note != null) Fig(note!, style: noteStyle),
+          ]),
+        ]),
+        chevron: chevron,
+        onTap: onTap,
+      );
+    });
+  }
 }
 
 /// The near-black bar from the measurement card (guide section 5 and 7).

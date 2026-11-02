@@ -133,50 +133,45 @@ class _ClassesScreenState extends State<ClassesScreen> with WidgetsBindingObserv
     );
   }
 
-  /// The rule and the rows of each section as one flat list, so every row comes in after the one before it.
+  /// Every group, then every course, as one list: each row says by its tag whether it is a group or a course, so no
+  /// heading is needed. A row carries every row's spacing, so each comes in after the one before it.
   List<Widget> _sections(List<Map<String, dynamic>> groups) {
-    final out = <Widget>[];
-    Widget tile({required String title, required String meta, required int live, required VoidCallback onTap}) => Padding(
+    Widget tile({required String title, required String meta, required String kind, required int live, required VoidCallback onTap}) => Padding(
           padding: const EdgeInsets.symmetric(horizontal: gutter),
-          child: RowTile(
+          child: TaggedRow(
             title: title,
             meta: meta,
-            trailing: live > 0 ? TagChip('$live open', tone: Tone.success) : null,
+            tag: TagChip(kind, outlined: true),
+            note: live > 0 ? '$live open' : null,
+            noteColor: success,
+            noteBold: true,
             chevron: true,
             onTap: onTap,
           ),
         );
-    void section(SectionRule rule, List<Widget> tiles) {
-      out.add(rule);
-      for (final (i, w) in tiles.indexed) {
-        if (i > 0) out.add(const SizedBox(height: gapRow));
-        out.add(w);
-      }
-    }
 
     String coming(Map<String, dynamic> x) => (x['posted'] as List).isEmpty ? '' : ' · ${(x['posted'] as List).length} coming up';
-    if (groups.isNotEmpty) {
-      section(SectionRule('Groups', count: groups.length), [
-        for (final g in groups)
-          tile(
-            title: groupName(g['class_level'] as int, '${g['subject']}'),
-            meta: '${f.count(_n(g['students']), 'student')}${coming(g)}',
-            live: (g['live'] as List).length,
-            onTap: () => _open(groupPath(g)),
-          ),
-      ]);
-    }
-    if (_courses.isNotEmpty) {
-      section(SectionRule('Courses', count: _courses.length, padding: EdgeInsets.fromLTRB(gutter, groups.isEmpty ? 22 : 30, gutter, 11)), [
-        for (final c in _courses)
-          tile(
-            title: '${c['name']}',
-            meta: '${f.count(_n(c['people']), 'person', 'people')}${coming(c)}',
-            live: (c['live'] as List).length,
-            onTap: () => _open(coursePath(c)),
-          ),
-      ]);
-    }
-    return out;
+    final tiles = <Widget>[
+      for (final g in groups)
+        tile(
+          title: groupName(g['class_level'] as int, '${g['subject']}'),
+          meta: '${f.count(_n(g['students']), 'student')}${coming(g)}',
+          kind: 'Group',
+          live: (g['live'] as List).length,
+          onTap: () => _open(groupPath(g)),
+        ),
+      for (final c in _courses)
+        tile(
+          title: '${c['name']}',
+          meta: '${f.count(_n(c['people']), 'person', 'people')}${coming(c)}',
+          kind: 'Course',
+          live: (c['live'] as List).length,
+          onTap: () => _open(coursePath(c)),
+        ),
+    ];
+    return [
+      const SizedBox(height: 18),
+      for (final (i, w) in tiles.indexed) ...[if (i > 0) const SizedBox(height: gapRow), w],
+    ];
   }
 }

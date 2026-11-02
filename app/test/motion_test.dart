@@ -161,10 +161,14 @@ void main() {
       theme: buildTheme(Brightness.light),
       home: const GroupScreen(classLevel: 10, subjectId: 'sub-maths', subjectName: 'Maths'),
     ));
-    for (var i = 0; i < 20 && find.text('Student 0').evaluate().isEmpty; i++) {
+    for (var i = 0; i < 20 && find.text('Quadratic equations').evaluate().isEmpty; i++) {
       await t.pump(const Duration(milliseconds: 16));
     }
-    expect(find.text('Student 0'), findsOneWidget, reason: 'the group never loaded');
+    expect(find.text('Quadratic equations'), findsOneWidget, reason: 'the group never loaded');
+    // The students are on their own tab, and their rows come in when it is first shown.
+    await t.tap(find.text('Students'));
+    await t.pump();
+    expect(find.text('Student 0'), findsOneWidget, reason: 'the Students tab did not open');
     final built = [for (var i = 0; i < 16; i++) if (find.text('Student $i').evaluate().isNotEmpty) i];
     expect(built.length, greaterThan(5), reason: 'the first screenful should show several students');
     for (final i in built) {
@@ -221,10 +225,14 @@ void main() {
       theme: buildTheme(Brightness.light),
       home: const CourseScreen(id: 'c-1', name: 'Spoken English, Batch 1'),
     ));
-    for (var i = 0; i < 20 && find.text('Person 0').evaluate().isEmpty; i++) {
+    for (var i = 0; i < 20 && find.text('Unit 1 quiz').evaluate().isEmpty; i++) {
       await t.pump(const Duration(milliseconds: 16));
     }
-    expect(find.text('Person 0'), findsOneWidget, reason: 'the course page never loaded');
+    expect(find.text('Unit 1 quiz'), findsOneWidget, reason: 'the course page never loaded');
+    // The people are on their own tab, and their rows come in when it is first shown.
+    await t.tap(find.text('People'));
+    await t.pump();
+    expect(find.text('Person 0'), findsOneWidget, reason: 'the People tab did not open');
     // The people whose rows are well inside the screen (a row with only a sliver showing waits to be scrolled to).
     final built = [for (var i = 0; i < 16; i++) if (find.text('Person $i').evaluate().isNotEmpty && t.getTopLeft(find.text('Person $i')).dy < 914 - 60) i];
     expect(built.length, greaterThan(2), reason: 'the first screenful should show several people');

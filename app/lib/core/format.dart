@@ -2,7 +2,11 @@ import 'package:intl/intl.dart';
 
 DateTime? parseTime(dynamic v) => v == null ? null : DateTime.parse('$v').toLocal();
 
-String time(DateTime t) => DateFormat('h:mm a').format(t).toLowerCase();
+/// The space inside a time ("9:58 am") and inside a date ("Sat 31 Oct") is one that does not let a line break: a long line splits
+/// between the pieces, and never leaves an "am" or an "Oct" alone at the start of the next line.
+const _glue = '\u00A0';
+
+String time(DateTime t) => DateFormat('h:mm a').format(t).toLowerCase().replaceAll(' ', _glue);
 
 bool _sameDay(DateTime a, DateTime b) => a.year == b.year && a.month == b.month && a.day == b.day;
 
@@ -16,15 +20,15 @@ String? nearDay(DateTime t) {
 }
 
 /// "Tue 6 Oct": the day name, the date and the month, always.
-String shortDate(DateTime t) => DateFormat('EEE d MMM').format(t);
+String shortDate(DateTime t) => DateFormat('EEE d MMM').format(t).replaceAll(' ', _glue);
 
 /// "today", "tomorrow", "yesterday" or "Tue 6 Oct".
 String day(DateTime t) => nearDay(t) ?? shortDate(t);
 
 /// "today 9:00 pm", "Tue 6 Oct, 9:00 pm".
 String when(DateTime t) {
-  final d = day(t);
-  return d.contains(' ') ? '$d, ${time(t)}' : '$d ${time(t)}';
+  final near = nearDay(t);
+  return near == null ? '${shortDate(t)}, ${time(t)}' : '$near ${time(t)}';
 }
 
 // When a test opens or closes, the day is always spelled out: "tomorrow" alone leaves the reader to work out which day that is.

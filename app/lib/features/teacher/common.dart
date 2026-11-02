@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../core/api.dart';
@@ -230,7 +229,7 @@ class DayTimeChooser extends StatelessWidget {
 
     // 6:00 am to 9:30 pm in half hours.
     final times = [for (var m = 6 * 60; m <= 21 * 60 + 30; m += 30) m];
-    String timeLabel(int m) => DateFormat('h:mm a').format(DateTime(2000, 1, 1, m ~/ 60, m % 60)).toLowerCase();
+    String timeLabel(int m) => f.time(DateTime(2000, 1, 1, m ~/ 60, m % 60));
 
     void pick({DateTime? dayValue, int? minutes}) {
       final d = dayValue ?? selDay ?? day0;

@@ -42,29 +42,62 @@ String testMeta(Map<String, dynamic> t) {
   };
 }
 
-/// One test on a group's or a course's page: its name, its state and how many people have handed it in.
-class TestListTile extends StatelessWidget {
-  const TestListTile({super.key, required this.t, required this.onTap});
+/// The tag that says what state a test is in, in the words a tutor uses: [state] is what [testState] returns.
+TagChip testStateTag(String state) => switch (state) {
+      'open' => const TagChip('Open now', tone: Tone.success),
+      'upcoming' => const TagChip('Coming up', strong: true),
+      'draft' => const TagChip('Not posted'),
+      _ => const TagChip('Finished', outlined: true),
+    };
+
+/// A test as a row: its name, [meta] under it, a tag for its state and, under the tag, how many people have handed it in (or how
+/// many are writing it now). A test that has not opened yet has nobody to count, and a draft has not been posted.
+class TestRow extends StatelessWidget {
+  const TestRow({super.key, required this.t, required this.meta, required this.onTap, this.state});
   final Map<String, dynamic> t;
+  final String meta;
   final VoidCallback onTap;
+
+  /// The test's state when the caller already worked it out.
+  final String? state;
 
   @override
   Widget build(BuildContext context) {
-    final published = t['status'] == 'published';
-    final writing = _count(t['writing']);
-    return RowTile(
+    final s = state ?? testState(t);
+    final writing = s == 'open' ? _count(t['writing']) : 0;
+    final counted = s == 'open' || s == 'done' || s == 'closed';
+    return TaggedRow(
       title: '${t['title']}',
-      meta: testMeta(t),
-      trailing: !published
-          ? const TagChip('Not posted')
-          : Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-              Text('${_count(t['submitted'])}/${_count(t['assigned'])}', style: numStyle(size: 15)),
-              const SizedBox(height: 2),
-              Fig(writing > 0 ? '$writing writing' : 'handed in', style: labelStyle.copyWith(color: writing > 0 ? warning : null)),
-            ]),
+      meta: meta,
+      tag: testStateTag(s),
+      note: !counted ? null : (writing > 0 ? '$writing writing now' : '${_count(t['submitted'])}/${_count(t['assigned'])} handed in'),
+      noteColor: writing > 0 ? warning : null,
       onTap: onTap,
     );
   }
+}
+
+/// The tests of a group or a course as one list, every row with a tag for its state: open now first, then coming up,
+/// then not posted, then the finished ones (the first three, and the rest on a tap). [go] opens a test's page or,
+/// for one that is not posted, its editor. [empty] is what the page says when it has no tests.
+List<Widget> classTests(
+  List<Map<String, dynamic>> tests, {
+  required bool allFinished,
+  required VoidCallback onToggleFinished,
+  required void Function(String path) go,
+  required String empty,
+}) {
+  if (tests.isEmpty) return [EmptyState(icon: Ph.exam, title: 'No tests yet', body: empty)];
+  List<Map<String, dynamic>> of(String s) => tests.where((t) => testState(t) == s).toList();
+  final finished = [...of('done'), ...of('closed')];
+  final shown = [...of('open'), ...of('upcoming'), ...of('draft'), ...(allFinished ? finished : finished.take(3))];
+  return [
+    for (final (i, t) in shown.indexed) ...[
+      if (i > 0) const SizedBox(height: gapRow),
+      TestRow(t: t, meta: testMeta(t), onTap: () => go(t['status'] == 'published' ? '/t/tests/${t['id']}' : '/t/tests/${t['id']}/edit')),
+    ],
+    if (finished.length > 3) Center(child: TextAction(allFinished ? 'Show fewer' : 'Show all ${finished.length} finished tests', onTap: onToggleFinished)),
+  ];
 }
 
 // ---------------------------------------------------------------- editor

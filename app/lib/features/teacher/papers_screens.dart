@@ -5,7 +5,6 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:pdfx/pdfx.dart';
 
 import '../../core/api.dart';
 import '../../core/pool.dart';
@@ -16,6 +15,8 @@ import '../../ui/math_text.dart';
 import '../../ui/option_mark.dart';
 import '../../ui/tokens.dart';
 import 'common.dart';
+import 'paper_runner.dart' show suggestedLimit;
+import 'pdf_pages.dart';
 import 'questions_screens.dart' show MathToolbar, insertInto, pickAndUploadImage;
 import '../../core/levels.dart';
 
@@ -33,17 +34,34 @@ String paperGroup(Map<String, dynamic> p) {
 /// The name a paper has before AI or the teacher names it (the API's placeholder).
 const _unnamed = 'New paper';
 
+/// The test planned for a paper that was made as one of several (its plan, kept with it): when it opens and closes, how long it takes
+/// and whether its questions are shuffled. Null for a paper with no plan, and for one whose closing time has passed.
+({DateTime? opens, DateTime closes, int? limit, bool shuffle})? plannedTest(Map<String, dynamic> paper) {
+  final plan = paper['plan'];
+  if (plan is! Map) return null;
+  final closes = f.parseTime(plan['closes_at']);
+  if (closes == null || closes.isBefore(DateTime.now().add(const Duration(minutes: 1)))) return null;
+  final opens = f.parseTime(plan['opens_at']);
+  return (opens: opens != null && opens.isAfter(DateTime.now()) ? opens : null, closes: closes, limit: (plan['time_limit_min'] as num?)?.toInt(), shuffle: plan['shuffle'] != false);
+}
+
+/// A paper has a plan whose closing time is over.
+bool planHasPassed(Map<String, dynamic> paper) => paper['plan'] is Map && plannedTest(paper) == null;
+
 
 // ---------------------------------------------------------------- upload
 
 /// Pages first: AI works out the rest once they are uploaded.
 class UploadPaperScreen extends StatefulWidget {
   /// From a group's page: the paper's class and subject are the group's. From a course's page: the paper is the course's.
-  const UploadPaperScreen({super.key, this.classLevel, this.subjectId, this.subjectName, this.courseId});
+  /// With [collect] the pages are not sent anywhere: they come back to the screen that asked for them (making several tests at
+  /// once), as a list of JPEGs, and PDFs are left to that screen.
+  const UploadPaperScreen({super.key, this.classLevel, this.subjectId, this.subjectName, this.courseId, this.collect = false});
   final int? classLevel;
   final String? subjectId;
   final String? subjectName;
   final String? courseId;
+  final bool collect;
 
   @override
   State<UploadPaperScreen> createState() => _UploadPaperScreenState();
@@ -79,23 +97,13 @@ class _UploadPaperScreenState extends State<UploadPaperScreen> {
       _status = 'Opening the PDF';
     });
     try {
-      final doc = await PdfDocument.openData(await files.first.readAsBytes());
-      final n = doc.pagesCount.clamp(0, 20 - _pages.length);
-      for (var i = 1; i <= n; i++) {
-        setState(() => _status = 'Preparing page $i of $n');
-        final page = await doc.getPage(i);
-        final scale = 1600 / page.width;
-        final img = await page.render(
-          width: page.width * scale,
-          height: page.height * scale,
-          format: PdfPageImageFormat.jpeg,
-          backgroundColor: '#FFFFFF',
-          quality: 80,
-        );
-        await page.close();
-        if (img != null) _pages.add(img.bytes);
-      }
-      await doc.close();
+      _pages.addAll(await renderPdfPages(
+        await files.first.readAsBytes(),
+        limit: maxPaperPages - _pages.length,
+        progress: (i, n) {
+          if (mounted) setState(() => _status = 'Preparing page $i of $n');
+        },
+      ));
     } catch (_) {
       if (mounted) showProblem(context, ApiException(0, 'pdf', 'This PDF could not be opened. Try photographing the pages instead.'));
     } finally {
@@ -107,6 +115,9 @@ class _UploadPaperScreenState extends State<UploadPaperScreen> {
       }
     }
   }
+
+  /// Gives the pages back to the screen that asked for them.
+  void _hand() => Navigator.of(context).pop(List<Uint8List>.of(_pages));
 
   Future<void> _upload() async {
     setState(() {
@@ -155,10 +166,13 @@ class _UploadPaperScreenState extends State<UploadPaperScreen> {
               : 'Question paper',
       title: 'Add the paper',
       footer: PrimaryButton(
-        _status ?? (_pages.isEmpty ? 'Read with AI' : 'Read ${f.count(_pages.length, 'page')} with AI'),
-        leadingIcon: Ph.scan,
+        _status ??
+            (widget.collect
+                ? (_pages.isEmpty ? 'Add this paper' : 'Add this paper · ${f.count(_pages.length, 'page')}')
+                : (_pages.isEmpty ? 'Read with AI' : 'Read ${f.count(_pages.length, 'page')} with AI')),
+        leadingIcon: widget.collect ? Ph.check : Ph.scan,
         busy: _busy,
-        onTap: _pages.isNotEmpty && !_busy ? _upload : null,
+        onTap: _pages.isNotEmpty && !_busy ? (widget.collect ? _hand : _upload) : null,
         disabledReason: _busy ? null : (_pages.isEmpty ? 'Add at least one page.' : null),
       ),
       children: [
@@ -168,8 +182,8 @@ class _UploadPaperScreenState extends State<UploadPaperScreen> {
         Surface(
           child: Column(children: [
             _SourceRow(icon: Ph.camera, title: 'Take photos', caption: 'One for each page, in good light', onTap: locked ? null : _camera),
-            _SourceRow(icon: Ph.images, title: 'Choose from the gallery', caption: 'Photos you already took', onTap: locked ? null : _gallery),
-            _SourceRow(icon: Ph.filePdf, title: 'Pick a PDF', caption: 'Up to 20 pages', onTap: locked ? null : _pdf, last: true),
+            _SourceRow(icon: Ph.images, title: 'Choose from the gallery', caption: 'Photos you already took', onTap: locked ? null : _gallery, last: widget.collect),
+            if (!widget.collect) _SourceRow(icon: Ph.filePdf, title: 'Pick a PDF', caption: 'Up to 20 pages', onTap: locked ? null : _pdf, last: true),
           ]),
         ),
         if (_pages.isNotEmpty) ...[
@@ -895,13 +909,21 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
     final who = courseId != null
         ? (students == null ? 'the people in $group' : (students == 1 ? 'the 1 person in $group' : 'the $students people in $group'))
         : (students == null ? 'the students in $group' : (students == 1 ? 'the 1 student in $group' : 'the $students students in $group'));
+    // A paper made as one of several carries the days its tutor chose; any other opens now and closes at the next 9 pm.
+    final planned = plannedTest(p);
+    final closes = planned?.closes ?? defaultClosing();
+    final opens = planned?.opens;
     final choice = await showCentredCard<String>(
       context,
       title: 'Post it as a test?',
       builder: (ctx) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Fig('${f.count(n, 'question')} · ${_limitFor(n)} min · closes ${f.whenDate(defaultClosing())}', style: labelStyle.copyWith(fontSize: 12.5), numColor: ink),
+        Fig('${f.count(n, 'question')} · ${planned?.limit ?? suggestedLimit(n)} min · ${opens == null ? '' : 'opens ${f.whenDate(opens)} · '}closes ${f.whenDate(closes)}', style: labelStyle.copyWith(fontSize: 12.5), numColor: ink),
         const SizedBox(height: 10),
         Fig('Goes to $who. Students see their marks and the right answers as soon as they hand it in.', style: bodyStyle.copyWith(color: muted)),
+        if (planHasPassed(p)) ...[
+          const SizedBox(height: 12),
+          const InlineNotice('The closing time you planned for this paper has passed, so it closes at the usual time instead. You can change it in the test.', icon: Ph.warning),
+        ],
         if (students == 0) ...[
           const SizedBox(height: 12),
           InlineNotice(
@@ -922,15 +944,13 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
     if (choice != null && mounted) await _makeTest(p, publish: choice == 'publish');
   }
 
-  /// A minute and a half a question, rounded up to a limit the test editor offers.
-  int _limitFor(int n) => const [20, 30, 45, 60, 90, 120, 180].firstWhere((m) => m >= (n * 1.5).ceil(), orElse: () => 180);
-
   /// Every saved question goes into a new test for the paper's class and subject, named after the
   /// paper. Published at once, or left as a draft with the test editor open.
   Future<void> _makeTest(Map<String, dynamic> p, {required bool publish}) async {
     setState(() => _making = true);
     try {
-      final closes = defaultClosing();
+      final planned = plannedTest(p);
+      final closes = planned?.closes ?? defaultClosing();
       // A course's paper makes a course's test, which goes to the people of the course.
       final courseId = p['course_id'] as String?;
       final r = await api.post('/teacher/tests', {
@@ -944,9 +964,10 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
           'assign_group': true,
         },
         'question_ids': [for (final q in _questions) q['id']],
-        'time_limit_min': _limitFor(_questions.length),
+        'time_limit_min': planned?.limit ?? suggestedLimit(_questions.length),
+        if (planned?.opens != null) 'opens_at': planned!.opens!.toUtc().toIso8601String(),
         'closes_at': closes.toUtc().toIso8601String(),
-        'shuffle': true,
+        'shuffle': planned?.shuffle ?? true,
         'paper_id': p['id'],
       });
       final id = '${r['id']}';
@@ -958,7 +979,7 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
           context.pop();
           return;
         }
-        setState(() => _saved = 'Posted "${paperName(p)}" for ${paperGroup(p)}. It is open now and closes ${f.whenDate(closes)}.');
+        setState(() => _saved = 'Posted "${paperName(p)}" for ${paperGroup(p)}. ${planned?.opens == null ? 'It is open now' : 'It opens ${f.whenDate(planned!.opens!)}'} and closes ${f.whenDate(closes)}.');
         await _load();
       } else {
         if (!mounted) return;
@@ -1093,7 +1114,7 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
       children: [
         const SizedBox(height: 22),
         if (facts != null) ...[
-          Reveal(scope: this, id: 'reader', child: _AiProgress(done: facts.done, total: facts.total, unit: facts.unit, line: facts.line)),
+          Reveal(scope: this, id: 'reader', child: AiProgressCard(done: facts.done, total: facts.total, unit: facts.unit, line: facts.line)),
           if (facts.unit.startsWith('page') && _pages.length <= 8) ...[
             const SizedBox(height: 14),
             _PageRows(pages: _pages, drafts: _drafts),
@@ -1254,8 +1275,8 @@ class _PaperReviewScreenState extends State<PaperReviewScreen> with WidgetsBindi
 
 /// The AI paper reader at work: how many pages are read (then how many answers are worked out), on the
 /// one place the accent colour is for.
-class _AiProgress extends StatelessWidget {
-  const _AiProgress({required this.done, required this.total, required this.unit, required this.line});
+class AiProgressCard extends StatelessWidget {
+  const AiProgressCard({super.key, required this.done, required this.total, required this.unit, required this.line});
   final int done;
   final int total;
   final String unit;

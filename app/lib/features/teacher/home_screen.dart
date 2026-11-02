@@ -14,6 +14,7 @@ import 'classes_screen.dart' show addClass;
 import 'common.dart';
 import 'make_test.dart';
 import 'papers_screens.dart' show paperGroup, paperName;
+import 'tests_screens.dart' show TestRow;
 
 int _n(Object? v) => v is num ? v.toInt() : int.tryParse('$v') ?? 0;
 
@@ -167,7 +168,6 @@ class _TutorHomeState extends State<TutorHome> with WidgetsBindingObserver, Auto
     open.sort((a, b) => far(f.parseTime(a.t['closes_at'])).compareTo(far(f.parseTime(b.t['closes_at']))));
     coming.sort((a, b) => far(f.parseTime(a.t['opens_at'])).compareTo(far(f.parseTime(b.t['opens_at']))));
 
-    const rule = EdgeInsets.fromLTRB(gutter, 26, gutter, 11);
     Widget pad(Widget w, {double top = 0}) => Padding(padding: EdgeInsets.fromLTRB(gutter, top, gutter, 0), child: w);
     Widget rows(List<Widget> list) => pad(Column(children: [
           for (final (i, w) in list.indexed) ...[if (i > 0) const SizedBox(height: gapRow), w],
@@ -224,34 +224,32 @@ class _TutorHomeState extends State<TutorHome> with WidgetsBindingObserver, Auto
           action: PrimaryButton('Add a class', leadingIcon: Ph.plus, onTap: _addClass),
         )
       else
-        pad(PrimaryButton('Make a test', leadingIcon: Ph.plus, onTap: () => _make(d)), top: 18),
-      if (needs.isNotEmpty) ...[SectionRule('Needs you', count: needs.length, padding: rule), rows(needs)],
+        pad(PrimaryButton('Make tests', leadingIcon: Ph.plus, onTap: () => _make(d)), top: 18),
+      // What needs the tutor, then every test in one list: each row says by its tag whether it is open now, coming up or finished.
+      if (needs.isNotEmpty) pad(Column(children: [for (final (i, w) in needs.indexed) ...[if (i > 0) const SizedBox(height: gapRow), w]]), top: 16),
       if (hasClass && open.isEmpty)
         Padding(
           padding: const EdgeInsets.fromLTRB(gutter, 16, gutter, 0),
           child: Fig('No test is open right now.', style: bodyStyle.copyWith(color: muted)),
         ),
-      if (open.isNotEmpty) ...[
-        SectionRule('Open now', count: open.length, padding: rule),
-        capped('open', 6, [for (final o in open) _OpenTest(t: o.t, cls: o.cls, onTap: () => _go('/t/tests/${o.t['id']}'))]),
+      if (open.isNotEmpty || coming.isNotEmpty || finished.isNotEmpty) ...[
+        pad(const SizedBox(height: 0), top: 10),
+        capped('tests', 8, [
+          for (final o in open) _OpenTest(t: o.t, cls: o.cls, onTap: () => _go('/t/tests/${o.t['id']}')),
+          for (final o in coming) _ComingTest(t: o.t, cls: o.cls, onTap: () => _go('/t/tests/${o.t['id']}')),
+          for (final t in finished) _FinishedTest(t: t, cls: _classOf(t), onTap: () => _go('/t/tests/${t['id']}')),
+        ]),
       ],
-      if (coming.isNotEmpty) ...[
-        SectionRule('Coming up', count: coming.length, padding: rule),
-        capped('coming', 4, [for (final o in coming) _ComingTest(t: o.t, cls: o.cls, onTap: () => _go('/t/tests/${o.t['id']}'))]),
-      ],
-      if (finished.isNotEmpty) ...[
-        SectionRule('Finished lately', count: finished.length, padding: rule),
-        rows([for (final t in finished) _FinishedTest(t: t, cls: _classOf(t), onTap: () => _go('/t/tests/${t['id']}'))]),
+      if (finished.isNotEmpty)
         pad(
           Fig('Older tests are on each class\'s page, under Classes.', style: labelStyle),
           top: 12,
         ),
-      ],
       if (hasClass && open.isEmpty && coming.isEmpty && finished.isEmpty)
         EmptyState(
           icon: Ph.exam,
           title: 'No tests yet',
-          body: 'Tap Make a test. Upload a question paper and AI reads the questions, or describe a test and AI writes it.',
+          body: 'Tap Make tests. Add question papers and AI reads the questions, or describe a test and AI writes it.',
         ),
     ];
   }
@@ -277,22 +275,16 @@ class _OpenTest extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final closes = f.parseTime(t['closes_at']);
-    final writing = _n(t['writing']);
-    return RowTile(
-      title: '${t['title']}',
+    return TestRow(
+      t: t,
+      state: 'open',
       meta: '$cls · ${closes == null ? 'open' : 'closes ${f.whenDate(closes)}'}',
-      trailing: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-        Text('${_n(t['submitted'])}/${_n(t['assigned'])}', style: numStyle(size: 15)),
-        const SizedBox(height: 2),
-        Fig(writing > 0 ? '$writing writing now' : 'handed in', style: labelStyle.copyWith(color: writing > 0 ? warning : null)),
-      ]),
-      chevron: true,
       onTap: onTap,
     );
   }
 }
 
-/// A test posted for later: its name, its class, and the day and time it opens.
+/// A test posted for later: its name, its class, and the day, date and time it opens.
 class _ComingTest extends StatelessWidget {
   const _ComingTest({required this.t, required this.cls, required this.onTap});
   final Map<String, dynamic> t;
@@ -302,18 +294,11 @@ class _ComingTest extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final opens = f.parseTime(t['opens_at']);
-    return RowTile(
-      title: '${t['title']}',
-      meta: cls,
-      trailing: opens == null
-          ? null
-          : Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-              // The day name and date are always there; "tomorrow" alone leaves her to work out which day that is.
-              Fig(f.shortDate(opens), style: rowTitleStyle),
-              const SizedBox(height: 2),
-              Fig('opens ${f.nearDay(opens) == null ? '' : '${f.nearDay(opens)} '}${f.time(opens)}', style: labelStyle),
-            ]),
-      chevron: true,
+    return TestRow(
+      t: t,
+      state: 'upcoming',
+      // The day name and date are always there; "tomorrow" alone leaves her to work out which day that is.
+      meta: '$cls · opens ${opens == null ? 'later' : f.whenDate(opens)}',
       onTap: onTap,
     );
   }
@@ -331,15 +316,10 @@ class _FinishedTest extends StatelessWidget {
     final closes = f.parseTime(t['closes_at']);
     // Everyone it was given to handed it in before its closing time: it finished early.
     final early = closes != null && closes.isAfter(DateTime.now());
-    return RowTile(
-      title: '${t['title']}',
+    return TestRow(
+      t: t,
+      state: 'closed',
       meta: '$cls · ${closes == null || early ? 'all handed in' : 'closed ${f.dayDate(closes)}'}',
-      trailing: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-        Text('${_n(t['submitted'])}/${_n(t['assigned'])}', style: numStyle(size: 15)),
-        const SizedBox(height: 2),
-        Fig('handed in', style: labelStyle),
-      ]),
-      chevron: true,
       onTap: onTap,
     );
   }

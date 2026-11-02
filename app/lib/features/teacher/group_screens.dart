@@ -9,7 +9,7 @@ import '../../ui/kit.dart';
 import 'common.dart';
 import 'make_test.dart';
 import 'subjects.dart';
-import 'tests_screens.dart' show TestListTile, testState;
+import 'tests_screens.dart' show classTests;
 
 int _n(Object? v) => v is num ? v.toInt() : int.tryParse('$v') ?? 0;
 
@@ -90,6 +90,9 @@ class _GroupScreenState extends State<GroupScreen> with WidgetsBindingObserver, 
   String? _error;
   bool _allFinished = false;
 
+  /// The tab showing: 0 for the tests, 1 for the students.
+  int _tab = 0;
+
   String get _name => groupName(widget.classLevel, widget.subjectName);
 
   @override
@@ -130,7 +133,8 @@ class _GroupScreenState extends State<GroupScreen> with WidgetsBindingObserver, 
   String get _query => 'class=${widget.classLevel}&subject=${widget.subjectId}&name=${_enc(widget.subjectName)}';
 
   Future<void> _makeTest() async {
-    final target = TestTarget.group(classLevel: widget.classLevel, subjectId: widget.subjectId, subjectName: widget.subjectName);
+    final students = ((_d?['students'] as List?) ?? const []).length;
+    final target = TestTarget.group(classLevel: widget.classLevel, subjectId: widget.subjectId, subjectName: widget.subjectName, size: students);
     if (await makeTestFor(context, target) && mounted) _load();
   }
 
@@ -153,11 +157,6 @@ class _GroupScreenState extends State<GroupScreen> with WidgetsBindingObserver, 
     }
   }
 
-  Widget _tile(Map<String, dynamic> t) => TestListTile(
-        t: t,
-        onTap: () => _go(t['status'] == 'published' ? '/t/tests/${t['id']}' : '/t/tests/${t['id']}/edit'),
-      );
-
   @override
   Widget build(BuildContext context) {
     final d = _d;
@@ -171,57 +170,61 @@ class _GroupScreenState extends State<GroupScreen> with WidgetsBindingObserver, 
         else if (d == null)
           const LoadingState(rows: 3)
         else
-          ...staggered(_body(d), scope: this, prefix: 'group', stepMs: 50),
+          ...[
+            ...staggered(_head(d), scope: this, prefix: 'grouph', stepMs: 50),
+            // A tab's rows come in the first time it is shown, and not again when the tutor comes back to it.
+            ...staggered(_content(d), scope: this, prefix: 'group$_tab', stepMs: 50, startMs: 100),
+          ],
       ],
     );
   }
 
-  List<Widget> _body(Map<String, dynamic> d) {
-    const rule = EdgeInsets.fromLTRB(0, 28, 0, 11);
+  /// What stays put while the tabs change: the button and the tabs themselves.
+  List<Widget> _head(Map<String, dynamic> d) {
     final students = (d['students'] as List).cast<Map<String, dynamic>>();
     final tests = (d['tests'] as List).cast<Map<String, dynamic>>();
-    List<Map<String, dynamic>> of(String s) => tests.where((t) => testState(t) == s).toList();
-    final live = of('open');
-    final posted = of('upcoming');
-    final finished = [...of('done'), ...of('closed')];
-    final drafts = of('draft');
-
-    Widget rows(List<Map<String, dynamic>> list) => Column(children: [
-          for (final (i, t) in list.indexed) ...[if (i > 0) const SizedBox(height: gapRow), _tile(t)],
-        ]);
-
     return [
       const SizedBox(height: 18),
-      PrimaryButton('Make a test', leadingIcon: Ph.plus, onTap: _makeTest),
-      if (live.isNotEmpty) ...[SectionRule('Open now', count: live.length, padding: rule), rows(live)],
-      if (posted.isNotEmpty) ...[SectionRule('Coming up', count: posted.length, padding: rule), rows(posted)],
-      if (drafts.isNotEmpty) ...[SectionRule('Not posted yet', count: drafts.length, padding: rule), rows(drafts)],
-      if (finished.isNotEmpty) ...[
-        SectionRule('Finished', count: finished.length, padding: rule),
-        rows(_allFinished ? finished : finished.take(3).toList()),
-        if (finished.length > 3)
-          Center(child: TextAction(_allFinished ? 'Show fewer' : 'Show all ${finished.length} finished tests', onTap: () => setState(() => _allFinished = !_allFinished))),
+      PrimaryButton('Make tests', leadingIcon: Ph.plus, onTap: _makeTest),
+      const SizedBox(height: 18),
+      SegmentedToggle(labels: const ['Tests', 'Students'], counts: [tests.length, students.length], index: _tab, onChanged: (i) => setState(() => _tab = i)),
+      const SizedBox(height: 14),
+    ];
+  }
+
+  /// The chosen tab: the tests, or the students with the button to add one; an empty group can be removed from either.
+  List<Widget> _content(Map<String, dynamic> d) {
+    final students = (d['students'] as List).cast<Map<String, dynamic>>();
+    final tests = (d['tests'] as List).cast<Map<String, dynamic>>();
+
+    return [
+      if (_tab == 0)
+        ...classTests(
+          tests,
+          allFinished: _allFinished,
+          onToggleFinished: () => setState(() => _allFinished = !_allFinished),
+          go: _go,
+          empty: 'Tap Make tests above. Students you add on the Students tab can take them.',
+        )
+      else ...[
+        if (students.isEmpty) Fig('No students in this group yet.', style: bodyStyle.copyWith(color: muted)),
+        for (final (i, s) in students.indexed) ...[
+          if (i > 0) const SizedBox(height: gapRow),
+          RowTile(
+            leading: AppAvatar(name: '${s['display_name']}', seed: '${s['id']}'),
+            title: '${s['display_name']}',
+            meta: s['active'] != true
+                ? 'Login turned off'
+                : _n(s['tests_done']) == 0
+                    ? 'No tests written yet'
+                    : '${f.count(_n(s['tests_done']), 'test')} written${s['avg_pct'] == null ? '' : ' · average ${f.percent(s['avg_pct'] as num)}'}',
+            chevron: true,
+            onTap: () => _go('/t/students/${s['id']}'),
+          ),
+        ],
+        const SizedBox(height: gapRow),
+        SecondaryButton('Add student', icon: Ph.userPlus, onTap: () => _go('/t/students/new?$_query')),
       ],
-      if (live.isEmpty && posted.isEmpty && finished.isEmpty && drafts.isEmpty)
-        Padding(padding: const EdgeInsets.only(top: 22), child: Fig('No tests yet.', style: bodyStyle.copyWith(color: muted))),
-      SectionRule('Students', count: students.length, padding: rule),
-      if (students.isEmpty) Fig('No students in this group yet.', style: bodyStyle.copyWith(color: muted)),
-      for (final (i, s) in students.indexed) ...[
-        if (i > 0) const SizedBox(height: gapRow),
-        RowTile(
-          leading: AppAvatar(name: '${s['display_name']}', seed: '${s['id']}'),
-          title: '${s['display_name']}',
-          meta: s['active'] != true
-              ? 'Login turned off'
-              : _n(s['tests_done']) == 0
-                  ? 'No tests written yet'
-                  : '${f.count(_n(s['tests_done']), 'test')} written${s['avg_pct'] == null ? '' : ' · average ${f.percent(s['avg_pct'] as num)}'}',
-          chevron: true,
-          onTap: () => _go('/t/students/${s['id']}'),
-        ),
-      ],
-      const SizedBox(height: gapRow),
-      SecondaryButton('Add student', icon: Ph.userPlus, onTap: () => _go('/t/students/new?$_query')),
       if (students.isEmpty && tests.isEmpty) ...[
         const SizedBox(height: 22),
         Center(child: TextAction('Remove this group', color: danger, onTap: _remove)),

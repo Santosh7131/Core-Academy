@@ -8,6 +8,7 @@ import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:core_academy/core/api.dart';
+import 'package:core_academy/core/format.dart' show time;
 import 'package:core_academy/core/session.dart';
 import 'package:core_academy/core/updater.dart';
 import 'package:core_academy/features/auth/login_screen.dart';
@@ -22,8 +23,11 @@ import 'package:core_academy/features/student/result_screen.dart';
 import 'package:core_academy/features/student/test_screen.dart';
 import 'package:core_academy/features/teacher/classes_screen.dart';
 import 'package:core_academy/features/teacher/course_screens.dart';
+import 'package:core_academy/features/teacher/group_screens.dart' show GroupScreen;
 import 'package:core_academy/features/teacher/home_screen.dart';
 import 'package:core_academy/features/teacher/join_requests_screen.dart';
+import 'package:core_academy/features/teacher/make_test.dart' show TestTarget;
+import 'package:core_academy/features/teacher/make_tests_screen.dart';
 import 'package:core_academy/features/teacher/papers_screens.dart';
 import 'package:core_academy/features/teacher/settings_screen.dart';
 import 'package:core_academy/features/teacher/teacher_routes.dart';
@@ -40,6 +44,8 @@ import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import '../support/make_fakes.dart';
 
 final _shots = Platform.environment['SHOTS'] == '1';
 
@@ -67,7 +73,12 @@ final routes = <String, Object? Function(http.Request)>{};
 /// A route that answers only when its future completes, so a screen can be drawn while it waits.
 final holds = <String, Future<void>>{};
 
+/// While a scene of making several tests at once is drawn, a stand-in for the whole paper side of the server answers instead.
+PaperServer? makeServer;
+
 Future<http.Response> _answer(http.Request r) async {
+  final fake = makeServer;
+  if (fake != null) return fake.handle(r);
   final key = '${r.method} ${r.url.path}';
   final hold = holds[key] ?? holds[r.url.path];
   if (hold != null) await hold;
@@ -693,17 +704,6 @@ void main() {
     _sessionAs(role: 'teacher', tuitions: tutorTuition);
     routes['/teacher/home'] = (_) => busyHome();
     await _both(t, 'home-full', () => const Scaffold(body: TutorHome()), height: 3200);
-    // The make-a-test button asks which class, then how.
-    await _both(t, 'home-which-class', () => const Scaffold(body: TutorHome()), then: (t) async {
-      await t.tap(find.text('Make a test'));
-      await _settle(t);
-    });
-    await _both(t, 'home-how', () => const Scaffold(body: TutorHome()), then: (t) async {
-      await t.tap(find.text('Make a test'));
-      await _settle(t);
-      await t.tap(find.text('10th Maths').last);
-      await _settle(t);
-    });
     // Nothing open right now.
     routes['/teacher/home'] = (_) => busyHome(open: false);
     await _both(t, 'home-quiet', () => const Scaffold(body: TutorHome()), height: 3000);
@@ -784,10 +784,6 @@ void main() {
           ],
         };
     await _both(t, 'course-page', () => const CourseScreen(id: 'c-1', name: 'Spoken English, Batch 1'), height: 3600);
-    await _both(t, 'course-make-test', () => const CourseScreen(id: 'c-1', name: 'Spoken English, Batch 1'), then: (t) async {
-      await t.tap(find.text('Make a test'));
-      await _settle(t);
-    });
     await _both(t, 'course-rename', () => const CourseScreen(id: 'c-1', name: 'Spoken English, Batch 1'), then: (t) async {
       await t.tap(find.text('Rename course'));
       await _settle(t);
@@ -796,6 +792,168 @@ void main() {
       await t.scrollUntilVisible(find.text('Delete this course'), 300, scrollable: find.byType(Scrollable).first);
       await t.tap(find.text('Delete this course'));
       await _settle(t);
+    });
+    // The second tab: the people of the course.
+    await _both(t, 'course-people', () => const CourseScreen(id: 'c-1', name: 'Spoken English, Batch 1'), height: 3600, then: (t) async {
+      await t.tap(find.text('People'));
+      await _settle(t);
+    });
+    // A course just made: nobody in it and no test yet.
+    routes['/teacher/courses/c-1'] = (_) => {
+          'course': {'id': 'c-1', 'name': 'Spoken English, Batch 1', 'people': 0},
+          'people': <Object?>[],
+          'tests': <Object?>[],
+        };
+    await _both(t, 'course-new', () => const CourseScreen(id: 'c-1', name: 'Spoken English, Batch 1'));
+  });
+
+  // A group's page has the same two tabs as a course's: Tests, and the students.
+  shotTest('groups: a group page', (t) async {
+    _sessionAs(role: 'teacher', tuitions: tutorTuition);
+    routes['/teacher/groups/10/sub-Maths'] = (_) => {
+          'students': [
+            for (final (i, n) in people.take(12).indexed)
+              {
+                'id': 's$i', 'display_name': n, 'username': 'u$i', 'active': i != 11, 'last_seen_at': _iso(Duration(hours: -i)),
+                'avg_pct': i < 3 ? null : 0.5 + i / 40, 'tests_done': i < 3 ? 0 : 2,
+              },
+          ],
+          'tests': [
+            courseTest('g1', 'Practice Paper 2', closes: const Duration(hours: 3), submitted: 7, writing: 2, assigned: 12),
+            courseTest('g2', 'Real Numbers test', opens: const Duration(days: 5), closes: const Duration(days: 5, hours: 13), assigned: 12),
+            courseTest('g3', 'Polynomials', status: 'draft'),
+            courseTest('g0', 'Quadratic equations', closes: const Duration(days: -3), submitted: 12, assigned: 12),
+          ],
+        };
+    await _both(t, 'group-page', () => const GroupScreen(classLevel: 10, subjectId: 'sub-Maths', subjectName: 'Maths'), height: 2600);
+    await _both(t, 'group-students', () => const GroupScreen(classLevel: 10, subjectId: 'sub-Maths', subjectName: 'Maths'), height: 3000, then: (t) async {
+      await t.tap(find.text('Students'));
+      await _settle(t);
+    });
+  });
+
+  // Making tests from several papers at once: which class, the papers, the days, the reading, the check, the posting, the end. The
+  // real screen against a stand-in for the paper side of the server, so every step is what the tutor would see. Without SHOTS=1 only the
+  // light picture is made, to keep the run short.
+  shotTest('make tests: the steps', (t) async {
+    _sessionAs(role: 'teacher', tuitions: tutorTuition);
+    final maths = TestTarget.group(classLevel: 10, subjectId: 'sub-Maths', subjectName: 'Maths', size: 12);
+    final classes = [
+      maths,
+      TestTarget.group(classLevel: 9, subjectId: 'sub-Science', subjectName: 'Science', size: 9),
+      TestTarget.group(classLevel: 11, subjectId: 'sub-Physics', subjectName: 'Physics', size: 6),
+      TestTarget.course(id: 'c-1', name: 'Spoken English, Batch 1', size: 14),
+      TestTarget.course(id: 'c-2', name: 'Olympiad Prep', size: 8),
+    ];
+    final files = FakeSources(pdfs: [
+      fakePdf('Real Numbers test.pdf', 4),
+      fakePdf('Polynomials test.pdf', 3),
+      fakePdf('Pair of linear equations.pdf', 4),
+      fakePdf('Quadratic equations.pdf', 5),
+      fakePdf('Arithmetic progressions.pdf', 3),
+    ]);
+    final server = PaperServer()
+      ..questionsOf.addAll({'Real Numbers test': 20, 'Polynomials test': 18, 'Pair of linear equations': 15, 'Quadratic equations': 22, 'Arithmetic progressions': 12});
+    makeServer = server;
+    addTearDown(() => makeServer = null);
+
+    Future<void> tapText(WidgetTester t, String text, {bool last = false}) async {
+      final f = last ? find.text(text).last : find.text(text).first;
+      await t.ensureVisible(f);
+      await t.pump();
+      await t.tap(f);
+      await _settle(t);
+    }
+
+    /// Lets the clock run until [done]: the uploading and the reading go on by themselves, a busy moment is waited out.
+    Future<void> until(WidgetTester t, bool Function() done, {int seconds = 240}) async {
+      for (var i = 0; i < seconds * 10 && !done(); i++) {
+        await t.pump(const Duration(milliseconds: 100));
+      }
+      expect(done(), isTrue, reason: 'it had not happened after $seconds s');
+      await _settle(t);
+    }
+
+    bool shows(String text) => find.text(text).evaluate().isNotEmpty;
+    String clock(int h) => time(DateTime(2000, 1, 1, h));
+
+    Future<void> each(String name, Widget Function() screen, Future<void> Function(WidgetTester t) drive, {double height = 2400, Future<void> Function(WidgetTester t)? after}) async {
+      for (final dark in _shots ? [false, true] : [false]) {
+        server.reset();
+        // Large text makes every screen taller, and a list builds only what is on screen: so the view grows with the text.
+        await _show(t, screen(), dark: dark, height: height * (_textScale > 1 ? _textScale : 1));
+        await drive(t);
+        await _shot(t, '$name-${dark ? 'dark' : 'light'}');
+        if (after != null) await after(t);
+        await t.pumpWidget(const SizedBox.shrink());
+      }
+    }
+
+    Widget inMaths() => MakeTestsScreen(target: maths, sources: files);
+    Future<void> toDays(WidgetTester t) async {
+      await tapText(t, 'Choose PDFs');
+      await tapText(t, 'Next: choose the days');
+    }
+
+    /// Quadratic equations on its own times: 4:00 pm to 8:00 pm, 45 minutes.
+    Future<void> ownTimes(WidgetTester t) async {
+      await tapText(t, 'Quadratic equations');
+      await tapText(t, clock(8));
+      await tapText(t, clock(16), last: true);
+      await tapText(t, clock(21), last: true);
+      await tapText(t, clock(20), last: true);
+      await tapText(t, '1½ minutes a question', last: true);
+      await tapText(t, '45 min', last: true);
+    }
+
+    Future<void> toReading(WidgetTester t) async {
+      await toDays(t);
+      await tapText(t, 'Read the 5 papers with AI');
+    }
+
+    await each('make-which', () => MakeTestsScreen(targets: classes, sources: files), (t) async {});
+    await each('make-papers-empty', inMaths, (t) async {});
+    await each('make-papers', inMaths, (t) async => tapText(t, 'Choose PDFs'));
+    await each('make-days', inMaths, (t) async {
+      await toDays(t);
+      await ownTimes(t);
+      await tapText(t, 'Save', last: true);
+    });
+    await each('make-own', inMaths, (t) async {
+      await toDays(t);
+      await ownTimes(t);
+    });
+
+    // Half way: two papers read, the third on its second page, the last two waiting.
+    var gate = Completer<void>();
+    server.hold = (name, page) => (name == 'Pair of linear equations' && page >= 2) || name == 'Quadratic equations' || name == 'Arithmetic progressions' ? gate.future : null;
+    await each('make-reading', inMaths, (t) async {
+      gate = Completer<void>(); // a new hold for the dark picture: the light one let its papers through
+      await toReading(t);
+      await until(t, () => shows('Reading page 2 of 4'));
+    }, after: (t) async {
+      gate.complete();
+      await until(t, () => shows('Ready to post'));
+    });
+    server.hold = null;
+
+    // Two papers need the tutor: the others are ready to post.
+    server.unsureOf.addAll({'Polynomials test': 2, 'Quadratic equations': 1});
+    await each('make-check', inMaths, (t) async {
+      await toReading(t);
+      await until(t, () => shows('Check and post'));
+    });
+    server.unsureOf.clear();
+
+    await each('make-ready', inMaths, (t) async {
+      await toReading(t);
+      await until(t, () => shows('Ready to post'));
+    });
+    await each('make-done', inMaths, (t) async {
+      await toReading(t);
+      await until(t, () => shows('Ready to post'));
+      await tapText(t, 'Post 5 tests');
+      await until(t, () => shows('5 tests are set'));
     });
   });
 

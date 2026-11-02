@@ -3,14 +3,11 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/format.dart' as f;
 import '../../core/levels.dart';
-import '../../theme.dart';
-import '../../ui/kit.dart';
-import '../../ui/tokens.dart';
 
 String _enc(String s) => Uri.encodeComponent(s);
 
-/// Who a new test is for: a group (a class and a subject) or a course. Making a test starts the same way for both, so every
-/// "Make a test" button, on Home and on a group's or a course's page, goes through here.
+/// Who new tests are for: a group (a class and a subject) or a course. Making tests starts the same way for both, so every
+/// "Make tests" button, on Home and on a group's or a course's page, goes through here.
 class TestTarget {
   const TestTarget._({this.classLevel, this.subjectId, this.courseId, required this.name, required this.plainName, required this.size});
 
@@ -49,69 +46,27 @@ class TestTarget {
   /// "12 students", "14 people".
   String get sizeLabel => isCourse ? f.count(size, 'person', 'people') : f.count(size, 'student');
 
-  String get uploadPath => isCourse
-      ? '/t/papers/new?course=$courseId&name=${_enc(plainName)}'
-      : '/t/papers/new?class=$classLevel&subject=$subjectId&name=${_enc(plainName)}';
-
   String get chatPath => isCourse ? '/t/courses/$courseId/chat?name=${_enc(plainName)}' : '/t/groups/$classLevel/$subjectId/chat?name=${_enc(plainName)}';
 
   static int _int(Object? v) => v is num ? v.toInt() : int.tryParse('$v') ?? 0;
 }
 
-/// Asks how the test is made (from a paper, or described to AI) and opens that. Returns true when something was opened and the
-/// tutor has come back from it, so the screen can load again.
+/// What the Make tests screen opens with: the class when it is known (from a class's own page), or the classes to choose from.
+class MakeTests {
+  const MakeTests({this.target, this.targets = const []});
+  final TestTarget? target;
+  final List<TestTarget> targets;
+}
+
+/// Opens Make tests for one class. Returns true when the tutor has come back from it, so the screen can load again.
 Future<bool> makeTestFor(BuildContext context, TestTarget target) async {
-  final choice = await showCentredCard<String>(
-    context,
-    title: 'Make a test',
-    subtitle: 'For ${target.name}',
-    builder: (ctx) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      RowTile(
-        leading: Icon(Ph.fileArrowUp, size: 22, color: ink),
-        title: 'Upload a PDF or photos',
-        meta: 'AI reads the questions',
-        chevron: true,
-        onTap: () => Navigator.of(ctx).pop('upload'),
-      ),
-      const SizedBox(height: 10),
-      RowTile(
-        leading: Icon(Ph.scan, size: 22, color: aiAccentInk),
-        title: 'Describe it to AI',
-        meta: 'AI writes the questions',
-        chevron: true,
-        onTap: () => Navigator.of(ctx).pop('chat'),
-      ),
-    ]),
-  );
-  if (choice == null || !context.mounted) return false;
-  await context.push(choice == 'upload' ? target.uploadPath : target.chatPath);
+  await context.push('/t/make', extra: MakeTests(target: target));
   return true;
 }
 
-/// Home's "Make a test": first which class it is for (nothing to ask when there is only one), then how it is made.
+/// Home's "Make tests": the tutor chooses the class first (nothing to ask when there is only one).
 Future<bool> makeTest(BuildContext context, List<TestTarget> targets) async {
   if (targets.isEmpty) return false;
-  var target = targets.first;
-  if (targets.length > 1) {
-    final picked = await showCentredCard<TestTarget>(
-      context,
-      title: 'Make a test',
-      subtitle: 'Which class is it for?',
-      builder: (ctx) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        for (final (i, t) in targets.indexed) ...[
-          if (i > 0) const SizedBox(height: 10),
-          RowTile(
-            leading: Icon(t.isCourse ? Ph.graduationCap : Ph.users, size: 22, color: ink),
-            title: t.name,
-            meta: t.sizeLabel,
-            chevron: true,
-            onTap: () => Navigator.of(ctx).pop(t),
-          ),
-        ],
-      ]),
-    );
-    if (picked == null || !context.mounted) return false;
-    target = picked;
-  }
-  return makeTestFor(context, target);
+  await context.push('/t/make', extra: MakeTests(targets: targets));
+  return true;
 }

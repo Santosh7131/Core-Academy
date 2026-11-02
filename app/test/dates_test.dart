@@ -7,9 +7,12 @@ import 'package:core_academy/theme.dart';
 import 'package:core_academy/ui/kit.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:intl/intl.dart';
+import 'package:intl/intl.dart' show DateFormat;
 
-String _short(DateTime t) => DateFormat('EEE d MMM').format(t);
+/// The space inside a time or a date that does not let a line break (see core/format.dart).
+const _nb = '\u00A0';
+
+String _short(DateTime t) => DateFormat('EEE d MMM').format(t).replaceAll(' ', _nb);
 
 /// [days] from today at [hour]:[minute].
 DateTime _at(int days, {int hour = 18, int minute = 0}) {
@@ -45,28 +48,68 @@ void main() {
       expect(f.dayDate(today), 'today, ${_short(today)}');
       expect(f.dayDate(tomorrow), 'tomorrow, ${_short(tomorrow)}');
       expect(f.dayDate(yesterday), 'yesterday, ${_short(yesterday)}');
-      expect(f.whenDate(tomorrow), 'tomorrow, ${_short(tomorrow)}, 6:00 pm');
+      expect(f.whenDate(tomorrow), 'tomorrow, ${_short(tomorrow)}, 6:00${_nb}pm');
       expect(f.dayTitle(today), 'Today · ${_short(today)}');
-      expect(f.whenTitle(tomorrow), 'Tomorrow · ${_short(tomorrow)}, 6:00 pm');
+      expect(f.whenTitle(tomorrow), 'Tomorrow · ${_short(tomorrow)}, 6:00${_nb}pm');
     });
 
     test('any other day is the day name, the date and the month', () {
       final later = _at(5, hour: 9, minute: 30);
       expect(f.dayDate(later), _short(later));
-      expect(f.whenDate(later), '${_short(later)}, 9:30 am');
+      expect(f.whenDate(later), '${_short(later)}, 9:30${_nb}am');
       expect(f.dayTitle(later), _short(later));
-      expect(f.whenTitle(later), '${_short(later)}, 9:30 am');
+      expect(f.whenTitle(later), '${_short(later)}, 9:30${_nb}am');
     });
 
     test('every day, near or far, ends with its day name, date and month', () {
       for (var d = -3; d <= 20; d++) {
-        expect(f.dayDate(_at(d)), matches(RegExp(r'[A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2}$')), reason: 'day $d');
+        expect(f.dayDate(_at(d)), matches(RegExp('[A-Z][a-z]{2}$_nb\\d{1,2}$_nb[A-Z][a-z]{2}\$')), reason: 'day $d');
       }
     });
 
     test('the older, shorter wording stays for a time somebody handed something in', () {
-      expect(f.when(_at(0, hour: 15, minute: 11)), 'today 3:11 pm');
+      expect(f.when(_at(0, hour: 15, minute: 11)), 'today 3:11${_nb}pm');
+      expect(f.when(_at(3, hour: 9, minute: 5)), '${_short(_at(3))}, 9:05${_nb}am', reason: 'a far day is followed by a comma');
       expect(f.day(_at(1)), 'tomorrow');
+    });
+  });
+
+  group('a line that has to wrap', () {
+    test('no time and no date has a space inside it that lets a line break', () {
+      for (var d = -3; d <= 20; d++) {
+        for (final hour in [0, 9, 12, 15, 23]) {
+          final at = _at(d, hour: hour, minute: 7);
+          expect(f.time(at), isNot(contains(' ')), reason: 'the time on day $d at $hour');
+          expect(f.shortDate(at), isNot(contains(' ')), reason: 'the date on day $d');
+        }
+      }
+    });
+
+    // A phone shows one line of "10th Maths · closes Sat 31 Oct, 9:58 am" at a width that suits it, and the same line at another width on
+    // another phone, so every width is tried. A line may split between the day and the time, never inside either.
+    testWidgets('it splits between the date and the time, never inside either, at any width', (t) async {
+      final when = _at(5, hour: 9, minute: 58);
+      final pieces = [f.shortDate(when), f.time(when)];
+      final text = '10th Maths · closes ${f.whenDate(when)}';
+      const style = TextStyle(fontSize: 14);
+      TextPainter paint(String s, [double? width]) => TextPainter(text: TextSpan(text: s, style: style), textDirection: TextDirection.ltr)..layout(maxWidth: width ?? double.infinity);
+      // Narrower than the longest piece, a piece has to break anywhere: no phone is that narrow.
+      final narrowest = pieces.map((p) => paint(p).width).reduce((a, b) => a > b ? a : b);
+      var tried = 0, split = 0;
+      for (var w = narrowest + 1; w <= 760; w += 3) {
+        final p = paint(text, w);
+        tried++;
+        if (p.computeLineMetrics().length > 1) split++;
+        for (final piece in pieces) {
+          final at = text.indexOf(piece);
+          expect(at, greaterThanOrEqualTo(0));
+          final first = p.getLineBoundary(TextPosition(offset: at));
+          final last = p.getLineBoundary(TextPosition(offset: at + piece.length - 1));
+          expect(first, last, reason: '"$piece" is split across two lines at a width of $w');
+        }
+        p.dispose();
+      }
+      expect(split, greaterThan(tried ~/ 2), reason: 'most of the widths tried really did make the line wrap');
     });
   });
 
@@ -75,7 +118,7 @@ void main() {
       final tomorrow = _at(1);
       await _show(t, tomorrow);
       expect(find.text('Tomorrow\n${_short(tomorrow)}'), findsOneWidget);
-      expect(find.text('6:00 pm'), findsOneWidget);
+      expect(find.text('6:00${_nb}pm'), findsOneWidget);
     });
 
     testWidgets('a later day is one line with its day name, date and month', (t) async {

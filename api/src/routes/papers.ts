@@ -4,7 +4,7 @@ import { ownCourse } from '../lib/courses.ts';
 import { pool, q, q1, tq, tq1, tx, type Db } from '../lib/db.ts';
 import { isGemini } from '../lib/gemini.ts';
 import { CHECK_MODELS, chat, parseJson, SOLVE_MODELS, TIEBREAK_MODELS, VISION_MODELS, WRITE_MODELS, type ChatMessage } from '../lib/groq.ts';
-import { bad, hasNul, HttpError, int, MAX_OPTION_CHARS, notFound, str, uuid, uuidOpt } from '../lib/http.ts';
+import { bad, bool, date, hasNul, HttpError, int, MAX_OPTION_CHARS, notFound, str, uuid, uuidOpt } from '../lib/http.ts';
 import { customLevels, isClassNumber, levelIn, levelLabel, studyOf } from '../lib/levels.ts';
 import { wrapBareMath } from '../lib/latex-json.ts';
 import { verdict, type Pick, type Votes } from '../lib/votes.ts';
@@ -74,15 +74,40 @@ paperRoutes.get('/papers', async (c) => {
   return c.json({ papers: rows, categories: await tq(T, CATEGORIES) });
 });
 
+/** The test planned for a paper made as one of several: when it opens and closes, how long it takes, whether its questions are shuffled. */
+type Plan = { opens_at: string | null; closes_at: string; time_limit_min: number | null; shuffle: boolean };
+
+/**
+ * Reads a paper's plan from a request; null clears it. Every test closes, so a plan has a closing time, after the opening one. No
+ * time limit means a minute and a half a question, worked out when the test is posted.
+ */
+function readPlan(v: unknown): Plan | null {
+  if (v === null) return null;
+  if (typeof v !== 'object' || Array.isArray(v)) throw bad('The plan must be an object.');
+  const b = v as Record<string, any>;
+  const opens = date(b, 'opens_at');
+  const closes = date(b, 'closes_at');
+  if (!closes) throw bad('A planned test needs a closing time.');
+  if (opens && opens >= closes) throw bad('The test must close after it opens.');
+  return {
+    opens_at: opens ? opens.toISOString() : null,
+    closes_at: closes.toISOString(),
+    time_limit_min: int(b, 'time_limit_min', { min: 1, max: 300, optional: true }) ?? null,
+    shuffle: bool(b, 'shuffle', true),
+  };
+}
+
 /**
  * Creates the paper and hands back one direct-upload URL per page. The details are optional: AI
  * finds them afterwards. (The app before 1.3 sends the class, subject and name up front.) A paper made for a
- * course (course_id) has no class or subject: it belongs to the course.
+ * course (course_id) has no class or subject: it belongs to the course. A paper made as one of several carries
+ * the test planned for it (`plan`).
  */
 paperRoutes.post('/papers', async (c) => {
   const T = tuitionOf(c).id;
   const b = await readBody(c);
   const pages = int(b, 'pages', { min: 1, max: MAX_PAGES })!;
+  const plan = 'plan' in b ? readPlan(b.plan) : null;
   const courseId = uuidOpt(b.course_id, 'course');
   if (courseId) await ownCourse(T, courseId);
   const classLevel = courseId ? null : ((await levelIn(b, 'class_level', T, { optional: true })) ?? null);
@@ -100,10 +125,10 @@ paperRoutes.post('/papers', async (c) => {
   }
   const paper = await tx(async (cx) => {
     const p = await q1(
-      `insert into papers (tuition_id, class_level, exam_name, category, page_count, uploaded_by, subject_id, name_auto, course_id)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning id, class_level, exam_name, category, page_count, subject_id, course_id`,
+      `insert into papers (tuition_id, class_level, exam_name, category, page_count, uploaded_by, subject_id, name_auto, course_id, plan)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb) returning id, class_level, exam_name, category, page_count, subject_id, course_id, plan`,
       [T, classLevel, named ?? autoName(), str(b, 'category', { max: 60, optional: true }) ?? null,
-        pages, c.get('user').id, subjectId, named === undefined, courseId],
+        pages, c.get('user').id, subjectId, named === undefined, courseId, plan ? JSON.stringify(plan) : null],
       cx,
     );
     for (let n = 1; n <= pages; n++) {
@@ -393,11 +418,14 @@ paperRoutes.patch('/papers/:id', async (c) => {
   if (moved && cur.saved > 0) {
     throw new HttpError(409, 'has_questions', 'Questions from this paper are already saved, so its class and subject stay as they are.');
   }
+  // The planned test: sent as an object to set it, as null to clear it, left out to keep it.
+  const plan = 'plan' in b ? readPlan(b.plan) : (cur.plan as Plan | null);
   const p = await tx(async (cx) => {
     const row = await q1(
       `update papers set exam_name = $2, category = $3, class_level = $4, subject_id = $5,
                          chapter_id = case when $7 then null else $6::uuid end,
-                         name_auto = case when $8 then false else name_auto end
+                         name_auto = case when $8 then false else name_auto end,
+                         plan = $9::jsonb
         where id = $1 returning id`,
       [
         id,
@@ -408,6 +436,7 @@ paperRoutes.patch('/papers/:id', async (c) => {
         'chapter_id' in b ? await ownChapter(T, uuidOpt(b.chapter_id, 'chapter'), cx) : cur.chapter_id,
         moved,
         'exam_name' in b,
+        plan ? JSON.stringify(plan) : null,
       ],
       cx,
     );

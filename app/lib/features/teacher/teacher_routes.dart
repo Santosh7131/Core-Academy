@@ -9,6 +9,8 @@ import 'course_screens.dart';
 import 'group_screens.dart';
 import 'home_screen.dart';
 import 'join_requests_screen.dart';
+import 'make_test.dart' show MakeTests;
+import 'make_tests_screen.dart';
 import 'papers_screens.dart';
 import 'questions_screens.dart';
 import 'settings_screen.dart';
@@ -41,6 +43,11 @@ final teacherRoutes = <RouteBase>[
   GoRoute(path: '/t/groups', redirect: (_, _) => '/t/classes'),
   GoRoute(path: '/t/courses', redirect: (_, _) => '/t/classes'),
   _page('/t/papers', (_) => const PapersToFinishScreen()),
+  // Making tests: several papers at once, each its own test. Opened with the class (from its page) or the classes to choose from.
+  _page('/t/make', (s) {
+    final m = s.extra as MakeTests?;
+    return MakeTestsScreen(target: m?.target, targets: m?.targets ?? const []);
+  }),
   _page('/t/courses/:id', (s) => CourseScreen(id: s.pathParameters['id']!, name: s.uri.queryParameters['name'] ?? 'Course')),
   _page(
     '/t/courses/:id/add',
