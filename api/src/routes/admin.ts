@@ -4,6 +4,7 @@ import type { AppEnv } from '../lib/auth.ts';
 import { pool, q, q1 } from '../lib/db.ts';
 import { aiConfigured } from '../lib/groq.ts';
 import { HttpError, notFound, uuid } from '../lib/http.ts';
+import { libraryUsage, quotaBytes } from '../lib/library.ts';
 import { costInr, isEstimated, rupees, USD_INR } from '../lib/pricing.ts';
 import { pushConfigured } from '../lib/push.ts';
 import { listObjects, readObject, viewUrl } from '../lib/storage.ts';
@@ -411,6 +412,7 @@ adminRoutes.get('/clients', async (c) => {
   const reqOf = new Map(reqs.map((r) => [r.tuition_id as string, r]));
   const monthOf = byId(month);
   const everOf = byId(ever);
+  const shelves = await libraryUsage();
   const clients = base.map((t) => {
     const r = reqOf.get(t.id);
     const m = monthOf.get(t.id) ?? [];
@@ -418,6 +420,8 @@ adminRoutes.get('/clients', async (c) => {
       id: t.id, name: t.name, created_at: t.created_at, owner: t.owner, owner_username: t.owner_username,
       students: num(t.students), tutors: num(t.tutors), pending: num(t.pending), groups: num(t.groups), tests: num(t.tests), papers: num(t.papers),
       last_active_at: t.last_active_at,
+      // The Library: what the tuition keeps on its shelves, against what it is allowed (the same numbers its tutors are held to).
+      library: { files: shelves.get(t.id)?.files ?? 0, bytes: shelves.get(t.id)?.bytes ?? 0, quota_bytes: quotaBytes() },
       requests: { today: num(r?.today), week: num(r?.week), month: num(r?.month), total: num(r?.total) },
       ai: {
         calls_month: m.reduce((a, x) => a + num(x.calls), 0),
@@ -443,10 +447,29 @@ adminRoutes.get('/clients', async (c) => {
       ai_calls_month: sum((x) => x.ai.calls_month),
       ai_cost_month_inr: rupees(costOf(month)),
       ai_cost_unattributed_month_inr: rupees(costOf(unattributed)),
+      library_bytes: sum((x) => x.library.bytes),
     },
     clients,
   });
 });
+
+/**
+ * What a tuition keeps in storage: its Library shelves (counted from the database, which holds every file's size), the pictures on its
+ * questions (`questions/<tuition>/`) and the pages of its uploaded papers (`papers/<paper>/`, matched to the tuition through its papers).
+ */
+async function storageOf(tuition: string) {
+  const lib = (await libraryUsage()).get(tuition) ?? { files: 0, pdfs: 0, photos: 0, uploading: 0, bytes: 0, pdf_bytes: 0, photo_bytes: 0 };
+  const pictures = await listObjects(`questions/${tuition}/`);
+  const papers = new Set((await q<{ id: string }>('select id from papers where tuition_id = $1', [tuition])).map((p) => p.id));
+  const pages = papers.size ? (await listObjects('papers/')).filter((o) => papers.has(o.key.split('/')[1] ?? '')) : [];
+  const sum = (xs: { size: number }[]) => xs.reduce((a, o) => a + o.size, 0);
+  return {
+    library: { ...lib, quota_bytes: quotaBytes() },
+    pictures: { files: pictures.length, bytes: sum(pictures) },
+    pages: { files: pages.length, bytes: sum(pages) },
+    total_bytes: lib.bytes + sum(pictures) + sum(pages),
+  };
+}
 
 adminRoutes.get('/clients/:id', async (c) => {
   const id = uuid(c.req.param('id'), 'client id');
@@ -513,6 +536,7 @@ adminRoutes.get('/clients/:id', async (c) => {
       students: num(t.students), tutors: num(t.tutors), pending: num(t.pending), groups: num(t.groups), tests: num(t.tests), papers: num(t.papers),
       last_active_at: t.last_active_at,
     },
+    storage: await storageOf(id),
     requests: { days: requests, total: num(totals?.total), month: num(totals?.month), errors: num(totals?.errors), counting_since: totals?.since ?? null },
     ai: {
       cost_month_inr: rupees(costOf(month)),

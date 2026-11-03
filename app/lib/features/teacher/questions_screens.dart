@@ -8,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import '../../core/api.dart';
 import '../../theme.dart';
 import '../../ui/kit.dart';
+import '../../ui/difficulty.dart';
 import '../../ui/plain_math.dart';
 import '../../ui/tokens.dart';
 import 'common.dart';
@@ -106,6 +107,11 @@ class _QuestionEditorState extends State<QuestionEditor> {
   List<PlainBaseline> _bOptions = List.generate(4, (_) => PlainBaseline());
   PlainBaseline _bSolution = PlainBaseline();
   num _marks = 1;
+
+  /// How hard the question is: Medium for a new one. Whether AI chose it and she has not looked at it, and whether she picked one here.
+  Difficulty _difficulty = Difficulty.medium;
+  bool _aiChose = false;
+  bool _difficultyPicked = false;
   String? _imageKey;
   String? _imageUrl;
   Uint8List? _imageBytes;
@@ -175,6 +181,8 @@ class _QuestionEditorState extends State<QuestionEditor> {
       _chapterId = q['chapter_id'] as String?;
       _correct = q['correct_option'] as int;
       _marks = q['marks'] as num;
+      _difficulty = difficultyOf(q['difficulty']);
+      _aiChose = aiChose(q);
       _imageKey = q['image_key'] as String?;
       _imageUrl = q['image_url'] as String?;
       _usedIn = q['used_in'] as int;
@@ -269,6 +277,8 @@ class _QuestionEditorState extends State<QuestionEditor> {
       'solution': solution.isEmpty ? null : solution,
       'marks': _marks,
       'image_key': _imageKey,
+      // Only when she picked one: a new question is Medium, and AI's own level stays AI's, until she says otherwise.
+      if (_difficultyPicked) 'difficulty': _difficulty.name,
     };
     try {
       if (widget.id == null) {
@@ -446,6 +456,16 @@ class _QuestionEditorState extends State<QuestionEditor> {
         ChipRow(padding: EdgeInsets.zero, children: [
           for (final m in [1, 2, 3, 4, 5]) SegChip('$m', selected: _marks == m, onTap: () => setState(() => _marks = m)),
         ]),
+        const FormLabel('How hard is it?'),
+        DifficultyField(
+          difficulty: _difficulty,
+          aiChose: _aiChose,
+          onPicked: (l) => setState(() {
+            _difficulty = l;
+            _difficultyPicked = true;
+            _aiChose = false;
+          }),
+        ),
         if (widget.id != null) ...[
           const SizedBox(height: 30),
           Center(child: TextAction('Delete this question', color: danger, onTap: _delete)),

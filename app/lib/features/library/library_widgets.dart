@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../core/library.dart';
 import '../../theme.dart';
@@ -84,31 +85,135 @@ class SectionCard extends StatelessWidget {
   }
 }
 
-/// A finished file: its picture, name and details, and something at the right (the tutor's "...", the student's download).
+/// [text] with the first stretch that matches [query] (capitals do not matter) in heavy ink: what was typed, shown inside what was found.
+TextSpan highlighted(String text, String query, TextStyle style) {
+  final at = text.toLowerCase().indexOf(query.toLowerCase());
+  // Some letters change length when lowered; then the place found is not the place in the text, so nothing is marked.
+  if (query.isEmpty || at < 0 || text.toLowerCase().length != text.length) return figSpan(text, style);
+  final end = at + query.length;
+  return TextSpan(children: [
+    figSpan(text.substring(0, at), style),
+    figSpan(text.substring(at, end), style.copyWith(fontWeight: FontWeight.w800, color: ink)),
+    figSpan(text.substring(end), style),
+  ]);
+}
+
+/// A finished file: its picture, name and details, and something at the right (the tutor's "...", the student's download). For a file a
+/// search found, [section] says which section it is in and [highlight] marks what was typed in its name.
 class FileRowView extends StatelessWidget {
-  const FileRowView({super.key, required this.file, this.onTap, this.trailing});
+  const FileRowView({super.key, required this.file, this.onTap, this.trailing, this.section, this.highlight});
   final LibFile file;
   final VoidCallback? onTap;
   final Widget? trailing;
+  final String? section;
+  final String? highlight;
 
   @override
-  Widget build(BuildContext context) => Pressable(
-        onTap: onTap,
-        child: Padding(
-          padding: EdgeInsets.fromLTRB(14, 11, trailing == null ? 14 : 8, 11),
-          child: Row(children: [
-            FileTile(photo: !file.isPdf),
-            const SizedBox(width: 13),
-            Expanded(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Fig(file.name, style: rowTitleStyle, maxLines: 2),
-                const SizedBox(height: 2),
-                Fig(file.meta, style: labelStyle, maxLines: 2),
-              ]),
+  Widget build(BuildContext context) {
+    final marked = highlight != null && highlight!.isNotEmpty;
+    return Pressable(
+      onTap: onTap,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(14, 11, trailing == null ? 14 : 8, 11),
+        child: Row(children: [
+          FileTile(photo: !file.isPdf),
+          const SizedBox(width: 13),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              if (marked) Text.rich(highlighted(file.name, highlight!, rowTitleStyle), maxLines: 2, overflow: TextOverflow.ellipsis) else Fig(file.name, style: rowTitleStyle, maxLines: 2),
+              const SizedBox(height: 2),
+              if (section == null)
+                Fig(file.meta, style: labelStyle, maxLines: 2)
+              else
+                Text.rich(
+                  TextSpan(children: [
+                    figSpan('in ', labelStyle),
+                    figSpan(section!, labelStyle.copyWith(color: ink, fontWeight: FontWeight.w700)),
+                    figSpan(' · ${file.isPdf ? 'PDF' : 'Photo'} · ${sizeLabel(file.size)}', labelStyle),
+                  ]),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+            ]),
+          ),
+          if (trailing != null) ...[const SizedBox(width: 6), trailing!],
+        ]),
+      ),
+    );
+  }
+}
+
+/// A search field: a magnifier, the words typed, and once there are some, a button that clears them.
+class SearchBox extends StatelessWidget {
+  const SearchBox({super.key, required this.controller, required this.placeholder, required this.onChanged});
+  final TextEditingController controller;
+  final String placeholder;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        decoration: surface(radius: rCard, shadow: e1),
+        padding: const EdgeInsets.fromLTRB(16, 0, 6, 0),
+        child: Row(children: [
+          Icon(Ph.magnifyingGlass, size: 19, color: muted),
+          const SizedBox(width: 10),
+          Expanded(
+            child: TextField(
+              controller: controller,
+              onChanged: onChanged,
+              textInputAction: TextInputAction.search,
+              inputFormatters: [LengthLimitingTextInputFormatter(60)],
+              autocorrect: false,
+              enableSuggestions: false,
+              cursorColor: ink,
+              style: rowTitleStyle.copyWith(fontWeight: FontWeight.w500, fontSize: 15),
+              decoration: InputDecoration(
+                isDense: true,
+                border: InputBorder.none,
+                hintText: placeholder,
+                hintStyle: rowTitleStyle.copyWith(color: faint, fontWeight: FontWeight.w500, fontSize: 15),
+                contentPadding: const EdgeInsets.symmetric(vertical: 16),
+              ),
             ),
-            if (trailing != null) ...[const SizedBox(width: 6), trailing!],
-          ]),
-        ),
+          ),
+          ListenableBuilder(
+            listenable: controller,
+            builder: (context, _) => controller.text.isEmpty
+                ? const SizedBox(width: 10)
+                : Pressable(
+                    label: 'Clear the search',
+                    onTap: () {
+                      controller.clear();
+                      onChanged('');
+                    },
+                    child: SizedBox(
+                      width: 44,
+                      height: 44,
+                      child: Center(
+                        child: Container(
+                          width: 28,
+                          height: 28,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(color: fill, shape: BoxShape.circle),
+                          child: Icon(Ph.x, size: 14, color: muted),
+                        ),
+                      ),
+                    ),
+                  ),
+          ),
+        ]),
+      );
+}
+
+/// What the Library says when a search finds nothing.
+class NothingFound extends StatelessWidget {
+  const NothingFound(this.query, {super.key});
+  final String query;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.fromLTRB(24, 34, 24, 0),
+        child: Fig('No file has "${query.trim()}" in its name.', style: bodyStyle.copyWith(color: muted), textAlign: TextAlign.center),
       );
 }
 

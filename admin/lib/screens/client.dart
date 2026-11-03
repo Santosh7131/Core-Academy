@@ -31,6 +31,74 @@ String _model(String m) => switch (m) {
       _ => m,
     };
 
+/// What a client keeps in storage: the Library against its limit, with PDFs and photos told apart (the bar turns amber from four fifths
+/// of the limit), then the question pictures, the pages of uploaded papers, and everything together.
+class _Storage extends StatelessWidget {
+  const _Storage(this.s);
+  final Map<String, dynamic> s;
+
+  /// "38 · 390 MB", "38" when the server did not send the bytes, "0" for none.
+  String _kind(Object? files, Object? bytes) {
+    final n = f.asInt(files);
+    if (n == 0) return '0';
+    return bytes == null ? f.count(n) : '${f.count(n)} · ${f.size(f.asInt(bytes))}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final lib = Map<String, dynamic>.from(s['library'] as Map);
+    final pictures = Map<String, dynamic>.from(s['pictures'] as Map);
+    final pages = Map<String, dynamic>.from(s['pages'] as Map);
+    final used = f.asInt(lib['bytes']);
+    final limit = f.asInt(lib['quota_bytes']);
+    final full = nearlyFull(used, limit);
+    final (figure, unit) = f.sizeParts(used);
+    final uploading = f.asInt(lib['uploading']);
+    final parts = [
+      ('PDFs', _kind(lib['pdfs'], lib['pdf_bytes'])),
+      ('Photos', _kind(lib['photos'], lib['photo_bytes'])),
+      if (uploading > 0) ('Still uploading', f.count(uploading)),
+    ];
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Surface(
+        shadow: e1,
+        padding: const EdgeInsets.fromLTRB(17, 15, 17, 15),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Row(children: [
+            Expanded(child: Text('Library', style: labelStyle)),
+            if (limit > 0) Fig('${f.size(limit)} for each client', style: labelStyle),
+          ]),
+          const SizedBox(height: 7),
+          Row(crossAxisAlignment: CrossAxisAlignment.baseline, textBaseline: TextBaseline.alphabetic, children: [
+            Text(figure, style: numStyle(size: 26)),
+            const SizedBox(width: 4),
+            Text(unit, style: numStyle(size: 13, weight: FontWeight.w600, color: muted)),
+          ]),
+          if (limit > 0) ...[const SizedBox(height: 12), Track(used / limit, color: full ? warning : null)],
+          const SizedBox(height: 12),
+          for (final (i, (label, value)) in parts.indexed) ...[
+            if (i > 0) Container(height: 1, color: hairline),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 9),
+              child: Row(children: [
+                Text(label, style: bodyStyle.copyWith(color: muted, fontSize: 13)),
+                const SizedBox(width: 16),
+                Expanded(child: Fig(value, style: rowTitleStyle.copyWith(fontSize: 13.5), textAlign: TextAlign.right)),
+              ]),
+            ),
+          ],
+        ]),
+      ),
+      const SizedBox(height: 10),
+      FactList([
+        ('Question pictures', _kind(pictures['files'], pictures['bytes'])),
+        ('Paper pages', _kind(pages['files'], pages['bytes'])),
+        ('Everything together', f.size(f.asInt(s['total_bytes']))),
+      ]),
+    ]);
+  }
+}
+
 /// One client as a pushed panel like the account page: its size, API requests, AI cost, tutors and
 /// classes. Students are only numbers here; their names stay in the tutor's own app.
 class ClientScreen extends StatefulWidget {
@@ -144,6 +212,11 @@ class _ClientScreenState extends State<ClientScreen> with WidgetsBindingObserver
           note: '${f.plural(f.asInt(c['groups']), 'group')}, ${f.plural(f.asInt(c['papers']), 'paper')} uploaded',
           small: [StatSmall('Tutors', '${c['tutors']}'), StatSmall('Tests', '${c['tests']}')],
         ),
+        // A server from before storage was counted sends none: then there is nothing to show.
+        if (d['storage'] is Map) ...[
+          SectionRule('Storage', padding: _rule),
+          _Storage(Map<String, dynamic>.from(d['storage'] as Map)),
+        ],
         SectionRule('API requests', padding: _rule),
         Surface(
           shadow: e1,

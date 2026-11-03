@@ -68,19 +68,33 @@ Map<String, Object?> _overview() => {
       ],
     };
 
-Map<String, Object?> _client({required String id, required String name, required String owner, required int students, required int tutors, int pending = 0, required int groups, required int tests, required int papers, required Duration seen, required int today, required int month, required int total, required int calls, required int failed, required double cost, required double all, int daysOld = 40}) => {
+const _mb = 1024 * 1024;
+const _gb = 1024 * _mb;
+
+/// What a tuition keeps on its Library shelves, against the 2 GB each client is allowed. Sizes in MB.
+Map<String, Object?> _library({int pdfs = 0, int pdfMb = 0, int photos = 0, int photoMb = 0, int uploading = 0}) => {
+      'files': pdfs + photos, 'pdfs': pdfs, 'photos': photos, 'uploading': uploading,
+      'pdf_bytes': pdfMb * _mb, 'photo_bytes': photoMb * _mb, 'bytes': (pdfMb + photoMb) * _mb, 'quota_bytes': 2 * _gb,
+    };
+
+Map<String, Object?> _client({required String id, required String name, required String owner, required int students, required int tutors, int pending = 0, required int groups, required int tests, required int papers, required Duration seen, required int today, required int month, required int total, required int calls, required int failed, required double cost, required double all, int daysOld = 40, required Map<String, Object?> library}) => {
       'id': id, 'name': name, 'created_at': _iso(Duration(days: -daysOld)), 'owner': owner, 'owner_username': owner.split(' ').first.toLowerCase(),
       'students': students, 'tutors': tutors, 'pending': pending, 'groups': groups, 'tests': tests, 'papers': papers,
       'last_active_at': _iso(seen),
+      'library': library,
       'requests': {'today': today, 'week': (month * 0.3).round(), 'month': month, 'total': total},
       'ai': {'calls_month': calls, 'failed_month': failed, 'cost_month_inr': cost, 'cost_total_inr': all},
     };
 
 Map<String, Object?> _clients() {
   final rows = [
-    _client(id: 'c-1', name: 'Priya Maths Classes', owner: 'Priya Raman', students: 18, tutors: 2, pending: 2, groups: 4, tests: 9, papers: 12, seen: const Duration(minutes: -12), today: 214, month: 3980, total: 4210, calls: 142, failed: 3, cost: 18.42, all: 22.1, daysOld: 41),
-    _client(id: 'c-2', name: 'Arun Science Academy', owner: 'Arun Kumar', students: 11, tutors: 1, groups: 2, tests: 5, papers: 6, seen: const Duration(hours: -5), today: 96, month: 1710, total: 1730, calls: 61, failed: 0, cost: 9.8, all: 9.8, daysOld: 20),
-    _client(id: 'c-3', name: 'Meera English Hub', owner: 'Meera Nair', students: 4, tutors: 1, groups: 1, tests: 1, papers: 2, seen: const Duration(days: -2), today: 0, month: 240, total: 240, calls: 20, failed: 1, cost: 10.43, all: 10.43, daysOld: 3),
+    _client(id: 'c-1', name: 'Priya Maths Classes', owner: 'Priya Raman', students: 18, tutors: 2, pending: 2, groups: 4, tests: 9, papers: 12, seen: const Duration(minutes: -12), today: 214, month: 3980, total: 4210, calls: 142, failed: 3, cost: 18.42, all: 22.1, daysOld: 41,
+        library: _library(pdfs: 38, pdfMb: 390, photos: 12, photoMb: 22, uploading: 1)),
+    // Four fifths of the limit and more: the Library line turns amber.
+    _client(id: 'c-2', name: 'Arun Science Academy', owner: 'Arun Kumar', students: 11, tutors: 1, groups: 2, tests: 5, papers: 6, seen: const Duration(hours: -5), today: 96, month: 1710, total: 1730, calls: 61, failed: 0, cost: 9.8, all: 9.8, daysOld: 20,
+        library: _library(pdfs: 120, pdfMb: 1700, photos: 40, photoMb: 40)),
+    _client(id: 'c-3', name: 'Meera English Hub', owner: 'Meera Nair', students: 4, tutors: 1, groups: 1, tests: 1, papers: 2, seen: const Duration(days: -2), today: 0, month: 240, total: 240, calls: 20, failed: 1, cost: 10.43, all: 10.43, daysOld: 3,
+        library: _library()),
   ];
   return {
     'server_time': _iso(Duration.zero),
@@ -88,7 +102,7 @@ Map<String, Object?> _clients() {
     'usd_inr': 96,
     'totals': {
       'clients': 3, 'active_week': 3, 'students': 33, 'tutors': 4, 'requests_today': 310, 'requests_month': 5930,
-      'ai_calls_month': 223, 'ai_cost_month_inr': 38.65, 'ai_cost_unattributed_month_inr': 0.0,
+      'ai_calls_month': 223, 'ai_cost_month_inr': 38.65, 'ai_cost_unattributed_month_inr': 0.0, 'library_bytes': (412 + 1740) * _mb,
     },
     'clients': rows,
   };
@@ -96,6 +110,12 @@ Map<String, Object?> _clients() {
 
 Map<String, Object?> _clientDetail() => {
       'client': (_clients()['clients'] as List).first,
+      'storage': {
+        'library': _library(pdfs: 38, pdfMb: 390, photos: 12, photoMb: 22, uploading: 1),
+        'pictures': {'files': 14, 'bytes': 6 * _mb},
+        'pages': {'files': 96, 'bytes': 210 * _mb},
+        'total_bytes': (412 + 6 + 210) * _mb,
+      },
       'requests': {
         'days': [
           for (var i = 13; i >= 0; i--) {'day': _day(i), 'requests': i == 13 ? 0 : 160 + (i * 37) % 230, 'errors': 0, 'avg_ms': 180},

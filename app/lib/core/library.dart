@@ -81,6 +81,25 @@ class LibSection {
   final List<LibFile> files;
 }
 
+/// A file a search found, with the section it is in.
+class FoundFile {
+  const FoundFile(this.section, this.file);
+  final LibSection section;
+  final LibFile file;
+}
+
+/// The files with [query] in their name (capitals do not matter, and the extension is not looked at, so "pdf" finds nothing by itself),
+/// in the order of the shelf: sections first to last, and the files of each first to last.
+List<FoundFile> findFiles(List<LibSection> sections, String query) {
+  final q = query.trim().toLowerCase();
+  if (q.isEmpty) return const [];
+  return [
+    for (final s in sections)
+      for (final x in s.files)
+        if (x.title.toLowerCase().contains(q)) FoundFile(s, x),
+  ];
+}
+
 /// "412 KB", "3.8 MB", "62 MB".
 String sizeLabel(int bytes) {
   if (bytes < 1024 * 1024) return '${(bytes / 1024).ceil().clamp(1, 1023)} KB';
@@ -310,6 +329,11 @@ class LibraryUploads extends ChangeNotifier {
   bool _running = false;
   DateTime _lastTick = DateTime.fromMillisecondsSinceEpoch(0);
 
+  /// Files that went up and that the students have not been told about yet. They are told in one go, when the queue is empty, so a batch of
+  /// files is one notification and not one for each.
+  final _toTell = <String>[];
+  bool _telling = false;
+
   List<UploadJob> forShelf(String shelf) => [for (final j in jobs) if (j.shelf == shelf) j];
 
   bool get busy => jobs.any((j) => j.state != UploadState.stopped);
@@ -355,6 +379,7 @@ class LibraryUploads extends ChangeNotifier {
       j._client?.close(force: true);
     }
     jobs.clear();
+    _toTell.clear();
     notifyListeners();
   }
 
@@ -376,6 +401,29 @@ class LibraryUploads extends ChangeNotifier {
       }
     } finally {
       _running = false;
+    }
+    // Nothing more is waiting: the students are told about what went up.
+    await _tellStudents();
+  }
+
+  /// Tells the students about the files that finished, in one notification for each shelf (the server groups them). A file is told once, so
+  /// asking again is safe. With no signal the files stay on the list and go with the next batch; any other refusal drops them, because
+  /// asking again would not change the answer. The students see the files in the Library either way.
+  Future<void> _tellStudents() async {
+    if (_telling) return;
+    _telling = true;
+    try {
+      while (_toTell.isNotEmpty) {
+        final ids = _toTell.take(50).toList();
+        try {
+          await api.post('/teacher/library/announce', {'file_ids': ids});
+        } on ApiException catch (e) {
+          if (e.offline) return;
+        }
+        _toTell.removeWhere(ids.contains);
+      }
+    } finally {
+      _telling = false;
     }
   }
 
@@ -414,6 +462,7 @@ class LibraryUploads extends ChangeNotifier {
       }
       jobs.remove(j);
       doneCount++;
+      _toTell.add(j.fileId!);
       changes.reportAreas({Area.library});
       _tick(force: true);
     } on ApiException catch (e) {

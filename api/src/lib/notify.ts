@@ -1,12 +1,14 @@
 import { ASSIGNED_CTE, assignedCte } from './attempts.ts';
 import { q, q1, tq, tq1, tx } from './db.ts';
 import { pushConfigured, pushToUsers } from './push.ts';
+import { claimReminder, OPENED, STALE, STALE_DAYS, WAITING } from './stale.ts';
 import { putObject, readObject } from './storage.ts';
 
 // What students and the teacher are told, and when:
 //   - a new test, as soon as it opens (straight away when it is published already open);
 //   - a reminder, an hour before a test closes, to students who have not started it;
-//   - the teacher's summary of the day at 8 pm.
+//   - the teacher's summary of the day at 8 pm, and with it a warning about tests that have been open for a week;
+//   - a reminder the tutor asks for ("Remind the students", from Home), and new Library files (routes/library.ts, lib/library.ts).
 //
 // Neon's trigger calls /cron/notify every five minutes, but the database is only woken when one
 // of these is due. The time of the next one is kept in a small object in the bucket, and every
@@ -145,23 +147,71 @@ async function summarise(): Promise<{ tuitions: number; phones: number } | null>
                   and not exists (select 1 from attempts x
                                    where x.test_id = t.id and x.student_id = a.student_id and x.submitted_at is not null)) as missed`,
     );
-    if (!s || (s.written === 0 && s.missed === 0)) continue;
-    const lines = [];
-    if (s.written > 0) {
-      const avg = s.avg === null ? '' : `, average ${Math.round(s.avg * 100)}%`;
-      lines.push(`${count(s.students, 'student')} wrote ${count(s.written, 'test')} today${avg}.`);
-    } else {
-      lines.push('No tests were written today.');
+    if (s && (s.written > 0 || s.missed > 0)) {
+      const lines = [];
+      if (s.written > 0) {
+        const avg = s.avg === null ? '' : `, average ${Math.round(s.avg * 100)}%`;
+        lines.push(`${count(s.students, 'student')} wrote ${count(s.written, 'test')} today${avg}.`);
+      } else {
+        lines.push('No tests were written today.');
+      }
+      if (s.missed > 0) lines.push(`${count(s.missed, 'student')} missed a test that closed today.`);
+      phones += await pushToUsers(await tutorsOf(id), { title: "Today's tests", body: lines.join(' ') });
     }
-    if (s.missed > 0) lines.push(`${count(s.missed, 'student')} missed a test that closed today.`);
-    const tutors = await tq<{ id: string }>(
-      id,
-      `select m.user_id as id from memberships m join users u on u.id = m.user_id
-        where m.tuition_id = @T and m.role in ('owner', 'tutor') and m.status = 'active' and u.active`,
-    );
-    phones += await pushToUsers(tutors.map((t) => t.id), { title: "Today's tests", body: lines.join(' ') });
+    phones += await warnStale(id);
   }
   return { tuitions: due.length, phones };
+}
+
+/** The people who run a tuition: its owner and tutors, who are told what happened. */
+async function tutorsOf(tuition: string): Promise<string[]> {
+  const rows = await tq<{ id: string }>(
+    tuition,
+    `select m.user_id as id from memberships m join users u on u.id = m.user_id
+      where m.tuition_id = @T and m.role in ('owner', 'tutor') and m.status = 'active' and u.active`,
+  );
+  return rows.map((t) => t.id);
+}
+
+/**
+ * Tells a tuition's tutors about tests that have been open for a week (lib/stale.ts), once a day at most, riding the evening run. A test is
+ * told about once, then again only a week later if it is still open and nobody was reminded. The Home screen shows the same tests with
+ * the two buttons; this is the nudge to look.
+ */
+export async function warnStale(tuition: string): Promise<number> {
+  const tests = await tq<{ id: string; title: string; days: number; waiting: number }>(
+    tuition,
+    `with ${assignedCte('@T')},
+          due as (select t.id from tests t
+                   where t.tuition_id = @T and ${STALE} and (t.stale_notified_at is null or t.stale_notified_at <= now() - interval '${STALE_DAYS} days')),
+          claimed as (update tests set stale_notified_at = now() where id in (select id from due) returning id)
+     select t.id, t.title, floor(extract(epoch from now() - ${OPENED}) / 86400)::int as days, ${WAITING} as waiting
+       from tests t where t.id in (select id from claimed) order by ${OPENED}, t.title`,
+  );
+  if (!tests.length) return 0;
+  const body =
+    tests.length === 1
+      ? `${tests[0].title} has been open for ${count(tests[0].days, 'day')}. ${count(tests[0].waiting, 'student')} ${tests[0].waiting === 1 ? 'has' : 'have'} not handed it in. Open Home to close it or remind them.`
+      : `${count(tests.length, 'test')} have been open for a week or more. Open Home to close them or remind the students.`;
+  return pushToUsers(await tutorsOf(tuition), { title: 'Test open for a week', body });
+}
+
+/**
+ * The tutor's "Remind the students" on a test that has been open a while: a notification to each student it was given to who has not
+ * handed it in. Returns how many students that was and how many phones the notice reached.
+ */
+export async function remindStudents(tuition: string, id: string): Promise<{ students: number; phones: number }> {
+  const t = await claimReminder(tuition, id);
+  const people = await q<{ student_id: string }>(
+    `with ${ASSIGNED_CTE}
+     select a.student_id from assigned a
+      where a.test_id = $1
+        and not exists (select 1 from attempts x where x.test_id = a.test_id and x.student_id = a.student_id and x.submitted_at is not null)`,
+    [id],
+  );
+  const closing = t.closes_at ? `It closes ${when(t.closes_at, t.now)}.` : 'It is still open.';
+  const phones = await pushToUsers(people.map((p) => p.student_id), { title: t.title, body: `Your tutor reminds you to write this test. ${closing}` });
+  return { students: people.length, phones };
 }
 
 // ---------------------------------------------------------------- schedule

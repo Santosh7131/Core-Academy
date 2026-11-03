@@ -79,4 +79,8 @@ abstract final class Ph {
   static const scissors = IconData(0xeae0, fontFamily: _family);
   static const calendarBlank = IconData(0xe10a, fontFamily: _family);
   static const folderSimple = IconData(0xe25a, fontFamily: _family);
+  static const hourglassMedium = IconData(0xe2b8, fontFamily: _family);
+  static const bellRinging = IconData(0xe5e8, fontFamily: _family);
+  static const lockSimple = IconData(0xe308, fontFamily: _family);
+  static const chartBarHorizontal = IconData(0xe152, fontFamily: _family);
 }

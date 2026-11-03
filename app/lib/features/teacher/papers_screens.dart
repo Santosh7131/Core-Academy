@@ -11,6 +11,7 @@ import '../../core/pool.dart';
 import '../../core/format.dart' as f;
 import '../../theme.dart';
 import '../../ui/kit.dart';
+import '../../ui/difficulty.dart';
 import '../../ui/math_text.dart';
 import '../../ui/option_mark.dart';
 import '../../ui/plain_math.dart';
@@ -2016,7 +2017,11 @@ class _DraftCard extends StatelessWidget {
           width: double.infinity,
           child: Wrap(alignment: WrapAlignment.spaceBetween, crossAxisAlignment: WrapCrossAlignment.center, spacing: 10, runSpacing: 8, children: [
             Kicker('$label · $_pages'),
-            TagChip(tagText, tone: tagTone),
+            // A question's level, in the AI colour while it is AI's guess, then the state of the question.
+            Wrap(spacing: 8, runSpacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: [
+              if (mcq) DifficultyChip(difficultyOf(d['difficulty']), ai: aiChose(d)),
+              TagChip(tagText, tone: tagTone),
+            ]),
           ]),
         ),
         const SizedBox(height: 11),
@@ -2263,6 +2268,11 @@ class _DraftEditorState extends State<DraftEditor> {
   final _focus = List.generate(5, (_) => FocusNode());
   int _last = 0;
 
+  /// How hard the question is, whether AI chose that and she has not looked at it, and whether she picked a level here.
+  late Difficulty _difficulty = difficultyOf(widget.draft['difficulty']);
+  late bool _aiChose = aiChose(widget.draft);
+  bool _difficultyPicked = false;
+
   @override
   void initState() {
     super.initState();
@@ -2299,6 +2309,8 @@ class _DraftEditorState extends State<DraftEditor> {
         'options': _mcq ? [for (final (i, o) in _options.indexed) _bOptions[i].value(o)] : <String>[],
         // Only when she tapped a circle: otherwise AI is still free to look for the answer.
         if (_correct != (widget.draft['correct_option'] as int?)) 'correct_option': _mcq ? _correct : null,
+        // Only when she picked one: AI's own level stays AI's until then.
+        if (_difficultyPicked) 'difficulty': _difficulty.name,
       });
 
   void _whole(int page) {
@@ -2370,6 +2382,16 @@ class _DraftEditorState extends State<DraftEditor> {
               focusNode: _focus[i + 1],
             ),
           ],
+          const FormLabel('How hard is it?', top: 18),
+          DifficultyField(
+            difficulty: _difficulty,
+            aiChose: _aiChose,
+            onPicked: (l) => setState(() {
+              _difficulty = l;
+              _difficultyPicked = true;
+              _aiChose = false;
+            }),
+          ),
           const SizedBox(height: 10),
           Center(child: TextAction('This is not a multiple choice question', onTap: () => setState(() => _mcq = false))),
         ] else ...[

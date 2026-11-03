@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { requireUser, tuitionOf, type AppEnv } from '../lib/auth.ts';
-import { ASSIGNED, resultPayload, saveAnswers, startOrResume, submitAttempt } from '../lib/attempts.ts';
+import { ASSIGNED, isWriting, resultPayload, saveAnswers, startOrResume, submitAttempt } from '../lib/attempts.ts';
+import { updateRequired } from '../lib/client.ts';
 import { pool, q, q1, tq, tq1 } from '../lib/db.ts';
 import { HttpError, notFound, uuid } from '../lib/http.ts';
 import { LEVELS_JSON } from '../lib/levels.ts';
@@ -199,7 +200,11 @@ studentRoutes.get('/courses/:id', async (c) => {
 });
 
 studentRoutes.post('/tests/:id/start', async (c) => {
-  return c.json(await startOrResume(c.get('user'), uuid(c.req.param('id'), 'test id'), tuitionOf(c).id));
+  const me = c.get('user');
+  const testId = uuid(c.req.param('id'), 'test id');
+  // An app that is too old, let through only to finish a test it had started, may take that test up again but never begin another.
+  if (c.get('oldApp') && !(await isWriting(me.id, testId))) throw updateRequired();
+  return c.json(await startOrResume(me, testId, tuitionOf(c).id));
 });
 
 studentRoutes.put('/attempts/:id/answers', async (c) => {

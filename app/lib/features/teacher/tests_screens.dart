@@ -9,6 +9,7 @@ import '../../core/changes.dart';
 import '../../core/format.dart' as f;
 import '../../theme.dart';
 import '../../ui/kit.dart';
+import '../../ui/difficulty.dart';
 import '../../ui/math_text.dart';
 import 'common.dart';
 import 'subjects.dart';
@@ -453,6 +454,15 @@ class _TestEditorState extends State<TestEditor> {
                   ),
                   if (!locked) TextAction(_questions.isEmpty ? 'Choose' : 'Change', color: canPick ? ink : faint, onTap: canPick ? _pickQuestions : null),
                 ]),
+                // How the test splits between easy, medium and hard questions.
+                if (_questions.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Row(children: [
+                    Icon(Ph.chartBarHorizontal, size: 16, color: faint),
+                    const SizedBox(width: 8),
+                    Expanded(child: Fig(difficultyMix(_questions), style: line.copyWith(color: ink))),
+                  ]),
+                ],
               ]),
             ),
           ]),
@@ -473,6 +483,7 @@ class _TestEditorState extends State<TestEditor> {
               leading: Text((i + 1).toString().padLeft(2, '0'), style: numStyle(size: 13, color: muted)),
               titleWidget: MathText('${q['text']}', style: rowTitleStyle, maxLines: 2),
               meta: q['chapter'] == null ? null : '${q['chapter']}',
+              trailing: DifficultyChip(difficultyOf(q['difficulty'])),
             ),
           ],
         SectionRule('When', padding: rule),
@@ -736,6 +747,9 @@ class _QuestionPickerState extends State<QuestionPicker> {
   List<Map<String, dynamic>>? _all;
   late final List<Map<String, dynamic>> _picked = [...widget.selected];
   String? _chapter;
+
+  /// Only the questions at this level are listed; null lists them all.
+  Difficulty? _difficulty;
   String? _error;
 
   @override
@@ -767,46 +781,83 @@ class _QuestionPickerState extends State<QuestionPicker> {
     for (final q in all ?? const <Map<String, dynamic>>[]) {
       if (q['chapter'] != null) chapterCounts.update('${q['chapter']}', (n) => n + 1, ifAbsent: () => 1);
     }
-    final shown = all?.where((q) => _chapter == null || q['chapter'] == _chapter).toList();
+    // The chapter filter first, then the level filter; the level choices count what the chapter leaves.
+    final inChapter = all?.where((q) => _chapter == null || q['chapter'] == _chapter).toList();
+    final atDifficulty = difficultyCounts(inChapter ?? const []);
+    final shown = inChapter?.where((q) => _difficulty == null || difficultyOf(q['difficulty']) == _difficulty).toList();
     final notPicked = shown?.where((q) => !_has(q)).toList() ?? const [];
+    final narrowed = _chapter != null || _difficulty != null;
     return PushedPanel(
       kicker: widget.title,
       title: 'Choose questions',
-      footer: PrimaryButton(
-        _picked.isEmpty ? 'Choose questions' : 'Use ${_picked.length} question${_picked.length == 1 ? '' : 's'}',
-        onTap: _picked.isEmpty ? null : () => Navigator.of(context).pop(_picked),
-        disabledReason: 'Tap questions to add them to the test.',
-      ),
+      footer: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        PrimaryButton(
+          _picked.isEmpty ? 'Choose questions' : 'Use ${_picked.length} question${_picked.length == 1 ? '' : 's'}',
+          onTap: _picked.isEmpty ? null : () => Navigator.of(context).pop(_picked),
+          disabledReason: 'Tap questions to add them to the test.',
+        ),
+        // What the test would be made of, as questions are added and taken out.
+        if (_picked.isNotEmpty) ...[
+          const SizedBox(height: 9),
+          Fig(difficultyMix(_picked), style: labelStyle.copyWith(color: ink, fontWeight: FontWeight.w600), textAlign: TextAlign.center),
+        ],
+      ]),
       children: [
         const SizedBox(height: 18),
-        if (chapterCounts.isNotEmpty)
+        if (chapterCounts.isNotEmpty || (all?.isNotEmpty ?? false))
           FilterBar(padding: EdgeInsets.zero, children: [
+            if (chapterCounts.isNotEmpty)
+              SelectPill(
+                label: _chapter ?? 'All chapters',
+                active: _chapter != null,
+                onTap: () async {
+                  final c = await showChoices<String>(
+                    context,
+                    title: 'Chapter',
+                    subtitle: widget.title,
+                    options: [const Choice(null, 'All chapters'), for (final e in chapterCounts.entries) Choice(e.key, e.key, count: e.value)],
+                    selected: _chapter,
+                  );
+                  if (c != null) setState(() => _chapter = c.value);
+                },
+              ),
             SelectPill(
-              label: _chapter ?? 'All chapters',
-              active: _chapter != null,
+              label: _difficulty?.label ?? 'All levels',
+              active: _difficulty != null,
               onTap: () async {
-                final c = await showChoices<String>(
+                final c = await showChoices<Difficulty>(
                   context,
-                  title: 'Chapter',
+                  title: 'Level',
                   subtitle: widget.title,
-                  options: [const Choice(null, 'All chapters'), for (final e in chapterCounts.entries) Choice(e.key, e.key, count: e.value)],
-                  selected: _chapter,
+                  options: [const Choice(null, 'All levels'), for (final l in Difficulty.values) Choice(l, l.label, count: atDifficulty[l])],
+                  selected: _difficulty,
                 );
-                if (c != null) setState(() => _chapter = c.value);
+                if (c != null) setState(() => _difficulty = c.value);
               },
             ),
           ]),
-        if (notPicked.isNotEmpty && _chapter != null)
+        if (notPicked.isNotEmpty && narrowed)
           Align(
             alignment: Alignment.centerLeft,
-            child: TextAction('Add all ${notPicked.length} from this chapter', color: ink, onTap: () => setState(() => _picked.addAll(notPicked))),
+            child: TextAction(
+              _difficulty == null ? 'Add all ${notPicked.length} from this chapter' : 'Add all ${notPicked.length} shown',
+              color: ink,
+              onTap: () => setState(() => _picked.addAll(notPicked)),
+            ),
           ),
         const SizedBox(height: 14),
         if (all == null && _error != null)
           ErrorState(message: _error!, onRetry: _load)
         else if (all == null)
           const LoadingState()
-        else if (shown!.isEmpty)
+        else if (shown!.isEmpty && all.isNotEmpty)
+          // Questions exist, but not at this level (or not in this chapter at this level).
+          EmptyState(
+            icon: Ph.funnel,
+            title: 'No ${_difficulty == null ? '' : '${_difficulty!.label.toLowerCase()} '}questions${_chapter == null ? '' : ' in this chapter'}',
+            body: 'Choose another level or chapter to see more.',
+          )
+        else if (shown.isEmpty)
           widget.courseId != null
               ? const EmptyState(icon: Ph.books, title: 'No questions in this course yet', body: 'Upload a paper or describe a test to AI first. Its questions are kept in the course.')
               : EmptyState(icon: Ph.books, title: 'No ${widget.title} questions', body: 'Add some in Questions or from a question paper first.')
@@ -817,6 +868,7 @@ class _QuestionPickerState extends State<QuestionPicker> {
               leading: Tick(on: _has(q)),
               titleWidget: MathText('${q['text']}', style: rowTitleStyle, maxLines: 3),
               meta: q['chapter'] == null ? null : '${q['chapter']}',
+              trailing: DifficultyChip(difficultyOf(q['difficulty'])),
               onTap: () => setState(() => _has(q) ? _picked.removeWhere((p) => p['id'] == q['id']) : _picked.add(q)),
             ),
           ],

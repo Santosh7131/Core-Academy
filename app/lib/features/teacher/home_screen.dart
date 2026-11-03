@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/api.dart';
+import '../../core/brand.dart';
 import '../../core/changes.dart';
 import '../../core/format.dart' as f;
 import '../../core/levels.dart';
@@ -33,6 +34,12 @@ class _TutorHomeState extends State<TutorHome> with WidgetsBindingObserver, Auto
   Map<String, dynamic>? _d;
   String? _error;
 
+  /// What Home says after a test was closed or the students were reminded. It goes at the next refresh the tutor asks for.
+  String? _notice;
+
+  /// The test being closed or reminded about: its two buttons wait for the answer.
+  String? _acting;
+
   /// The lists the tutor has opened in full (a long one shows its first few).
   final Set<String> _all = {};
 
@@ -60,6 +67,7 @@ class _TutorHomeState extends State<TutorHome> with WidgetsBindingObserver, Auto
         setState(() {
           _d = Map<String, dynamic>.from(d);
           _error = null;
+          if (!quiet) _notice = null;
         });
       }
     } on ApiException catch (e) {
@@ -86,6 +94,38 @@ class _TutorHomeState extends State<TutorHome> with WidgetsBindingObserver, Auto
   Future<void> _go(String path) async {
     await context.push(path);
     if (mounted) _load();
+  }
+
+  /// Sends the students who have not handed a test in a reminder, once the tutor has seen the notification they will get.
+  Future<void> _remind(Map<String, dynamic> t) async {
+    final id = '${t['id']}';
+    if (!await confirmRemind(context, title: '${t['title']}', waiting: _n(t['waiting']), closes: f.parseTime(t['closes_at']))) return;
+    setState(() => _acting = id);
+    try {
+      final r = await api.post('/teacher/tests/$id/remind');
+      if (mounted) setState(() => _notice = 'Reminder sent to ${f.count(_n(r['students']), 'student')}.');
+    } on ApiException catch (e) {
+      if (mounted) await showProblem(context, e);
+    } finally {
+      if (mounted) setState(() => _acting = null);
+    }
+    if (mounted) _load(quiet: true);
+  }
+
+  /// Closes a test now, once the tutor has read what that does.
+  Future<void> _close(Map<String, dynamic> t) async {
+    final id = '${t['id']}';
+    if (!await confirmCloseTest(context, title: '${t['title']}', closes: f.parseTime(t['closes_at']))) return;
+    setState(() => _acting = id);
+    try {
+      await api.post('/teacher/tests/$id/close');
+      if (mounted) setState(() => _notice = '${t['title']} is closed. Anyone still writing it has $closeGraceMinutes minutes.');
+    } on ApiException catch (e) {
+      if (mounted) await showProblem(context, e);
+    } finally {
+      if (mounted) setState(() => _acting = null);
+    }
+    if (mounted) _load(quiet: true);
   }
 
   @override
@@ -187,6 +227,10 @@ class _TutorHomeState extends State<TutorHome> with WidgetsBindingObserver, Auto
       ]);
     }
 
+    // Tests that have been open for a week: two cards at most, the rest on a tap.
+    final stale = _list(d, 'stale');
+    final staleShown = _all.contains('stale') ? stale : stale.take(2).toList();
+
     final needs = <Widget>[
       if (pending > 0)
         RowTile(
@@ -225,6 +269,26 @@ class _TutorHomeState extends State<TutorHome> with WidgetsBindingObserver, Auto
         )
       else
         pad(PrimaryButton('Make tests', leadingIcon: Ph.plus, onTap: () => _make(d)), top: 18),
+      if (_notice != null) pad(InlineNotice(_notice!, tone: Tone.success, icon: Ph.checkCircle), top: 16),
+      // A test left open for a week comes first, with what the tutor can do about it.
+      if (staleShown.isNotEmpty) ...[
+        pad(
+          Column(children: [
+            for (final (i, t) in staleShown.indexed) ...[
+              if (i > 0) const SizedBox(height: gapRow),
+              _StaleCard(t: t, cls: _classOf(t), busy: _acting == '${t['id']}', onRemind: () => _remind(t), onClose: () => _close(t)),
+            ],
+          ]),
+          top: 16,
+        ),
+        if (stale.length > 2)
+          Center(
+            child: TextAction(
+              _all.contains('stale') ? 'Show fewer' : 'Show all ${stale.length} tests open for a week',
+              onTap: () => setState(() => _all.contains('stale') ? _all.remove('stale') : _all.add('stale')),
+            ),
+          ),
+      ],
       // What needs the tutor, then every test in one list: each row says by its tag whether it is open now, coming up or finished.
       if (needs.isNotEmpty) pad(Column(children: [for (final (i, w) in needs.indexed) ...[if (i > 0) const SizedBox(height: gapRow), w]]), top: 16),
       if (hasClass && open.isEmpty)
@@ -323,6 +387,191 @@ class _FinishedTest extends StatelessWidget {
       onTap: onTap,
     );
   }
+}
+
+// ---------------------------------------------------------------- a test left open for a week
+
+/// The minutes a student who is still writing gets when a test is closed from Home. It is CLOSE_GRACE_MIN in the API (api/src/lib/stale.ts).
+const closeGraceMinutes = 10;
+
+/// A test that has been open for a week: how long, how many students have not handed it in, and the two things the tutor can do about it.
+class _StaleCard extends StatelessWidget {
+  const _StaleCard({required this.t, required this.cls, required this.busy, required this.onRemind, required this.onClose});
+  final Map<String, dynamic> t;
+  final String cls;
+  final bool busy;
+  final VoidCallback onRemind;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+      decoration: surface(radius: rCard, shadow: e1),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(color: warningSoft, borderRadius: BorderRadius.circular(13)),
+            child: Icon(Ph.hourglassMedium, size: 21, color: warning),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Kicker('Open for ${f.count(_n(t['days_open']), 'day')}', color: warning),
+              const SizedBox(height: 3),
+              Fig('${t['title']}', style: rowTitleStyle, maxLines: 1),
+              const SizedBox(height: 2),
+              Fig('$cls · ${_n(t['waiting'])} of ${_n(t['assigned'])} have not handed it in', style: labelStyle.copyWith(color: muted), maxLines: 2),
+            ]),
+          ),
+        ]),
+        const SizedBox(height: 13),
+        // Side by side, and as tall as the taller one when large text makes a label wrap.
+        IntrinsicHeight(
+          child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Expanded(child: _StaleButton(label: 'Remind the students', icon: Ph.bellRinging, filled: true, onTap: busy ? null : onRemind)),
+            const SizedBox(width: 8),
+            Expanded(child: _StaleButton(label: 'Close the test', icon: Ph.lockSimple, onTap: busy ? null : onClose)),
+          ]),
+        ),
+      ]),
+    );
+  }
+}
+
+class _StaleButton extends StatelessWidget {
+  const _StaleButton({required this.label, required this.icon, this.filled = false, this.onTap});
+  final String label;
+  final IconData icon;
+  final bool filled;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final on = filled && onTap != null;
+    final fg = onTap == null ? faint : (filled ? actionInk : ink);
+    return Pressable(
+      onTap: onTap,
+      label: label,
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 42),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(color: on ? actionFill : fill, borderRadius: BorderRadius.circular(13), boxShadow: on ? e2 : const []),
+        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          Icon(icon, size: 15, color: fg),
+          const SizedBox(width: 6),
+          Flexible(child: Text(label, style: buttonStyle.copyWith(fontSize: 12.5, color: fg), textAlign: TextAlign.center, maxLines: 2)),
+        ]),
+      ),
+    );
+  }
+}
+
+/// A sentence with some words in full ink and bold: [parts] are the pieces in order, each with whether it is one of those words.
+Widget _sentence(List<(String, bool)> parts) => Text.rich(TextSpan(children: [
+      for (final (text, strong) in parts) figSpan(text, strong ? bodyStyle.copyWith(color: ink, fontWeight: FontWeight.w600) : bodyStyle),
+    ]));
+
+/// One thing that happens, with an icon, in the card that asks the tutor to confirm.
+class _Point extends StatelessWidget {
+  const _Point(this.icon, this.parts);
+  final IconData icon;
+  final List<(String, bool)> parts;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.only(top: 9),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Padding(padding: const EdgeInsets.only(top: 1), child: Icon(icon, size: 17, color: muted)),
+          const SizedBox(width: 10),
+          Expanded(child: _sentence(parts)),
+        ]),
+      );
+}
+
+/// A notification as a student's phone will show it, word for word what the server sends.
+class _NotificationPreview extends StatelessWidget {
+  const _NotificationPreview({required this.title, required this.body});
+  final String title;
+  final String body;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.fromLTRB(15, 12, 15, 14),
+        decoration: BoxDecoration(color: fill, borderRadius: BorderRadius.circular(18)),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Container(
+              width: 18,
+              height: 18,
+              decoration: BoxDecoration(color: actionFill, borderRadius: BorderRadius.circular(6)),
+              child: Icon(Ph.graduationCap, size: 11, color: actionInk),
+            ),
+            const SizedBox(width: 8),
+            Expanded(child: Text(appName, style: labelStyle.copyWith(fontWeight: FontWeight.w600), maxLines: 1, overflow: TextOverflow.ellipsis)),
+            const SizedBox(width: 8),
+            Text('now', style: labelStyle.copyWith(fontWeight: FontWeight.w600)),
+          ]),
+          const SizedBox(height: 8),
+          Fig(title, style: rowTitleStyle, maxLines: 2),
+          const SizedBox(height: 3),
+          Fig(body, style: bodyStyle.copyWith(fontSize: 13)),
+        ]),
+      );
+}
+
+/// What closing a test does, before it is done. Returns true when the tutor goes ahead.
+Future<bool> confirmCloseTest(BuildContext context, {required String title, required DateTime? closes}) async {
+  final ok = await showCentredCard<bool>(
+    context,
+    title: 'Close this test now?',
+    builder: (ctx) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      _sentence([
+        (title, true),
+        if (closes == null) (' has no closing time. If you close it now:', false) else ...[(' is open until ', false), (f.whenDate(closes), true), ('. If you close it now:', false)],
+      ]),
+      const SizedBox(height: 3),
+      const _Point(Ph.prohibit, [('Students who have not started it can no longer write it.', false)]),
+      const _Point(Ph.timer, [('Anyone writing it right now gets ', false), ('$closeGraceMinutes minutes', true), (' to finish.', false)]),
+      const _Point(Ph.checkCircle, [('Everyone who handed it in keeps their marks.', false)]),
+      const SizedBox(height: 20),
+      Row(children: [
+        Expanded(child: SecondaryButton('Keep it open', onTap: () => Navigator.of(ctx).pop(false))),
+        const SizedBox(width: 10),
+        Expanded(child: SecondaryButton('Close the test', tint: danger, onTap: () => Navigator.of(ctx).pop(true))),
+      ]),
+    ]),
+  );
+  return ok ?? false;
+}
+
+/// How many students will be reminded and the notification each gets, before anything is sent. Returns true when the tutor sends it.
+Future<bool> confirmRemind(BuildContext context, {required String title, required int waiting, required DateTime? closes}) async {
+  final closing = closes == null ? 'It is still open.' : 'It closes ${f.when(closes)}.';
+  final ok = await showCentredCard<bool>(
+    context,
+    title: 'Remind the students?',
+    builder: (ctx) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      _sentence([
+        ('${f.count(waiting, 'student')} ${waiting == 1 ? 'has' : 'have'} not handed in ', false),
+        (title, true),
+        (waiting == 1 ? '. They get this notification:' : '. Each one gets this notification:', false),
+      ]),
+      const SizedBox(height: 12),
+      _NotificationPreview(title: title, body: 'Your tutor reminds you to write this test. $closing'),
+      const SizedBox(height: 12),
+      _sentence([('After you send it, this card goes away for a week.', false)]),
+      const SizedBox(height: 20),
+      Row(children: [
+        Expanded(child: SecondaryButton('Not now', onTap: () => Navigator.of(ctx).pop(false))),
+        const SizedBox(width: 10),
+        Expanded(child: PrimaryButton('Send reminder', onTap: () => Navigator.of(ctx).pop(true))),
+      ]),
+    ]),
+  );
+  return ok ?? false;
 }
 
 // ---------------------------------------------------------------- papers to finish

@@ -69,6 +69,15 @@ export async function minBuild(db: Db = pool): Promise<number | null> {
   return r.rows[0]?.n ?? null;
 }
 
+const FINISHING_A_TEST = /^\/student\/attempts\/[0-9a-f-]{36}\/(answers|submit|result)$/i;
+
+/**
+ * Whether this is one of the calls an app makes to finish a test the student has already started: save the answers, hand the test
+ * in, see the marks. The update gate never refuses these, so turning the minimum build on cannot cut a student off in the middle of
+ * a test. Each of them acts on the student's own attempt only (lib/attempts.ts checks whose it is).
+ */
+export const finishingATest = (c: Context) => FINISHING_A_TEST.test(c.req.path);
+
 /** True when the request comes from the main app at a build below the minimum. The admin app and callers that name no build are never too old. */
 export function tooOld(c: Context, min: number | null): boolean {
   const ci = clientInfo(c);

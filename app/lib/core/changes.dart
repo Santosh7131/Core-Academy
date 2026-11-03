@@ -19,7 +19,9 @@ Set<Area> areasOf(String path) {
   if (p.startsWith('/teacher/questions') || p.startsWith('/teacher/uploads')) return {Area.questions};
   // Saving a paper puts its questions in the bank.
   if (p.startsWith('/teacher/papers') || p.startsWith('/teacher/drafts')) return {Area.papers, if (p.endsWith('/save')) Area.questions};
-  if (p.startsWith('/teacher/subjects') || p.startsWith('/teacher/chapters') || p.startsWith('/teacher/settings')) {
+  // A subject renamed is a new subject to the groups, tests, papers and shelves that carry its name.
+  if (p.startsWith('/teacher/subjects')) return {Area.settings, Area.questions, Area.students, Area.tests, Area.papers, Area.library};
+  if (p.startsWith('/teacher/chapters') || p.startsWith('/teacher/settings')) {
     return {Area.settings, Area.questions, Area.students};
   }
   // Groups, the join code and join requests change what Home, Groups and Settings show.

@@ -35,6 +35,14 @@ class LibraryServer {
   /// When set, starting a file is refused with this code and message (the Library is full, say).
   ({int status, String code, String message})? refuseStart;
 
+  /// The ids of the files the students have been told about, in the order they were sent; and a switch for a phone with no signal when it
+  /// tells them.
+  final announced = <String>[];
+  bool announceOffline = false;
+
+  /// When set, putting sections or files in a new order is refused as out of date, as the server does when the list changed meanwhile.
+  bool refuseOrder = false;
+
   /// What the student's screens are given: the home counts, the courses, the shelves; and a switch to make the shelves fail to load.
   Map<String, dynamic> home = {};
   List<Object?> courseList = [];
@@ -107,6 +115,40 @@ class LibraryServer {
       final name = '${body['name']}';
       if (sections.any((s) => '${s['name']}'.toLowerCase() == name.toLowerCase())) return _no(409, 'duplicate', 'There is already a section called $name.');
       return _ok({'section': seed(name)}, 201);
+    }
+    // ---- order, and telling the students
+    if (m(r'/teacher/(?:groups/10/sub-maths|courses/c-1)/library/sections/order') != null && r.method == 'PUT') {
+      final ids = [for (final x in body['ids'] as List) '$x'];
+      if (refuseOrder || ids.length != sections.length || ids.any((i) => _sec(i) == null)) {
+        return _no(409, 'out_of_date', 'This list changed since you opened it. Look at it again, then move things.');
+      }
+      final byId = {for (final s in sections) '${s['id']}': s};
+      sections
+        ..clear()
+        ..addAll([for (final i in ids) byId[i]!]);
+      for (var k = 0; k < sections.length; k++) {
+        sections[k]['position'] = k;
+      }
+      return _ok({'library': {'sections': sections, 'files': files, 'bytes': 0, 'used_bytes': 0, 'quota_bytes': 2048 * mb, 'max_file_bytes': 100 * mb}});
+    }
+    final order = m(r'/teacher/library/sections/([^/]+)/files/order');
+    if (order != null && r.method == 'PUT') {
+      final s = _sec(order.group(1)!);
+      if (s == null) return _no(404, 'not_found', 'This section was not found.');
+      final list = (s['files'] as List).cast<Map<String, dynamic>>();
+      final ids = [for (final x in body['ids'] as List) '$x'];
+      if (refuseOrder || ids.length != list.length || ids.any((i) => !list.any((x) => x['id'] == i))) {
+        return _no(409, 'out_of_date', 'This list changed since you opened it. Look at it again, then move things.');
+      }
+      final byId = {for (final x in list) '${x['id']}': x};
+      s['files'] = <Map<String, dynamic>>[for (final i in ids) byId[i]!];
+      return _ok({'files': s['files']});
+    }
+    if (path == '/teacher/library/announce' && r.method == 'POST') {
+      if (announceOffline) throw const SocketException('no signal');
+      final ids = [for (final x in body['file_ids'] as List) '$x'];
+      announced.addAll(ids);
+      return _ok({'files': ids.length, 'students': people, 'phones': 0});
     }
     final sec = m(r'/teacher/library/sections/([^/]+)');
     if (sec != null) {

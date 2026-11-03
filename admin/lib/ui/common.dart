@@ -44,6 +44,9 @@ class FormLabel extends StatelessWidget {
       );
 }
 
+/// Whether a tuition has used four fifths of its Library limit or more: its figure and bar turn amber.
+bool nearlyFull(int used, int limit) => limit > 0 && used * 5 >= limit * 4;
+
 /// A read-only fact list inside one surface.
 class FactList extends StatelessWidget {
   const FactList(this.facts, {super.key});

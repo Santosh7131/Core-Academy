@@ -48,6 +48,23 @@ String bytes(num b) {
   return '${(b / 1024 / 1024 / 1024).toStringAsFixed(2)} GB';
 }
 
+/// A size kept in storage as a figure and its unit: ("412", "MB"), ("1.7", "GB"), ("2", "GB"). A decimal only where it says something.
+(String, String) sizeParts(num b) {
+  const kb = 1024, mb = 1024 * 1024, gb = 1024 * 1024 * 1024;
+  if (b < kb) return ('${b.round()}', 'B');
+  if (b < mb) return ('${(b / kb).round()}', 'KB');
+  if (b < gb) return ((b / mb).toStringAsFixed(b < 10 * mb ? 1 : 0), 'MB');
+  final g = b / gb;
+  final tenths = (g * 10).round() / 10;
+  return (tenths == tenths.roundToDouble() ? '${tenths.round()}' : tenths.toStringAsFixed(1), 'GB');
+}
+
+/// "412 MB", "1.7 GB", "2 GB".
+String size(num b) {
+  final (figure, unit) = sizeParts(b);
+  return '$figure $unit';
+}
+
 final _indian = NumberFormat.decimalPattern('en_IN');
 
 /// 1,204 and 1,00,000: Indian grouping.

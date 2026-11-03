@@ -35,7 +35,7 @@ late FakeStore store;
 
 const _shelfKey = 'group:10:sub-maths';
 const _pdfSize = 3984589; // "3.8 MB"
-const _keepOpen = 'Keep the app open while files are added. Students see a file once it has finished.';
+const _keepOpen = 'Keep the app open while files are added. Students see a file once it has finished, and are told about it then.';
 
 String get _className => groupName(10, 'Maths');
 
@@ -338,12 +338,13 @@ void main() {
       expect(find.widgetWithText(TextField, 'Books'), findsOneWidget);
       final save = find.byWidgetPredicate((w) => w is PrimaryButton && w.label == 'Save');
       expect(t.widget<PrimaryButton>(save).onTap, isNull, reason: 'nothing changed yet');
-      await t.enterText(find.byType(TextField), 'pdfs');
+      // The page has a search box too; the card in front of it comes last.
+      await t.enterText(find.byType(TextField).last, 'pdfs');
       await t.pump();
       await _press(t, 'Save');
       expect(find.text('There is already a section called pdfs.'), findsOneWidget);
       expect(find.text('Its files stay where they are'), findsOneWidget, reason: 'the card stays open');
-      await t.enterText(find.byType(TextField), 'Reading');
+      await t.enterText(find.byType(TextField).last, 'Reading');
       await t.pump();
       await _press(t, 'Save');
       expect([for (final s in server.sections) s['name']], ['PDFs', 'Reading']);
@@ -392,7 +393,7 @@ void main() {
       expect(find.text('Rename file'), findsOneWidget);
       expect(find.text('It stays a .pdf file'), findsOneWidget);
       expect(find.widgetWithText(TextField, 'Chapter 1'), findsOneWidget, reason: 'the box holds the name without its type');
-      await t.enterText(find.byType(TextField), 'Chapter 1 notes');
+      await t.enterText(find.byType(TextField).last, 'Chapter 1 notes');
       await t.pump();
       await _press(t, 'Save');
       expect(server.bodies.last, {'name': 'Chapter 1 notes.pdf'});
@@ -413,7 +414,7 @@ void main() {
       expect(find.text('A file moves from one section to another. This shelf has only PDFs so far.'), findsOneWidget);
       await _press(t, 'Add a section');
       expect(find.text('New section'), findsOneWidget);
-      await t.enterText(find.byType(TextField), 'Books');
+      await t.enterText(find.byType(TextField).last, 'Books');
       await t.pump();
       await _press(t, 'Add section');
       expect([for (final s in server.sections) s['name']], ['PDFs', 'Books']);
@@ -958,6 +959,246 @@ void main() {
       expect(t.widget<FileTile>(find.byType(FileTile)).photo, isTrue);
       await show(t, job('Notes.pdf', mb, UploadState.waiting));
       expect(t.widget<FileTile>(find.byType(FileTile)).photo, isFalse);
+    });
+  });
+
+  // ================================================================ searching
+
+  group('searching the Library', () {
+    testWidgets('there is a search box once a file is on the shelf, and not before', (t) async {
+      server.seed('PDFs');
+      await _group(t);
+      expect(find.byType(TextField), findsNothing, reason: 'nothing to search yet');
+      await _end(t);
+    });
+
+    testWidgets('typing finds files in every section, says where each is, and clearing brings the sections back', (t) async {
+      server.seed('PDFs', [('Mid-term answers.pdf', mb), ('Chapter 4 notes.pdf', _pdfSize)]);
+      server.seed('Test papers', [('Mid-term 2025.pdf', 2 * mb), ('Blueprint.jpg', 300 * 1024)]);
+      await _group(t);
+      expect(find.text('Search files'), findsOneWidget);
+      await t.enterText(find.byType(TextField), 'MID');
+      await t.pump();
+      expect(find.text('Found'), findsOneWidget);
+      expect(_counts(t), [2]);
+      expect(find.text('Mid-term answers.pdf'), findsOneWidget);
+      expect(find.text('Mid-term 2025.pdf'), findsOneWidget);
+      expect(find.text('Chapter 4 notes.pdf'), findsNothing);
+      expect(find.textContaining('in PDFs · PDF · 1.0 MB'), findsOneWidget);
+      expect(find.textContaining('in Test papers · PDF · 2.0 MB'), findsOneWidget);
+      expect(_button('Add a section'), findsNothing, reason: 'the sections are out of the way while searching');
+      await _press(t, 'Clear the search');
+      expect(find.text('Found'), findsNothing);
+      expect(_counts(t), [2, 2]);
+      expect(find.text('Chapter 4 notes.pdf'), findsOneWidget);
+      expect(find.text('Search files'), findsOneWidget);
+      await _end(t);
+    });
+
+    testWidgets('a word that no file has says so, and the extension is not searched', (t) async {
+      server.seed('PDFs', [('Chapter 4 notes.pdf', _pdfSize)]);
+      await _group(t);
+      await t.enterText(find.byType(TextField), 'zebra');
+      await t.pump();
+      expect(find.text('No file has "zebra" in its name.'), findsOneWidget);
+      expect(find.text('Chapter 4 notes.pdf'), findsNothing);
+      await t.enterText(find.byType(TextField), 'pdf');
+      await t.pump();
+      expect(find.text('No file has "pdf" in its name.'), findsOneWidget, reason: 'every file ends in .pdf, so that would find them all for nothing');
+      await _end(t);
+    });
+
+    testWidgets('a file that was found still has its options, so it can be renamed from there', (t) async {
+      server.seed('PDFs', [('Mid-term answers.pdf', mb)]);
+      await _group(t);
+      await t.enterText(find.byType(TextField), 'mid');
+      await t.pump();
+      await _press(t, 'Options for Mid-term answers.pdf');
+      for (final item in ['Rename', 'Move to another section', 'Delete this file']) {
+        expect(_button(item), findsWidgets, reason: item);
+      }
+      await _press(t, 'Close');
+      await _end(t);
+    });
+
+    testWidgets('a student searches a class the same way, and can download from what was found', (t) async {
+      await _classPage(t);
+      expect(find.text('Search files'), findsOneWidget);
+      await t.enterText(find.byType(TextField), 'chapter');
+      await t.pump();
+      expect(find.text('Found'), findsOneWidget);
+      expect(_counts(t), [2]);
+      expect(find.textContaining('in PDFs · PDF'), findsNWidgets(2));
+      expect(find.text('Algebra book.pdf'), findsNothing);
+      await _press(t, 'Download Chapter 2.pdf');
+      expect(store.saved, ['Chapter 2.pdf']);
+      await t.enterText(find.byType(TextField), 'nothing like this');
+      await t.pump();
+      expect(find.text('No file has "nothing like this" in its name.'), findsOneWidget);
+      await _press(t, 'Clear the search');
+      expect(_counts(t), [2, 1, 1]);
+      await _end(t);
+    });
+
+    test('findFiles looks in every section, in shelf order, ignoring capitals and the extension', () {
+      final sections = [
+        LibSection('s1', 'PDFs', [LibFile.fromJson(LibraryServer.fileJson('f1', 's1', 'Mid-term answers.pdf', mb)), LibFile.fromJson(LibraryServer.fileJson('f2', 's1', 'Notes.pdf', mb))]),
+        LibSection('s2', 'Papers', [LibFile.fromJson(LibraryServer.fileJson('f3', 's2', 'MID-TERM 2025.pdf', mb))]),
+      ];
+      expect([for (final x in findFiles(sections, 'mid')) x.file.id], ['f1', 'f3']);
+      expect([for (final x in findFiles(sections, ' Mid-Term ')) x.section.name], ['PDFs', 'Papers']);
+      expect(findFiles(sections, 'pdf'), isEmpty);
+      expect(findFiles(sections, ''), isEmpty);
+      expect(findFiles(sections, '   '), isEmpty);
+    });
+
+    test('highlighted marks the first stretch that matches, in any case, and nothing when none does', () {
+      final style = const TextStyle(fontWeight: FontWeight.w500);
+      final span = highlighted('Mid-term answers.pdf', 'MID', style);
+      final parts = span.children!.cast<TextSpan>();
+      expect([for (final p in parts) p.toPlainText()], ['', 'Mid', '-term answers.pdf']);
+      expect(parts[1].style!.fontWeight, FontWeight.w800);
+      expect(parts[0].style!.fontWeight, FontWeight.w500);
+      expect(highlighted('Notes.pdf', 'zebra', style).toPlainText(), 'Notes.pdf');
+      expect(highlighted('Notes.pdf', '', style).toPlainText(), 'Notes.pdf');
+    });
+  });
+
+  // ================================================================ order
+
+  group('putting sections and files in order', () {
+    Future<List<bool>> offers(WidgetTester t, String section) async {
+      await _press(t, 'Options for $section');
+      final r = [_button('Move up').evaluate().isNotEmpty, _button('Move down').evaluate().isNotEmpty];
+      await _press(t, 'Close');
+      return r;
+    }
+
+    testWidgets('a section offers Move up and Move down only where there is somewhere to go', (t) async {
+      server.seed('PDFs', [('A.pdf', mb)]);
+      server.seed('Books');
+      server.seed('Test papers');
+      await _group(t);
+      expect(await offers(t, 'PDFs'), [false, true], reason: 'first');
+      expect(await offers(t, 'Books'), [true, true], reason: 'in the middle');
+      expect(await offers(t, 'Test papers'), [true, false], reason: 'last');
+      await _end(t);
+    });
+
+    testWidgets('a lone section has nothing to move past', (t) async {
+      server.seed('PDFs', [('A.pdf', mb)]);
+      await _group(t);
+      expect(await offers(t, 'PDFs'), [false, false]);
+      await _end(t);
+    });
+
+    testWidgets('Move down puts a section below the next one at once, and tells the server the whole new order', (t) async {
+      server.seed('PDFs', [('A.pdf', mb)]);
+      server.seed('Books');
+      server.seed('Test papers');
+      await _group(t);
+      await _press(t, 'Options for PDFs');
+      await _press(t, 'Move down');
+      expect([for (final s in server.sections) s['name']], ['Books', 'PDFs', 'Test papers']);
+      expect(server.bodies.last, {'ids': ['s2', 's1', 's3']});
+      expect(server.count('PUT /teacher/groups/10/sub-maths/library/sections/order'), 1);
+      expect(t.getTopLeft(find.text('Books')).dy, lessThan(t.getTopLeft(find.text('PDFs')).dy));
+      await _press(t, 'Options for Test papers');
+      await _press(t, 'Move up');
+      expect([for (final s in server.sections) s['name']], ['Books', 'Test papers', 'PDFs']);
+      expect(t.getTopLeft(find.text('Test papers')).dy, lessThan(t.getTopLeft(find.text('PDFs')).dy));
+      await _end(t);
+    });
+
+    testWidgets('a course\'s shelf is put in order the same way, on its own address', (t) async {
+      server.seed('Handouts', [('A.pdf', mb)]);
+      server.seed('Recordings');
+      await _course(t);
+      await _press(t, 'Options for Handouts');
+      await _press(t, 'Move down');
+      expect([for (final s in server.sections) s['name']], ['Recordings', 'Handouts']);
+      expect(server.count('PUT /teacher/courses/c-1/library/sections/order'), 1);
+      await _end(t);
+    });
+
+    testWidgets('a file moves up and down inside its section, and the first and last cannot go further', (t) async {
+      server.seed('PDFs', [('A.pdf', mb), ('B.pdf', mb), ('C.pdf', mb)]);
+      await _group(t);
+      await _press(t, 'Options for A.pdf');
+      expect(_button('Move up'), findsNothing, reason: 'first');
+      expect(_button('Move down'), findsWidgets);
+      await _press(t, 'Move down');
+      expect(_names(server.sections.single), ['B.pdf', 'A.pdf', 'C.pdf']);
+      expect(server.bodies.last, {'ids': ['f2', 'f1', 'f3']});
+      expect(server.count('PUT /teacher/library/sections/s1/files/order'), 1);
+      await _press(t, 'Options for C.pdf');
+      expect(_button('Move down'), findsNothing, reason: 'last');
+      await _press(t, 'Move up');
+      expect(_names(server.sections.single), ['B.pdf', 'C.pdf', 'A.pdf']);
+      expect(t.getTopLeft(find.text('C.pdf')).dy, lessThan(t.getTopLeft(find.text('A.pdf')).dy));
+      await _end(t);
+    });
+
+    testWidgets('an order the server refuses is explained, and the shelf goes back to what the server has', (t) async {
+      server.seed('PDFs', [('A.pdf', mb)]);
+      server.seed('Books');
+      await _group(t);
+      server.refuseOrder = true;
+      await _press(t, 'Options for PDFs');
+      await _press(t, 'Move down');
+      expect(find.text('That did not work'), findsOneWidget);
+      expect(find.text('This list changed since you opened it. Look at it again, then move things.'), findsOneWidget);
+      await _press(t, 'OK');
+      expect([for (final s in server.sections) s['name']], ['PDFs', 'Books'], reason: 'the server kept its own order');
+      expect(t.getTopLeft(find.text('PDFs')).dy, lessThan(t.getTopLeft(find.text('Books')).dy), reason: 'and so does the screen');
+      await _end(t);
+    });
+  });
+
+  // ================================================================ telling the students
+
+  group('telling the students about new files', () {
+    testWidgets('a batch of files is one notice, sent once they have all gone up', (t) async {
+      server.seed('PDFs');
+      await _group(t);
+      final gate = Completer<void>();
+      net.hold = gate.future;
+      sources.pdfs = [LibraryEnv.fake('A.pdf', mb), LibraryEnv.fake('B.pdf', mb)];
+      await _addFileVia(t, 'A PDF from this phone', ms: 400);
+      expect(server.count('POST /teacher/library/announce'), 0, reason: 'nothing has finished yet');
+      gate.complete();
+      await _settle(t, 1500);
+      expect(server.count('POST /teacher/library/announce'), 1, reason: 'one notice for the whole batch');
+      expect(server.announced, ['f1', 'f2']);
+      expect(server.announced, [for (final x in server.sections.single['files'] as List) x['id']]);
+      await _end(t);
+    });
+
+    testWidgets('with no signal the notice waits, and goes with the next batch', (t) async {
+      server.seed('PDFs');
+      await _group(t);
+      server.announceOffline = true;
+      sources.pdfs = [LibraryEnv.fake('A.pdf', mb)];
+      await _addFileVia(t, 'A PDF from this phone', ms: 1500);
+      expect(server.announced, isEmpty);
+      expect(server.files, 1, reason: 'the file is on the shelf all the same');
+      expect(find.text('That did not work'), findsNothing, reason: 'a notice that could not be sent is not an error to show');
+      server.announceOffline = false;
+      sources.pdfs = [LibraryEnv.fake('B.pdf', mb)];
+      await _addFileVia(t, 'A PDF from this phone', ms: 1500);
+      expect(server.announced, ['f1', 'f2']);
+      await _end(t);
+    });
+
+    testWidgets('a file that never went up tells nobody', (t) async {
+      server.seed('PDFs');
+      await _group(t);
+      server.refuseStart = (status: 413, code: 'library_full', message: 'The Library is full. Delete some files to make room.');
+      sources.pdfs = [LibraryEnv.fake('Notes.pdf', 2 * mb)];
+      await _addFileVia(t, 'A PDF from this phone', ms: 800);
+      expect(server.count('POST /teacher/library/announce'), 0);
+      await _press(t, 'Remove Notes.pdf', ms: 300);
+      await _end(t);
     });
   });
 

@@ -86,6 +86,8 @@ await db.connect();
 type World = {
   tuition: string; tutorId: string; T: string; studentId: string; studentName: string; S: string;
   question: string; test: string; course: string; paper: string; draft: string; subject: string; chapter: string; attempt: string; level: string;
+  /** A section on the group's Library shelf, and a finished file in it (a row only: nothing is stored behind it). */
+  section: string; file: string;
 };
 
 async function makeWorld(suffix: string): Promise<World> {
@@ -120,10 +122,19 @@ async function makeWorld(suffix: string): Promise<World> {
   const lv = await api('POST', '/teacher/levels', T, { label: `${tag}${suffix}` });
   const started = await api('POST', `/student/tests/${t.body.id}/start`, S);
   await api('POST', `/student/attempts/${started.body.attempt.id}/submit`, S, { answers: [{ question_id: q.body.id, choice: 0 }] });
+  // The Library: a section and a finished file, as rows (the routes under test refuse the other tuition before they touch storage).
+  const group = await db.query('select id from groups where tuition_id = $1 limit 1', [mk.body.tuition.id]);
+  const sec = await db.query(`insert into class_sections (tuition_id, group_id, name) values ($1, $2, 'Shelf') returning id`, [mk.body.tuition.id, group.rows[0].id]);
+  const fil = await db.query(
+    `insert into class_files (section_id, tuition_id, name, kind, content_type, size_bytes, object_key, status, ready_at)
+     values ($1, $2, 'notes.pdf', 'pdf', 'application/pdf', 1000, $3, 'ready', now()) returning id`,
+    [sec.rows[0].id, mk.body.tuition.id, `library/${tag}/${suffix}/notes.pdf`],
+  );
   return {
     tuition: mk.body.tuition.id, tutorId: su.body.user.id, T, studentId: st.body.student.id, studentName: `${tag}.p${suffix}`, S,
     question: q.body.id, test: t.body.id, course: co.body.course.id, paper: pa.body.paper.id, draft: dr.rows[0].id, subject: sj.body.subject.id,
     chapter: ch.body.chapter.id, attempt: started.body.attempt.id, level: String(lv.body.level.code),
+    section: sec.rows[0].id, file: fil.rows[0].id,
   };
 }
 
@@ -133,8 +144,8 @@ async function fingerprint(w: World) {
     `select md5(coalesce(string_agg(x, '|' order by x), '')) as h, count(*) as n from (
        select 'u:' || id || display_name || coalesce(class_level::text, '') || active || username || coalesce(secret_hash, '') as x from users where id = any($1::uuid[])
        union all select 'm:' || user_id || status || coalesce(class_level::text, '') from memberships where tuition_id = $2
-       union all select 'q:' || id || text || correct_option || marks from questions where tuition_id = $2
-       union all select 't:' || id || title || status || coalesce(closes_at::text, '') || coalesce(results_released_at::text, '') from tests where tuition_id = $2
+       union all select 'q:' || id || text || correct_option || marks || coalesce(difficulty, '') from questions where tuition_id = $2
+       union all select 't:' || id || title || status || coalesce(closes_at::text, '') || coalesce(results_released_at::text, '') || coalesce(nudged_at::text, '') from tests where tuition_id = $2
        union all select 'c:' || id || name from courses where tuition_id = $2
        union all select 'cm:' || course_id || student_id from course_members where course_id in (select id from courses where tuition_id = $2)
        union all select 'p:' || id || exam_name from papers where tuition_id = $2
@@ -144,6 +155,8 @@ async function fingerprint(w: World) {
        union all select 'ch:' || id || name from chapters where tuition_id = $2
        union all select 'lv:' || code || label from tuition_levels where tuition_id = $2
        union all select 'g:' || id || class_level || subject_id from groups where tuition_id = $2
+       union all select 'cs:' || id || name || position from class_sections where tuition_id = $2
+       union all select 'cf:' || id || section_id || name || status || position || coalesce(announced_at::text, '') from class_files where tuition_id = $2
        union all select 'tu:' || name || join_code || join_open from tuitions where id = $2
        union all select 'se:' || token_hash from sessions where user_id = any($1::uuid[])
      ) z`,
@@ -263,6 +276,26 @@ try {
     'POST /admin/people/:id/sign-out': { who: 'tutor', method: 'POST', path: `/admin/people/${A.studentId}/sign-out`, body: { install_id: 'x' } },
     'POST /admin/people/:id/unlock': { who: 'tutor', method: 'POST', path: `/admin/people/${A.studentId}/unlock`, body: {} },
     'GET /admin/clients/:id': { who: 'tutor', method: 'GET', path: `/admin/clients/${A.tuition}` },
+    'POST /teacher/tests/:id/close': { who: 'tutor', method: 'POST', path: `/teacher/tests/${A.test}/close`, body: {} },
+    'POST /teacher/tests/:id/remind': { who: 'tutor', method: 'POST', path: `/teacher/tests/${A.test}/remind`, body: {} },
+    'POST /teacher/drafts/:id/unjoin': { who: 'tutor', method: 'POST', path: `/teacher/drafts/${A.draft}/unjoin`, body: {} },
+    // The Library: a shelf is named by class and subject (or course) inside the caller's own tuition, a section or a file by its id.
+    'GET /teacher/groups/:cls/:subject/library': { who: 'tutor', method: 'GET', path: `/teacher/groups/9/${A.subject}/library` },
+    'POST /teacher/groups/:cls/:subject/library/sections': { who: 'tutor', method: 'POST', path: `/teacher/groups/9/${A.subject}/library/sections`, body: { name: 'Hijack' } },
+    'PUT /teacher/groups/:cls/:subject/library/sections/order': { who: 'tutor', method: 'PUT', path: `/teacher/groups/9/${A.subject}/library/sections/order`, body: { ids: [A.section] } },
+    'GET /teacher/courses/:id/library': { who: 'tutor', method: 'GET', path: `/teacher/courses/${A.course}/library` },
+    'POST /teacher/courses/:id/library/sections': { who: 'tutor', method: 'POST', path: `/teacher/courses/${A.course}/library/sections`, body: { name: 'Hijack' } },
+    'PUT /teacher/courses/:id/library/sections/order': { who: 'tutor', method: 'PUT', path: `/teacher/courses/${A.course}/library/sections/order`, body: { ids: [A.section] } },
+    'PATCH /teacher/library/sections/:id': { who: 'tutor', method: 'PATCH', path: `/teacher/library/sections/${A.section}`, body: { name: 'Hijack' } },
+    'DELETE /teacher/library/sections/:id': { who: 'tutor', method: 'DELETE', path: `/teacher/library/sections/${A.section}` },
+    'PUT /teacher/library/sections/:id/files/order': { who: 'tutor', method: 'PUT', path: `/teacher/library/sections/${A.section}/files/order`, body: { ids: [A.file] } },
+    'POST /teacher/library/sections/:id/files': { who: 'tutor', method: 'POST', path: `/teacher/library/sections/${A.section}/files`, body: { name: 'hijack.pdf', content_type: 'application/pdf', size: 1000 } },
+    'POST /teacher/library/files/:id/upload': { who: 'tutor', method: 'POST', path: `/teacher/library/files/${A.file}/upload`, body: {} },
+    'POST /teacher/library/files/:id/complete': { who: 'tutor', method: 'POST', path: `/teacher/library/files/${A.file}/complete`, body: {} },
+    'PATCH /teacher/library/files/:id': { who: 'tutor', method: 'PATCH', path: `/teacher/library/files/${A.file}`, body: { name: 'Hijack.pdf' } },
+    'DELETE /teacher/library/files/:id': { who: 'tutor', method: 'DELETE', path: `/teacher/library/files/${A.file}` },
+    'GET /teacher/library/files/:id/url': { who: 'tutor', method: 'GET', path: `/teacher/library/files/${A.file}/url` },
+    'GET /student/library/files/:id/url': { who: 'student', method: 'GET', path: `/student/library/files/${A.file}/url` },
   };
   const named = routes.filter((r) => r.path.includes(':'));
   for (const r of named) {
@@ -282,6 +315,9 @@ try {
     const expected = key.startsWith('GET /admin') || key.startsWith('POST /admin') ? res.status === 403 : ownNamespace ? res.status < 500 : refused;
     check(`${key}: the other tuition gets nothing`, expected, res);
   }
+  // Telling students about a file takes ids but no id in its path, so it is not in the table: the other tuition's ids must reach nobody.
+  const told = await api('POST', '/teacher/library/announce', B.T, { file_ids: [A.file] });
+  check('POST /teacher/library/announce: the other tuition tells nobody about this file', told.status === 200 && told.body?.files === 0 && told.body?.phones === 0, told);
   // The same ids named through the other tuition's header, and with a tutor of the same name space, change nothing either.
   const listsA = ['/teacher/students', '/teacher/questions', '/teacher/tests', '/teacher/papers', '/teacher/courses', '/teacher/subjects', '/teacher/chapters', '/teacher/groups', '/teacher/tutors', '/teacher/levels', '/teacher/join-requests'];
   for (const p of listsA) {
@@ -313,6 +349,7 @@ try {
     const idFor = (seg: string) => ({
       students: A!.studentId, questions: A!.question, tests: A!.test, courses: A!.course, papers: A!.paper, attempts: A!.attempt, drafts: A!.draft, subjects: A!.subject,
       chapters: A!.chapter, tutors: A!.tutorId, people: A!.studentId, clients: A!.tuition, levels: A!.level, 'join-requests': A!.studentId,
+      sections: A!.section, files: A!.file,
     } as Record<string, string>)[seg];
     let path = r.path;
     for (let i = 0; i < segs.length; i++) {

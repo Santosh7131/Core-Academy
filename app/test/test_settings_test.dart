@@ -10,6 +10,7 @@ import 'package:core_academy/core/levels.dart';
 import 'package:core_academy/core/session.dart';
 import 'package:core_academy/features/teacher/tests_screens.dart';
 import 'package:core_academy/theme.dart';
+import 'package:core_academy/ui/difficulty.dart';
 import 'package:core_academy/ui/icons.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -214,6 +215,43 @@ void main() {
       expect(find.text('No questions yet'), findsOneWidget);
       expect(find.text('Choose'), findsOneWidget);
       expect(find.text('See the questions'), findsNothing);
+      expect(find.byIcon(Ph.chartBarHorizontal), findsNothing, reason: 'no questions, no line about how hard they are');
+    });
+
+    testWidgets('under the count it says how hard the questions are, and "See the questions" gives each one its level', (t) async {
+      _s.test = {
+        ..._groupTest(),
+        'questions': [
+          for (var i = 1; i <= 20; i++)
+            {'id': 'q$i', 'text': 'Question number $i', 'chapter': null, 'difficulty': i <= 6 ? 'easy' : (i <= 15 ? 'medium' : 'hard')},
+        ],
+      };
+      await _open(t);
+      expect(find.text('20 questions'), findsOneWidget);
+      expect(find.text('6 easy · 9 medium · 5 hard'), findsOneWidget);
+      expect(find.byType(DifficultyChip), findsNothing, reason: 'folded away with the questions');
+      await _tap(t, find.text('See the questions'));
+      final chips = [for (final c in t.widgetList<DifficultyChip>(find.byType(DifficultyChip))) c.difficulty];
+      expect(chips, [for (var i = 1; i <= 20; i++) i <= 6 ? Difficulty.easy : (i <= 15 ? Difficulty.medium : Difficulty.hard)]);
+    });
+
+    testWidgets('a question with no level counts as Medium', (t) async {
+      await _open(t);
+      expect(find.text('20 medium'), findsOneWidget);
+    });
+
+    testWidgets('at twice the text size on a small phone the line and the chips fit', (t) async {
+      _s.test = {
+        ..._groupTest(),
+        'questions': [
+          for (var i = 1; i <= 20; i++)
+            {'id': 'q$i', 'text': 'Question number $i', 'chapter': null, 'difficulty': i <= 6 ? 'easy' : (i <= 15 ? 'medium' : 'hard')},
+        ],
+      };
+      await _open(t, width: 320, scale: 2.0);
+      expect(find.text('6 easy · 9 medium · 5 hard'), findsOneWidget);
+      await _tap(t, find.text('See the questions'));
+      expect(t.takeException(), isNull);
     });
   });
 

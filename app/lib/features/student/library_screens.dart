@@ -84,6 +84,15 @@ class _LibraryClassScreenState extends State<LibraryClassScreen> with WidgetsBin
   String? _notice;
   bool _noticeBad = false;
 
+  /// The words typed in the search box: while there are some, the page shows the files found instead of its sections.
+  final _search = TextEditingController();
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
   @override
   Set<Area> get refreshAreas => {Area.student};
 
@@ -153,9 +162,35 @@ class _LibraryClassScreenState extends State<LibraryClassScreen> with WidgetsBin
     }
   }
 
+  /// What sits at the end of a file's row: its download button, or how far the download has got.
+  Widget _trailing(LibFile file) => _downloading.containsKey(file.id)
+      ? SizedBox(
+          width: 44,
+          height: 44,
+          child: Center(child: Text('${((_downloading[file.id] ?? 0) * 100).floor()}%', style: numStyle(size: 11, weight: FontWeight.w600, color: muted))),
+        )
+      : RowAction(icon: Ph.downloadSimple, label: 'Download ${file.name}', onTap: () => _download(file));
+
+  /// The files with the typed words in their name, from every section, each saying which section it is in.
+  List<Widget> _found(ClassShelf shelf, String q) {
+    final found = findFiles(shelf.sections, q);
+    if (found.isEmpty) return [NothingFound(q)];
+    return [
+      SectionCard(
+        name: 'Found',
+        count: found.length,
+        rows: [
+          for (final x in found)
+            FileRowView(file: x.file, section: x.section.name, highlight: q, onTap: () => _open(x.section, x.file), trailing: _trailing(x.file)),
+        ],
+      ),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     final shelf = _shelf;
+    final q = _search.text.trim();
     return PushedPanel(
       onRefresh: _load,
       kicker: 'Library',
@@ -173,35 +208,33 @@ class _LibraryClassScreenState extends State<LibraryClassScreen> with WidgetsBin
             const SizedBox(height: 18),
             InlineNotice(_notice!, tone: _noticeBad ? Tone.danger : Tone.success, icon: _noticeBad ? Ph.warning : Ph.checkCircle),
           ],
-          ...staggered(
-            [
-              SizedBox(height: _notice == null ? 18 : gapRow),
-              for (final s in shelf.sections) ...[
-                SectionCard(
-                  name: s.name,
-                  count: s.files.length,
-                  rows: [
-                    for (final file in s.files)
-                      FileRowView(
-                        file: file,
-                        onTap: () => _open(s, file),
-                        trailing: _downloading.containsKey(file.id)
-                            ? SizedBox(
-                                width: 44,
-                                height: 44,
-                                child: Center(child: Text('${((_downloading[file.id] ?? 0) * 100).floor()}%', style: numStyle(size: 11, weight: FontWeight.w600, color: muted))),
-                              )
-                            : RowAction(icon: Ph.downloadSimple, label: 'Download ${file.name}', onTap: () => _download(file)),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: gapRow),
+          // Something to search once there is a file on the shelf.
+          if (shelf.files > 0) ...[
+            SizedBox(height: _notice == null ? 18 : gapRow),
+            SearchBox(controller: _search, placeholder: 'Search files', onChanged: (_) => setState(() {})),
+          ],
+          if (q.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            ..._found(shelf, q),
+          ] else
+            ...staggered(
+              [
+                SizedBox(height: shelf.files > 0 ? 14 : (_notice == null ? 18 : gapRow)),
+                for (final s in shelf.sections) ...[
+                  SectionCard(
+                    name: s.name,
+                    count: s.files.length,
+                    rows: [
+                      for (final file in s.files) FileRowView(file: file, onTap: () => _open(s, file), trailing: _trailing(file)),
+                    ],
+                  ),
+                  const SizedBox(height: gapRow),
+                ],
               ],
-            ],
-            scope: this,
-            prefix: 'lib',
-            stepMs: 60,
-          ),
+              scope: this,
+              prefix: 'lib',
+              stepMs: 60,
+            ),
         ],
       ],
     );

@@ -107,6 +107,19 @@ async function finalize(attemptId: string, db: Db) {
 const isExpired = (a: AttemptRow, now: Date) =>
   a.deadline_at !== null && now.getTime() > a.deadline_at.getTime() + GRACE_SECONDS * 1000;
 
+/**
+ * Whether the student has a test in hand: an attempt not handed in and not past its deadline (and its grace), at any test or, with
+ * `testId`, at that one. The update gate lets an app that is too old carry on while one is (lib/auth.ts).
+ */
+export async function isWriting(studentId: string, testId: string | null = null): Promise<boolean> {
+  return !!(await q1(
+    `select 1 as x from attempts x
+      where x.student_id = $1 and ($2::uuid is null or x.test_id = $2) and x.submitted_at is null
+        and (x.deadline_at is null or x.deadline_at + make_interval(secs => ${GRACE_SECONDS}) > now()) limit 1`,
+    [studentId, testId],
+  ));
+}
+
 /** What the test screen needs. Never includes the correct option. */
 export async function attemptPayload(a: AttemptRow, db: Db) {
   const t = await q1(`select title, class_level, time_limit_min, closes_at from tests where id = $1`, [a.test_id], db);

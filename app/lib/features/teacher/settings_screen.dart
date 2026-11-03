@@ -162,19 +162,18 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
   }
 
   Future<void> _editSubject(Map<String, dynamic> row) async {
-    // A standard subject keeps its name; Maths is the first tuition's main subject and is never deleted.
+    // Any subject can be renamed, a standard one too: the tuition then keeps a subject of its own with the new name, and everything it
+    // had under the old one goes with it (the server does that). Maths is the first tuition's main subject and is never removed.
     final canDelete = row['is_default'] != true;
-    final canRename = row['standard'] != true;
     final choice = await showCentredCard<String>(
       context,
       title: '${row['name']}',
       builder: (ctx) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        if (canRename) SecondaryButton('Rename', icon: Ph.pencilSimple, onTap: () => Navigator.of(ctx).pop('rename')),
+        SecondaryButton('Rename', icon: Ph.pencilSimple, onTap: () => Navigator.of(ctx).pop('rename')),
         if (canDelete) ...[
-          if (canRename) const SizedBox(height: 10),
+          const SizedBox(height: 10),
           SecondaryButton('Remove', icon: Ph.trash, tint: danger, onTap: () => Navigator.of(ctx).pop('delete')),
         ],
-        if (!canRename && !canDelete) Fig('This is the main subject, so it stays.', style: bodyStyle.copyWith(color: muted)),
       ]),
     );
     if (choice == 'rename') {

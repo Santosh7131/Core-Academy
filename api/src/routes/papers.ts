@@ -8,7 +8,7 @@ import { bad, bool, date, hasNul, HttpError, int, MAX_OPTION_CHARS, notFound, st
 import { customLevels, isClassNumber, levelIn, levelLabel, studyOf } from '../lib/levels.ts';
 import { wrapBareMath } from '../lib/latex-json.ts';
 import { verdict, type Pick, type Votes } from '../lib/votes.ts';
-import { mustKeepOrder } from '../lib/questions.ts';
+import { difficultyOf, mustKeepOrder, type Difficulty } from '../lib/questions.ts';
 import { cleanPlaced, joinParts, looksCut, placed, type Part, type Placed } from '../lib/pieces.ts';
 import { asciiDigits, hasIndicText, indicLabelIndex, namesIndicLanguage } from '../lib/text.ts';
 import { declaredSize, deleteObjects, MAX_IMAGE_BYTES, maybeViewUrl, objectSize, readObject, uploadUrl, viewUrl } from '../lib/storage.ts';
@@ -151,8 +151,8 @@ const WRITE_BATCH = 25;
 /** Hindi and Tamil take several times the tokens of English for the same question, so a call writes fewer. */
 const INDIC_WRITE_BATCH = 10;
 
-/** One question the writer model gave back, with the option it says is right (null when that could not be told). */
-type Written = { text: string; options: string[]; answer: number | null };
+/** One question the writer model gave back, with the option it says is right (null when that could not be told) and how hard it judged it (null when it did not say: the question is then saved as Medium). */
+type Written = { text: string; options: string[]; answer: number | null; difficulty: Difficulty | null };
 
 /**
  * Has the writer model write `asked` multiple-choice questions on the teacher's request. It is told what the paper holds
@@ -182,7 +182,7 @@ ${already}
 ` : ''}
 
 Reply only as JSON:
-{${written.length ? '' : '"name":"<short test name>",'}"questions":[{"text":"<question>","work":"<one line: how you got the right answer>","options":["<a>","<b>","<c>","<d>"],"answer":"<the correct option, copied exactly as it is written in options>"}]}
+{${written.length ? '' : '"name":"<short test name>",'}"questions":[{"text":"<question>","work":"<one line: how you got the right answer>","options":["<a>","<b>","<c>","<d>"],"answer":"<the correct option, copied exactly as it is written in options>","difficulty":"easy" or "medium" or "hard"}]}
 Rules:
 - Write the keys of each question in the order shown: first the question, then "work", then the options. Work the answer out in "work" before you write the options, then make one option exactly that answer and build the other three from plausible mistakes (a wrong formula, a slip in a sign, a forgotten step). The right value of a calculation must be one of the options, and the question must give every number it needs (say "take g = 10 m/s²" when it matters).
 - Exactly four options per question, and exactly one is correct. "answer" is the text of that option, copied character for character from "options" (not a letter). Spread the right answers over all four positions.
@@ -190,6 +190,7 @@ Rules:
 - Ask only what a school textbook settles with one accepted answer. In grammar, vocabulary and idioms use the standard textbook examples, and do not use a sentence where more than one choice is acceptable. If a question cannot meet all of this, write a different one.
 - Write all maths, formulas and chemical equations in LaTeX inside $...$, in the options as well as in the question, e.g. $\\frac{3}{4}$, $x^2$, $90^\\circ$, $H_2O$. This is JSON, so write every LaTeX backslash twice, as in "$\\\\frac{3}{4}$". Give each option's text without a letter label.
 - Follow the teacher's topic and difficulty. ${w.course ? 'Pitch the questions at the level the request describes.' : `Match the ${study} syllabus.`}
+- "difficulty" is how hard the question is for a student at that level: "easy" for a fact or one step, "medium" for a few steps, "hard" for many steps or a trap. Always give one of the three, and "medium" when you cannot tell. When the teacher asks for a mix, give each question the tag that is true of it.
 - Write the questions and the options in the language of the teacher's request: English, Hindi or Tamil, or the one the request asks for. Hindi and Tamil questions use the standard school-textbook terms, and every number is written with the digits 0 to 9. The JSON keys and the answer letters A to D stay as shown.
 - Every question must be answerable from its text alone: no figures, graphs or diagrams, and no "all of the above" or "none of the above".
 - Wrong options are plausible mistakes. Do not repeat a question.
@@ -227,7 +228,7 @@ ${written.length ? '' : '- name: at most 40 characters, e.g. "Quadratic equation
         ? it.options.map((o: unknown) => wrapBareMath(asciiDigits(clip(typeof o === 'string' ? o : String(o ?? ''), 500))))
         : [];
       if (!text || options.length !== 4 || options.some((o: string) => !o)) continue;
-      items.push({ text, options, answer: writerAnswer(it?.answer, options) });
+      items.push({ text, options, answer: writerAnswer(it?.answer, options), difficulty: difficultyOf(it?.difficulty) });
       if (items.length >= asked) break;
     }
     if (items.length) break;
@@ -312,9 +313,9 @@ paperRoutes.post('/papers/chat', async (c) => {
         );
     for (const [i, it] of items.entries()) {
       await cx.query(
-        `insert into paper_drafts (paper_id, page_no, seq, number_label, kind, text, options, answer_checked, proposed_option)
-         values ($1, 1, $2, $3, 'mcq', $4, $5, false, $6)`,
-        [p.id, first + i, String(first + i + 1), it.text, it.options, it.answer],
+        `insert into paper_drafts (paper_id, page_no, seq, number_label, kind, text, options, answer_checked, proposed_option, difficulty, difficulty_by)
+         values ($1, 1, $2, $3, 'mcq', $4, $5, false, $6, coalesce($7::text, 'medium'), case when $7::text is null then null else 'ai' end)`,
+        [p.id, first + i, String(first + i + 1), it.text, it.options, it.answer, it.difficulty],
       );
     }
     return p;
@@ -369,7 +370,7 @@ paperRoutes.get('/papers/:id', async (c) => {
       : await tq(T, 'select id, name from chapters where tuition_id = @T and class_level = $1 and subject_id = $2 order by sort_order, name', [p.class_level, p.subject_id]);
   // The paper as a set: the questions saved from it, as they now are in the bank, in paper order.
   const questions = await q(
-    `select qq.id, qq.text, qq.options, qq.correct_option, qq.image_key, ch.name as chapter, d.number_label
+    `select qq.id, qq.text, qq.options, qq.correct_option, qq.image_key, coalesce(qq.difficulty, 'medium') as difficulty, qq.difficulty_by, ch.name as chapter, d.number_label
        from paper_drafts d join questions qq on qq.id = d.question_id left join chapters ch on ch.id = qq.chapter_id
       where d.paper_id = $1 and d.status = 'saved'
       order by d.page_no, d.seq`,
@@ -585,6 +586,7 @@ ${lines.join('\n')}
 type Extracted = {
   number?: unknown; kind?: unknown; text?: unknown; options?: unknown; needs_diagram?: unknown; chapter_guess?: unknown; printed_answer?: unknown;
   unclear?: unknown; question_box?: unknown; diagram_box?: unknown; continues_on_next_page?: unknown; continues_from_previous_page?: unknown;
+  difficulty?: unknown;
 };
 
 /** A box AI leaves where the page itself cannot be read (some PDFs print ■ for every subscript). */
@@ -594,7 +596,7 @@ function readPrompt(p: { study: string | null; subject: string | null }, pageNo:
   const what = p.study != null ? `a ${p.study}${p.subject ? ` ${p.subject}` : ''} question paper` : 'a CBSE question paper';
   return `This image is page ${pageNo} of ${what}.
 Transcribe every question printed on this page, in order, and any answer key printed on it, as JSON:
-{"questions":[{"number":"<question number as printed>","kind":"mcq" or "other","text":"<question text>","options":["<a>","<b>","<c>","<d>"],"needs_diagram":true or false,"diagram_box":[x1,y1,x2,y2] or null,"question_box":[x1,y1,x2,y2],"continues_on_next_page":true or false,"continues_from_previous_page":true or false,"unclear":true or false,"chapter_guess":"<chapter>","printed_answer":"<answer printed for it, or empty>"}],
+{"questions":[{"number":"<question number as printed>","kind":"mcq" or "other","text":"<question text>","options":["<a>","<b>","<c>","<d>"],"needs_diagram":true or false,"diagram_box":[x1,y1,x2,y2] or null,"question_box":[x1,y1,x2,y2],"continues_on_next_page":true or false,"continues_from_previous_page":true or false,"unclear":true or false,"chapter_guess":"<chapter>","printed_answer":"<answer printed for it, or empty>","difficulty":"easy" or "medium" or "hard"}],
  "answer_key":[{"number":"<question number>","answer":"<the option as printed, e.g. b>"}]}
 Rules:
 - Copy the wording exactly. Write all maths, formulas and chemical equations in LaTeX inside $...$, e.g. $\\frac{3}{4}$, $x^2$, $\\sqrt{2}$, $90^\\circ$, $H_2O$.
@@ -610,6 +612,7 @@ Rules:
 - chapter_guess must be one of: ${chapters.length ? chapters.map((n) => JSON.stringify(n)).join(', ') : '(none listed, so name the chapter or topic in a few words)'}; use "" if unsure.
 - Do not solve anything. printed_answer is only an answer the page itself gives for that question: "Ans: (b)", "उत्तर: (ख)", "விடை: ஆ", a ticked or circled option, or the answer written under it. Otherwise "". Give it as printed, e.g. b, 2, ख or ஆ.
 - answer_key is an answer key printed on this page, such as "Answers: 1. (b) 2. (c)" or "उत्तर: 1. (ख) 2. (ग)", in printed order; [] when there is none. A page may hold only an answer key.
+- difficulty is a quick guess at how hard the question is for a student at that level: "easy" for a fact or one step, "medium" for a few steps, "hard" for many steps or a trap. Always give one of the three, and "medium" when you cannot tell. Judge it from the question as printed, without solving it, and never let it change what you transcribe.
 - Skip instructions, section headings and marks notes.
 - If the page has no questions, return "questions": [].`;
 }
@@ -947,13 +950,18 @@ paperRoutes.post('/papers/:id/pages/:n/read', async (c) => {
       // Where the question is on the page, and where its figure is (only for a question that needs one): the app shows and cuts from these.
       const whole = placed(pageNo, it.question_box);
       const figure = it.needs_diagram === true ? placed(pageNo, it.diagram_box) : null;
+      // AI's level for it, for the tutor to keep or change; Medium when AI gave none (the insert fills that in, and says nobody judged it).
+      // The rest of a question from the page before has no say in it: the join keeps the level of its first part.
+      const level = cutPrev ? null : difficultyOf(it.difficulty);
       await cx.query(
         `insert into paper_drafts (paper_id, page_no, seq, number_label, kind, text, options, chapter_id, ai_chapter_guess, needs_diagram,
-                                   correct_option, answer_source, answer_checked, ai_note, question_boxes, figure_box, cont_next, cont_prev)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16::jsonb, $17, $18)`,
+                                   correct_option, answer_source, answer_checked, ai_note, question_boxes, figure_box, cont_next, cont_prev,
+                                   difficulty, difficulty_by)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16::jsonb, $17, $18, coalesce($19::text, 'medium'),
+                 case when $19::text is null then null else 'ai' end)`,
         [id, pageNo, seq++, clip(it.number, 20) || null, kind, text, options, byName.get(guess.toLowerCase()) ?? page.paper_chapter ?? null,
           guess || null, it.needs_diagram === true, printed, printed == null ? null : 'key', printed != null || held,
-          unclear ? 'unclear' : null, asJson(whole ? [whole] : null), asJson(figure), cutNext, cutPrev],
+          unclear ? 'unclear' : null, asJson(whole ? [whole] : null), asJson(figure), cutNext, cutPrev, level],
       );
     }
     // Pages are read side by side, so repeats between pages are skipped by the next answers call,
@@ -1412,9 +1420,9 @@ paperRoutes.post('/papers/:id/replace', async (c) => {
         if (!dropped.has(s.id)) continue;
         const it = items[n++];
         await cx.query(
-          `insert into paper_drafts (paper_id, page_no, seq, number_label, kind, text, options, answer_checked, proposed_option)
-           values ($1, $2, $3, $4, 'mcq', $5, $6, false, $7)`,
-          [id, s.page_no, s.seq, s.number_label, it.text, it.options, it.answer],
+          `insert into paper_drafts (paper_id, page_no, seq, number_label, kind, text, options, answer_checked, proposed_option, difficulty, difficulty_by)
+           values ($1, $2, $3, $4, 'mcq', $5, $6, false, $7, coalesce($8::text, 'medium'), case when $8::text is null then null else 'ai' end)`,
+          [id, s.page_no, s.seq, s.number_label, it.text, it.options, it.answer, it.difficulty],
         );
       }
       return n;
@@ -1465,8 +1473,16 @@ paperRoutes.patch('/drafts/:id', async (c) => {
     figure = b.figure_box === null ? null : cleanPlaced(b.figure_box);
     if (b.figure_box !== null && !figure) throw bad('figure_box must give the page and a box of four fractions of it.');
   }
+  // How hard the tutor says the question is. A question always has a level, so there is no taking it away. What she sets is final: AI's own level never overwrites it.
+  let level: Difficulty | undefined;
+  if ('difficulty' in b) {
+    level = difficultyOf(b.difficulty) ?? undefined;
+    if (!level) throw bad('How hard a question is must be easy, medium or hard.');
+  }
   const row = await q1(
     `update paper_drafts set text = $2, options = $3, kind = $4, correct_option = $5, chapter_id = $6,
+                             difficulty = case when $14::boolean then $15::text else difficulty end,
+                             difficulty_by = case when $14::boolean then 'tutor' else difficulty_by end,
                              needs_diagram = $7, image_key = $8, status = $9, figure_box = $13::jsonb,
                              cont_next = cont_next and not $11::boolean, cont_prev = cont_prev and not $11::boolean,
                              answer_source = case when $10 then (case when $5::smallint is null then null else 'teacher' end) else answer_source end,
@@ -1492,6 +1508,8 @@ paperRoutes.patch('/drafts/:id', async (c) => {
       reworded,
       handled,
       asJson(figure === undefined ? d.figure_box : figure),
+      level !== undefined,
+      level ?? null,
     ],
   );
   return c.json({ draft: { ...row, image_url: await maybeViewUrl(row.image_key) } });
@@ -1551,10 +1569,10 @@ paperRoutes.post('/papers/:id/save', async (c) => {
       have.add(k);
       const qrow = await q1(
         `insert into questions (tuition_id, class_level, chapter_id, text, options, correct_option, keep_option_order, image_key, source, paper_id,
-                                created_by, subject_id, course_id)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, 'paper', $9, $10, $11, $12) returning id`,
+                                created_by, subject_id, course_id, difficulty, difficulty_by)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, 'paper', $9, $10, $11, $12, coalesce($13::text, 'medium'), $14) returning id`,
         [T, paper.class_level, d.chapter_id ?? paper.chapter_id, d.text, d.options, d.correct_option, mustKeepOrder(d.options), d.image_key, id,
-          c.get('user').id, paper.subject_id, paper.course_id],
+          c.get('user').id, paper.subject_id, paper.course_id, d.difficulty, d.difficulty_by],
         cx,
       );
       await cx.query(`update paper_drafts set status = 'saved', question_id = $2 where id = $1`, [d.id, qrow.id]);

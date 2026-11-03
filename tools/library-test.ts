@@ -71,6 +71,11 @@ const S1 = await signIn(mine.student.username, mine.student.pin);
 const T2 = await signIn(sample.teacher.username, sample.teacher.password);
 const S2 = await signIn(sample.students[0].username, sample.students[0].pin);
 const shelf = `/teacher/groups/9/${MATHS}/library`;
+// Section names are made fresh each run, so sections left on the shelf by an earlier run or by the demo files never collide.
+const run = Date.now().toString(36).slice(-5);
+const PDFS = `PDFs ${run}`;
+const BOOKS = `Books ${run}`;
+const BOOKS2 = `Books and notes ${run}`;
 
 try {
   // ------------------------------------------------------------------ the shelf and its sections
@@ -78,26 +83,28 @@ try {
   check('a group shelf starts empty (or with leftovers from before)', empty.status === 200 && Array.isArray(empty.body?.library?.sections), empty);
   check('the shelf says the limits: 100 MB a file, a quota', empty.body?.library?.max_file_bytes === 100 * MB && empty.body?.library?.quota_bytes > 100 * MB, empty.body?.library);
   const before = empty.body.library.sections.length;
-  const s1 = await api('POST', `${shelf}/sections`, T1, { name: 'PDFs' });
-  check('a section is added', s1.status === 201 && s1.body?.section?.name === 'PDFs', s1);
+  const s1 = await api('POST', `${shelf}/sections`, T1, { name: PDFS });
+  check('a section is added', s1.status === 201 && s1.body?.section?.name === PDFS, s1);
   const sec = s1.body.section.id as string;
   created.sections.push(sec);
-  check('the same name is refused, whatever its case', code(await api('POST', `${shelf}/sections`, T1, { name: 'pdfs' })) === 'duplicate');
+  check('the same name is refused, whatever its case', code(await api('POST', `${shelf}/sections`, T1, { name: PDFS.toLowerCase() })) === 'duplicate');
   check('a blank name is refused', (await api('POST', `${shelf}/sections`, T1, { name: '   ' })).status === 400);
   check('a name over 40 characters is refused', (await api('POST', `${shelf}/sections`, T1, { name: 'x'.repeat(41) })).status === 400);
-  const s2 = await api('POST', `${shelf}/sections`, T1, { name: 'Books' });
+  const s2 = await api('POST', `${shelf}/sections`, T1, { name: BOOKS });
   created.sections.push(s2.body.section.id);
-  const renamed = await api('PATCH', `/teacher/library/sections/${s2.body.section.id}`, T1, { name: 'Books and notes' });
-  check('a section is renamed', renamed.status === 200 && renamed.body?.section?.name === 'Books and notes', renamed);
-  check('renaming to another section\'s name is refused', code(await api('PATCH', `/teacher/library/sections/${s2.body.section.id}`, T1, { name: 'PDFS' })) === 'duplicate');
+  const renamed = await api('PATCH', `/teacher/library/sections/${s2.body.section.id}`, T1, { name: BOOKS2 });
+  check('a section is renamed', renamed.status === 200 && renamed.body?.section?.name === BOOKS2, renamed);
+  check('renaming to another section\'s name is refused', code(await api('PATCH', `/teacher/library/sections/${s2.body.section.id}`, T1, { name: PDFS.toUpperCase() })) === 'duplicate');
   check('a subject the tuition does not teach is refused', (await api('GET', `/teacher/groups/9/${'00000000-0000-4000-8000-0000000000ff'}/library`, T1)).status === 400);
   const after = await api('GET', shelf, T1);
-  check('the shelf lists both sections in the order they were made', after.body.library.sections.length === before + 2 && after.body.library.sections.at(-2).name === 'PDFs', after.body?.library?.sections);
+  check('the shelf lists both sections in the order they were made', after.body.library.sections.length === before + 2 && after.body.library.sections.at(-2).name === PDFS, after.body?.library?.sections);
 
   // ------------------------------------------------------------------ nothing shows to a student until a file is whole
   const sBefore = await api('GET', '/student/library', S1);
   const sHome0 = await api('GET', '/student/home', S1);
-  check('a student sees no files yet', sBefore.status === 200 && sBefore.body.groups.length === 0 && sBefore.body.courses.length === 0 && sHome0.body?.library === 0, { sBefore: sBefore.body, home: sHome0.body?.library });
+  // Files left on the shelf by an earlier run or by the demo files may already show: what counts is the change this run makes.
+  const homeBase = Number(sHome0.body?.library ?? 0);
+  check('a student can read the list of their libraries', sBefore.status === 200 && Array.isArray(sBefore.body.groups) && Array.isArray(sBefore.body.courses) && Number.isInteger(homeBase), { sBefore: sBefore.body, home: sHome0.body?.library });
 
   // ------------------------------------------------------------------ one request for a small file
   const small = pdf(300_000);
@@ -105,7 +112,7 @@ try {
   check('a small file starts in one request', start.status === 201 && start.body?.upload?.mode === 'single' && typeof start.body.upload.url === 'string', start);
   const fid = start.body.file.id as string;
   check('storage refuses a body of another length than the one signed', (await put(start.body.upload.url, small.subarray(0, 1000), start.body.upload.headers)) >= 400);
-  check('a file that is still going up is not shown to students', (await api('GET', '/student/home', S1)).body.library === 0);
+  check('a file that is still going up is not shown to students', (await api('GET', '/student/home', S1)).body.library === homeBase);
   check('nor can anyone get a link to it', (await api('GET', `/teacher/library/files/${fid}/url`, T1)).status === 404);
   check('the whole file is accepted by storage', (await put(start.body.upload.url, small, start.body.upload.headers)) === 200);
   const done = await api('POST', `/teacher/library/files/${fid}/complete`, T1);
@@ -120,7 +127,7 @@ try {
   const sList = await api('GET', '/student/library', S1);
   const sGroup = sList.body?.groups?.find((g: any) => g.class_level === 9 && g.subject_id === MATHS);
   check('the student sees the file in its section of their group', sGroup?.sections.find((s: any) => s.id === sec)?.files.some((f: any) => f.id === fid), sList.body);
-  check('the home count says one', (await api('GET', '/student/home', S1)).body.library === 1);
+  check('the home count goes up by one', (await api('GET', '/student/home', S1)).body.library === homeBase + 1);
   const view = await api('GET', `/student/library/files/${fid}/url`, S1);
   const viewed = await fetch(view.body.url);
   const viewedBytes = Buffer.from(await viewed.arrayBuffer());

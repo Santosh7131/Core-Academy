@@ -22,6 +22,7 @@ import 'package:core_academy/features/student/home_screen.dart';
 import 'package:core_academy/features/student/join_screen.dart';
 import 'package:core_academy/features/student/library_screens.dart' show LibraryClassScreen;
 import 'package:core_academy/features/student/profile_screen.dart';
+import 'package:core_academy/features/student/start_card.dart' show confirmStart;
 import 'package:core_academy/features/student/result_screen.dart';
 import 'package:core_academy/features/student/test_screen.dart';
 import 'package:core_academy/features/teacher/classes_screen.dart';
@@ -462,8 +463,9 @@ void main() {
     _sessionAs(role: 'teacher', tuitions: [{'id': 't-1', 'name': 'Priya Maths Classes', 'role': 'owner', 'status': 'active'}]);
     var seq = 0;
     Map<String, Object?> d(String n, int page, String text, List<String> opts,
-            {int? correct, String? source, double? conf, String? note, Map<String, int>? picks, int? writer, String? chapter, bool diagram = false}) =>
+            {int? correct, String? source, double? conf, String? note, Map<String, int>? picks, int? writer, String? chapter, bool diagram = false, String? level}) =>
         {
+          'difficulty': level ?? 'medium', 'difficulty_by': level == null ? null : 'ai',
           'id': 'd-${++seq}', 'paper_id': 'p-1', 'page_no': page, 'seq': seq, 'number_label': n, 'kind': 'mcq', 'status': 'draft', 'text': text, 'options': opts,
           'correct_option': correct, 'answer_source': source, 'ai_confidence': conf, 'ai_note': note, 'ai_picks': picks, 'ai_votes': null,
           'proposed_option': writer, 'answer_checked': true, 'needs_diagram': diagram, 'image_key': null, 'image_url': null, 'chapter': chapter, 'chapter_id': null,
@@ -478,12 +480,12 @@ void main() {
           'pages': [for (var i = 1; i <= 4; i++) {'page_no': i, 'ai_status': 'done', 'uploaded': true, 'image_url': null}],
           'drafts': [
             d('7', 2, 'The sum of the roots of the equation 3x squared minus 9x plus 5 equals 0 is', abcd,
-                note: 'disagree', picks: {'solver': 0, 'checker': 2}, chapter: 'Quadratic Equations'),
-            d('11', 3, 'In the figure, DE is parallel to BC. Find the length of EC.', ['2 cm', '3 cm', '4 cm', '6.75 cm'], diagram: true, chapter: 'Triangles'),
+                note: 'disagree', picks: {'solver': 0, 'checker': 2}, chapter: 'Quadratic Equations', level: 'medium'),
+            d('11', 3, 'In the figure, DE is parallel to BC. Find the length of EC.', ['2 cm', '3 cm', '4 cm', '6.75 cm'], diagram: true, chapter: 'Triangles', level: 'hard'),
             d('14', 3, 'If tan theta equals 3 over 4, then sin theta is', ['3 over 5', '4 over 5', '5 over 3', '3 over 4'],
                 note: 'unclear', chapter: 'Trigonometry'),
             d('9', 2, 'Which of these is a quadratic equation?', ['x + 1 = 0', 'x squared + 2x + 1 = 0', 'x cubed = 8', '2x = 5'],
-                correct: 1, source: 'ai', conf: 0.97, chapter: 'Quadratic Equations'),
+                correct: 1, source: 'ai', conf: 0.97, chapter: 'Quadratic Equations', level: 'easy'),
             d('1', 1, 'The decimal expansion of 17 over 8 terminates after how many places?', ['1', '2', '3', '4'], correct: 2, source: 'key', chapter: 'Real Numbers'),
             d('2', 1, 'If one zero of x squared plus kx minus 6 is 2, then k is', ['1', '-1', '2', '-2'], correct: 1, source: 'ai', conf: 0.99, chapter: 'Polynomials'),
           ],
@@ -679,7 +681,10 @@ void main() {
         ];
 
     const lensText = 'A student finds the focal length of a convex lens by focusing a distant object on a screen. The sharp image is 15 cm from the lens. The power of the lens is nearly';
-    final misprint = d('7', 2, 'The sum of the first ■ terms of an AP is 3■² + 5■. Its 10th term is', ['62', '65', '59', '68'], note: 'unclear', boxes: at(2, 'q7'));
+    final misprint = {
+      ...d('7', 2, 'The sum of the first ■ terms of an AP is 3■² + 5■. Its 10th term is', ['62', '65', '59', '68'], note: 'unclear', boxes: at(2, 'q7')),
+      'difficulty': 'hard', 'difficulty_by': 'ai',
+    };
     final fillers = [
       for (final (i, q) in [
         'Which of these is a vector quantity?',
@@ -1150,7 +1155,8 @@ void main() {
             'shuffle': true, 'assign_group': true, 'assign_all': false, 'attempts': attempts,
           },
           'questions': [
-            for (var i = 1; i <= 20; i++) {'id': 'q$i', 'text': 'Question number $i', 'chapter': i.isEven ? 'Real numbers' : null},
+            for (var i = 1; i <= 20; i++)
+              {'id': 'q$i', 'text': 'Question number $i', 'chapter': i.isEven ? 'Real numbers' : null, 'difficulty': i <= 6 ? 'easy' : (i <= 15 ? 'medium' : 'hard')},
           ],
           'students': <Object?>[],
         };
@@ -1167,6 +1173,9 @@ void main() {
 
     await _both(t, 'test-settings-when', () => const TestEditor(id: 't-8'), height: 2700, then: (t) async {
       await tapScrolled(t, 'Closes');
+    });
+    await _both(t, 'test-settings-questions', () => const TestEditor(id: 't-8'), height: 3600, then: (t) async {
+      await tapScrolled(t, 'See the questions');
     });
     await _both(t, 'test-settings-who', () => const TestEditor(id: 't-8'), height: 2700, then: (t) async {
       await tapScrolled(t, 'All 12 students');
@@ -1367,6 +1376,11 @@ void main() {
       await openLibrary(t);
       await press(t, buttonCalled('Options for Books'));
     });
+    await _both(t, 'lib-t-search', group, height: 3000, then: (t) async {
+      await openLibrary(t);
+      await t.enterText(find.byType(TextField).last, 'notes');
+      await _settle(t);
+    });
 
     // Two files on their way into Books: one 41% sent, one stopped for lack of signal.
     (server.sections[1]['files'] as List)[0]['name'] = 'Maths formulas.pdf';
@@ -1490,7 +1504,7 @@ void main() {
     _sessionAs(role: 'student', tuitions: [{'id': 't-1', 'name': 'Priya Maths Classes', 'role': 'student', 'status': 'active', 'class_level': 9}]);
     updater.available = Release.fromJson({'version': '1.6.0', 'build': 8, 'apk': 'https://example.test/core-academy.apk', 'sha256': 'ab', 'size': 39 * 1024 * 1024, 'notes': ''});
     updater.step = UpdateStep.ready;
-    await _both(t, 'update-needed', () => const UpdateRequiredScreen());
+    await _both(t, 'update-needed', () => const UpdateRequiredScreen(startByItself: false));
     updater.step = UpdateStep.allow;
     await _both(t, 'update-allow', () => const UpdateRequiredScreen());
     updater.step = UpdateStep.downloading;
@@ -1498,5 +1512,84 @@ void main() {
     await _both(t, 'update-downloading', () => const UpdateRequiredScreen());
     updater.available = null;
     updater.step = UpdateStep.ready;
+  });
+
+  // ---- 1.8.0 (design/comps/x1-*.html): a test open for a week, the Update first card, and choosing questions by level.
+  Map<String, Object?> staleTest(String id, String title, {int? cls, String? subject, String? course, required int days, required int assigned, required int waiting}) => {
+        'id': id, 'title': title, 'class_level': cls, 'subject': subject, 'course_id': course == null ? null : 'c-1', 'course': course,
+        'opened_at': _iso(Duration(days: -days)), 'days_open': days, 'closes_at': _iso(const Duration(days: 2)), 'assigned': assigned, 'waiting': waiting,
+      };
+
+  shotTest('1.8.0: a test open for a week', (t) async {
+    _sessionAs(role: 'teacher', tuitions: tutorTuition);
+    routes['/teacher/home'] = (_) => {
+          ...busyHome(),
+          'stale': [
+            staleTest('x1', 'Practice Paper 2', cls: 10, subject: 'Maths', days: 9, assigned: 12, waiting: 5),
+            staleTest('x2', 'Linear equations', cls: 9, subject: 'Science', days: 8, assigned: 9, waiting: 2),
+            staleTest('x4', 'Unit 4 quiz', course: 'Spoken English, Batch 1', days: 7, assigned: 14, waiting: 14),
+          ],
+        };
+    Widget home() => const Scaffold(body: TutorHome());
+    await _both(t, 'v180-home-stale', home, height: 3300);
+    await _both(t, 'v180-stale-close', home, height: 3300, then: (t) async {
+      await press(t, buttonCalled('Close the test').first);
+    });
+    await _both(t, 'v180-stale-remind', home, height: 3300, then: (t) async {
+      await press(t, buttonCalled('Remind the students').first);
+    });
+  });
+
+  shotTest('1.8.0: update first', (t) async {
+    _sessionAs(role: 'student', tuitions: [{'id': 't-1', 'name': 'Priya Maths Classes', 'role': 'student', 'status': 'active', 'class_level': 9}]);
+    updater.available = Release.fromJson({'version': '1.8.0', 'build': 10, 'apk': 'https://example.test/core-academy.apk', 'sha256': 'ab', 'size': 39 * 1024 * 1024, 'notes': ''});
+    final test = {
+      'id': 't1', 'title': 'Linear equations', 'state': 'open', 'question_count': 12, 'max_marks': 12, 'time_limit_min': 20,
+      'closes_at': DateTime.now().add(const Duration(hours: 3)).toUtc().toIso8601String(),
+    };
+    Widget start() => Builder(
+          builder: (context) => Scaffold(body: Center(child: TextButton(onPressed: () => confirmStart(context, test), child: const Text('Start test')))),
+        );
+    updater.step = UpdateStep.ready;
+    await _both(t, 'v180-update-first', start, height: 1800, then: (t) async {
+      await t.tap(find.text('Start test'));
+      await _settle(t);
+    });
+    updater.step = UpdateStep.downloading;
+    updater.progress = 0.41;
+    await _both(t, 'v180-update-first-downloading', start, height: 1800, then: (t) async {
+      await t.tap(find.text('Start test'));
+      await _settle(t);
+    });
+    updater.available = null;
+    updater.step = UpdateStep.ready;
+  });
+
+  shotTest('1.8.0: choosing questions by level', (t) async {
+    _sessionAs(role: 'teacher', tuitions: tutorTuition);
+    Map<String, Object?> q(String id, String text, String? chapter, String level, {String by = 'ai'}) =>
+        {'id': id, 'text': text, 'chapter': chapter, 'difficulty': level, 'difficulty_by': by, 'source': 'tutor'};
+    routes['/teacher/questions'] = (_) => {
+          'questions': [
+            q('q1', 'What is the value of sin 30°?', 'Trigonometry', 'easy'),
+            q('q2', 'If tan θ = 3/4, find sin θ.', 'Trigonometry', 'medium'),
+            q('q3', 'Prove that (1 + tan²θ) cos²θ = 1.', 'Trigonometry', 'hard'),
+            q('q4', 'Find the HCF of 12 and 18.', 'Real Numbers', 'easy', by: 'tutor'),
+            q('q5', 'Use Euclid\u2019s division lemma to find the HCF of 135 and 225.', 'Real Numbers', 'medium'),
+            q('q6', 'Prove that \u221a2 is irrational.', 'Real Numbers', 'hard'),
+            q('q7', 'Find the zeros of x\u00b2 \u2212 5x + 6.', 'Polynomials', 'easy'),
+            q('q8', 'The sum of the zeros of 2x\u00b2 \u2212 8x + 6 is', null, 'medium', by: 'tutor'),
+          ],
+        };
+    Widget picker({List<Map<String, dynamic>> selected = const []}) => QuestionPicker(classLevel: 10, subjectId: 'sub-Maths', subjectName: 'Maths', selected: selected);
+    await _both(t, 'v180-picker', picker, height: 2600);
+    await _both(t, 'v180-picker-level', picker, height: 2600, then: (t) async {
+      await press(t, buttonCalled('All levels'));
+    });
+    await _both(t, 'v180-picker-picked', picker, height: 2600, then: (t) async {
+      await press(t, buttonCalled('All levels'));
+      await press(t, find.text('Hard').last);
+      await press(t, find.text('Add all 2 shown'));
+    });
   });
 }

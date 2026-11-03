@@ -37,6 +37,9 @@ class _LibraryTabState extends State<LibraryTab> {
   String? _error;
   int _seenDone = LibraryEnv.uploads.doneCount;
 
+  /// The words typed in the search box: while there are some, the shelf shows the files found instead of its sections.
+  final _query = TextEditingController();
+
   @override
   void initState() {
     super.initState();
@@ -53,6 +56,7 @@ class _LibraryTabState extends State<LibraryTab> {
   @override
   void dispose() {
     LibraryEnv.uploads.removeListener(_onUploads);
+    _query.dispose();
     super.dispose();
   }
 
@@ -110,19 +114,44 @@ class _LibraryTabState extends State<LibraryTab> {
     }
   }
 
+  /// Moves a section one place up or down the shelf. The list changes on screen at once; the server is told the new order, and when it
+  /// refuses (the list changed meanwhile) the tutor is told why and the shelf is loaded again.
+  Future<void> _moveSection(LibSection s, int by) async {
+    final list = [...?_sections];
+    final i = list.indexWhere((x) => x.id == s.id);
+    final j = i + by;
+    if (i < 0 || j < 0 || j >= list.length) return;
+    list.insert(j, list.removeAt(i));
+    setState(() => _sections = list);
+    try {
+      await api.put('${widget.shelf.path}/sections/order', {'ids': [for (final x in list) x.id]});
+    } on ApiException catch (e) {
+      if (mounted) await showProblem(context, e);
+    }
+    if (mounted) _load();
+  }
+
   Future<void> _sectionMenu(LibSection s) async {
+    final at = (_sections ?? const <LibSection>[]).indexWhere((x) => x.id == s.id);
+    final last = (_sections ?? const <LibSection>[]).length - 1;
     final what = await showActions<String>(
       context,
       title: s.name,
       subtitle: f.count(s.files.length, 'file'),
-      items: const [
-        MenuItem(Ph.plus, 'Add a file', 'add'),
-        MenuItem(Ph.pencilSimple, 'Rename section', 'rename'),
-        MenuItem(Ph.trash, 'Delete section', 'delete', danger: true),
+      items: [
+        const MenuItem(Ph.plus, 'Add a file', 'add'),
+        const MenuItem(Ph.pencilSimple, 'Rename section', 'rename'),
+        if (at > 0) const MenuItem(Ph.arrowUp, 'Move up', 'up'),
+        if (at >= 0 && at < last) const MenuItem(Ph.arrowDown, 'Move down', 'down'),
+        const MenuItem(Ph.trash, 'Delete section', 'delete', danger: true),
       ],
     );
     if (what == null || !mounted) return;
     switch (what) {
+      case 'up':
+        await _moveSection(s, -1);
+      case 'down':
+        await _moveSection(s, 1);
       case 'add':
         await _addFile(s);
       case 'rename':
@@ -205,19 +234,46 @@ class _LibraryTabState extends State<LibraryTab> {
 
   void _open(LibSection s, LibFile file) => context.push('/library/file', extra: FileViewerArgs(file, where: '${widget.className} · ${s.name}', teacher: true));
 
+  /// Moves a file one place up or down inside its section, the same way a section is moved.
+  Future<void> _moveFile(LibSection s, LibFile file, int by) async {
+    final all = [...?_sections];
+    final at = all.indexWhere((x) => x.id == s.id);
+    if (at < 0) return;
+    final files = [...all[at].files];
+    final i = files.indexWhere((x) => x.id == file.id);
+    final j = i + by;
+    if (i < 0 || j < 0 || j >= files.length) return;
+    files.insert(j, files.removeAt(i));
+    all[at] = LibSection(s.id, s.name, files);
+    setState(() => _sections = all);
+    try {
+      await api.put('/teacher/library/sections/${s.id}/files/order', {'ids': [for (final x in files) x.id]});
+    } on ApiException catch (e) {
+      if (mounted) await showProblem(context, e);
+    }
+    if (mounted) _load();
+  }
+
   Future<void> _fileMenu(LibSection s, LibFile file) async {
+    final at = s.files.indexWhere((x) => x.id == file.id);
     final what = await showActions<String>(
       context,
       title: file.name,
       subtitle: [file.isPdf ? 'PDF' : 'Photo', sizeLabel(file.size), 'in ${s.name}'].join(' · '),
-      items: const [
-        MenuItem(Ph.pencilSimple, 'Rename', 'rename'),
-        MenuItem(Ph.folderSimple, 'Move to another section', 'move'),
-        MenuItem(Ph.trash, 'Delete this file', 'delete', danger: true),
+      items: [
+        const MenuItem(Ph.pencilSimple, 'Rename', 'rename'),
+        const MenuItem(Ph.folderSimple, 'Move to another section', 'move'),
+        if (at > 0) const MenuItem(Ph.arrowUp, 'Move up', 'up'),
+        if (at >= 0 && at < s.files.length - 1) const MenuItem(Ph.arrowDown, 'Move down', 'down'),
+        const MenuItem(Ph.trash, 'Delete this file', 'delete', danger: true),
       ],
     );
     if (what == null || !mounted) return;
     switch (what) {
+      case 'up':
+        await _moveFile(s, file, -1);
+      case 'down':
+        await _moveFile(s, file, 1);
       case 'rename':
         final ext = file.name.substring(file.title.length);
         final r = await showCentredCard<Map<String, dynamic>>(
@@ -293,39 +349,71 @@ class _LibraryTabState extends State<LibraryTab> {
     if (sections == null) return _error != null ? ErrorState(message: _error!, onRetry: _load) : const LoadingState(rows: 2);
     if (sections.isEmpty) return _empty();
     final jobs = LibraryEnv.uploads.forShelf(widget.shelf.key);
+    final q = _query.text.trim();
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      for (final s in sections) ...[
-        SectionCard(
-          name: s.name,
-          count: s.files.length,
-          onMenu: () => _sectionMenu(s),
-          rows: [
-            for (final file in s.files)
-              FileRowView(
-                file: file,
-                onTap: () => _open(s, file),
-                trailing: RowAction(icon: Ph.dotsThreeVertical, label: 'Options for ${file.name}', onTap: () => _fileMenu(s, file)),
-              ),
-            for (final j in jobs.where((j) => j.sectionId == s.id))
-              UploadRowView(job: j, onCancel: () => LibraryEnv.uploads.cancel(j), onRetry: () => LibraryEnv.uploads.retry(j)),
-          ],
-          footer: _AddFileRow(onTap: () => _addFile(s)),
-        ),
-        const SizedBox(height: gapRow),
+      // Something to search once there is a file on the shelf.
+      if (sections.any((s) => s.files.isNotEmpty)) ...[
+        SearchBox(controller: _query, placeholder: 'Search files', onChanged: (_) => setState(() {})),
+        const SizedBox(height: 14),
       ],
-      SecondaryButton('Add a section', icon: Ph.plus, onTap: _addSection),
-      if (jobs.isNotEmpty) ...[
-        const SizedBox(height: 16),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4),
-          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Padding(padding: const EdgeInsets.only(top: 1), child: Icon(Ph.info, size: 16, color: faint)),
-            const SizedBox(width: 10),
-            Expanded(child: Fig('Keep the app open while files are added. Students see a file once it has finished.', style: labelStyle)),
-          ]),
-        ),
+      if (q.isNotEmpty)
+        ..._found(sections, q)
+      else ...[
+        for (final s in sections) ...[
+          SectionCard(
+            name: s.name,
+            count: s.files.length,
+            onMenu: () => _sectionMenu(s),
+            rows: [
+              for (final file in s.files)
+                FileRowView(
+                  file: file,
+                  onTap: () => _open(s, file),
+                  trailing: RowAction(icon: Ph.dotsThreeVertical, label: 'Options for ${file.name}', onTap: () => _fileMenu(s, file)),
+                ),
+              for (final j in jobs.where((j) => j.sectionId == s.id))
+                UploadRowView(job: j, onCancel: () => LibraryEnv.uploads.cancel(j), onRetry: () => LibraryEnv.uploads.retry(j)),
+            ],
+            footer: _AddFileRow(onTap: () => _addFile(s)),
+          ),
+          const SizedBox(height: gapRow),
+        ],
+        SecondaryButton('Add a section', icon: Ph.plus, onTap: _addSection),
+        if (jobs.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Padding(padding: const EdgeInsets.only(top: 1), child: Icon(Ph.info, size: 16, color: faint)),
+              const SizedBox(width: 10),
+              Expanded(child: Fig('Keep the app open while files are added. Students see a file once it has finished, and are told about it then.', style: labelStyle)),
+            ]),
+          ),
+        ],
       ],
     ]);
+  }
+
+  /// The files with the typed words in their name, from every section, each saying which section it is in.
+  List<Widget> _found(List<LibSection> sections, String q) {
+    final found = findFiles(sections, q);
+    if (found.isEmpty) return [NothingFound(q)];
+    return [
+      SectionCard(
+        name: 'Found',
+        count: found.length,
+        rows: [
+          for (final x in found)
+            FileRowView(
+              file: x.file,
+              section: x.section.name,
+              highlight: q,
+              onTap: () => _open(x.section, x.file),
+              trailing: RowAction(icon: Ph.dotsThreeVertical, label: 'Options for ${x.file.name}', onTap: () => _fileMenu(x.section, x.file)),
+            ),
+        ],
+      ),
+    ];
   }
 
   Widget _empty() => Column(children: [

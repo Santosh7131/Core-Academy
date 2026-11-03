@@ -158,11 +158,25 @@ class _ClientsScreenState extends State<ClientsScreen> with WidgetsBindingObserv
           child: FactList([
             ('Tutors', f.count(f.asInt(t['tutors']))),
             ('API requests, 30 days', f.count(f.asInt(t['requests_month']))),
+            if (t['library_bytes'] != null) ('Library files, all clients', f.size(f.asInt(t['library_bytes']))),
             ('Requests counted since', since == null ? 'not yet' : f.dayLabel(since.toLocal())),
           ]),
         ),
       ],
     ];
+  }
+
+  /// "Library 412 MB of 2 GB", turning amber from four fifths of the limit; "No Library files yet" for a tuition with nothing on its shelves.
+  Widget _libraryLine(Map<String, dynamic> lib) {
+    final used = f.asInt(lib['bytes']);
+    final limit = f.asInt(lib['quota_bytes']);
+    final nothing = f.asInt(lib['files']) == 0 && used == 0;
+    final full = nearlyFull(used, limit);
+    return Fig(
+      nothing ? 'No Library files yet' : 'Library ${f.size(used)}${limit > 0 ? ' of ${f.size(limit)}' : ''}',
+      style: labelStyle.copyWith(color: full ? warning : muted),
+      maxLines: 2,
+    );
   }
 
   Widget _row(Map<String, dynamic> c) {
@@ -171,14 +185,22 @@ class _ClientsScreenState extends State<ClientsScreen> with WidgetsBindingObserv
     final students = f.asInt(c['students']);
     final pending = f.asInt(c['pending']);
     final seen = f.parseTime(c['last_active_at']);
+    final library = c['library'] is Map ? Map<String, dynamic>.from(c['library'] as Map) : null;
     return RowTile(
       leading: AppAvatar(name: '${c['name']}', seed: '${c['id']}'),
       title: '${c['name']}',
-      // Two lines, so the break never falls in the middle of a fact.
-      meta: [
-        [if (c['owner'] != null) '${c['owner']}', f.plural(students, 'student'), if (pending > 0) '$pending waiting'].join(' · '),
-        seen == null ? 'Never used' : 'Active ${f.ago(seen)}',
-      ].join('\n'),
+      // Two lines, then the Library, so the break never falls in the middle of a fact.
+      metaWidget: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Fig(
+          [
+            [if (c['owner'] != null) '${c['owner']}', f.plural(students, 'student'), if (pending > 0) '$pending waiting'].join(' · '),
+            seen == null ? 'Never used' : 'Active ${f.ago(seen)}',
+          ].join('\n'),
+          style: labelStyle.copyWith(color: muted),
+          maxLines: 2,
+        ),
+        if (library != null) _libraryLine(library),
+      ]),
       trailing: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
         Fig(f.rupees(f.asDouble(ai['cost_month_inr'])), style: rowTitleStyle),
         const SizedBox(height: 2),

@@ -6,8 +6,8 @@ import { tq, tq1, tx } from '../lib/db.ts';
 import { bad, HttpError, notFound, str, uuid } from '../lib/http.ts';
 import { levelParam } from '../lib/levels.ts';
 import {
-  bytesUsed, discardObjects, downloadName, fileType, groupIdOf, looksLike, MAX_FILE_BYTES, MAX_FILES_PER_SECTION, MAX_SECTIONS, newFileKey,
-  ownFile, ownSection, PART_BYTES, partSizes, quotaBytes, shelfOf, STUDENT_FILE_JOINS, STUDENT_SEES, sweepStaleUploads,
+  announceFiles, bytesUsed, discardObjects, downloadName, FILE_COLUMNS, fileType, groupIdOf, looksLike, MAX_FILE_BYTES, MAX_FILES_PER_SECTION, MAX_SECTIONS,
+  newFileKey, ownFile, ownSection, PART_BYTES, partSizes, putInOrder, quotaBytes, shelfOf, STUDENT_FILE_JOINS, STUDENT_SEES, sweepStaleUploads,
   type FileRow, type Shelf,
 } from '../lib/library.ts';
 import { fileUrl, finishMultipart, objectSize, partUrl, peekObject, startMultipart, uploadedParts, uploadUrl } from '../lib/storage.ts';
@@ -95,6 +95,52 @@ libraryRoutes.post('/groups/:cls/:subject/library/sections', async (c) => {
 libraryRoutes.post('/courses/:id/library/sections', async (c) => {
   const { T, shelf } = await courseShelf(c);
   return addSection(c, T, shelf);
+});
+
+/** A list of ids sent in the body, as many as one shelf can hold. */
+function idList(v: unknown, what: string): string[] {
+  if (!Array.isArray(v) || v.length > Math.max(MAX_SECTIONS, MAX_FILES_PER_SECTION)) throw bad(`${what} must be a list.`);
+  return v.map((x) => uuid(x, what));
+}
+
+/**
+ * Puts a shelf's sections in the order sent: every section of the shelf once, first to last. The answer is the shelf as it now stands.
+ * A list that is not exactly the shelf's sections (another tutor added or removed one) is refused, so nothing is scrambled.
+ */
+async function orderSections(c: Context<AppEnv>, T: string, shelf: Shelf | null) {
+  const ids = idList((await readBody(c)).ids, 'ids');
+  if (shelf) await putInOrder('class_sections', T, { sql: `${shelf.column} = $1`, params: [shelf.id] }, ids);
+  else if (ids.length) throw new HttpError(409, 'out_of_date', 'This list changed since you opened it. Look at it again, then move things.');
+  return c.json(await shelfResponse(T, shelf));
+}
+
+libraryRoutes.put('/groups/:cls/:subject/library/sections/order', async (c) => {
+  const { T, shelf } = await groupShelf(c, false);
+  return orderSections(c, T, shelf);
+});
+
+libraryRoutes.put('/courses/:id/library/sections/order', async (c) => {
+  const { T, shelf } = await courseShelf(c);
+  return orderSections(c, T, shelf);
+});
+
+/** Puts the files of a section in the order sent: every finished file of the section once, first to last. */
+libraryRoutes.put('/library/sections/:id/files/order', async (c) => {
+  const T = tuitionOf(c).id;
+  const sec = await ownSection(T, uuid(c.req.param('id'), 'section id'));
+  await putInOrder('class_files', T, { sql: `section_id = $1 and status = 'ready'`, params: [sec.id] }, idList((await readBody(c)).ids, 'ids'));
+  const files = await tq(T, `select ${FILE_COLUMNS} from class_files f where f.section_id = $1 and f.tuition_id = @T and f.status = 'ready' order by f.position, f.created_at, f.name`, [sec.id]);
+  return c.json({ files: files.map(shape) });
+});
+
+/**
+ * Tells the students about files the tutor has just added (the app calls this once, when its uploads are done, so a batch of files is one
+ * notification, and a tutor who does not want to disturb anyone simply does not call it). Each file is announced once.
+ */
+libraryRoutes.post('/library/announce', async (c) => {
+  const ids = idList((await readBody(c)).file_ids, 'file ids');
+  if (!ids.length) throw bad('Say which files were added.');
+  return c.json(await announceFiles(tuitionOf(c).id, ids));
 });
 
 /** Renames a section. The files in it stay. */
@@ -252,11 +298,14 @@ libraryRoutes.post('/library/files/:id/complete', async (c) => {
   if (!head || !looksLike(f.content_type, head)) {
     throw await reject('not_that_type', `That does not look like a real ${f.kind === 'pdf' ? 'PDF' : 'photo'}. Check the file and add it again.`);
   }
+  // A finished file goes to the end of its section.
   const ready = await tq1<FileRow>(
     T,
-    `update class_files set status = 'ready', upload_id = null, ready_at = now() where id = $1 and tuition_id = @T
+    `update class_files set status = 'ready', upload_id = null, ready_at = now(),
+            position = (select coalesce(max(x.position), 0) + 1 from class_files x where x.section_id = $2 and x.status = 'ready')
+      where id = $1 and tuition_id = @T
      returning id, section_id, name, kind, content_type, size_bytes, object_key, upload_id, status, created_at`,
-    [f.id],
+    [f.id, f.section_id],
   );
   return c.json({ file: shape(ready!) });
 });
@@ -279,9 +328,14 @@ libraryRoutes.patch('/library/files/:id', async (c) => {
     sectionId = to.id;
   }
   if (name === undefined && sectionId === f.section_id) return c.json({ file: shape(f) });
+  // A file moved to another section goes to the end of it.
   const row = await tq1<FileRow>(
     T,
-    `update class_files set name = coalesce($2, name), section_id = $3 where id = $1 and tuition_id = @T
+    `update class_files set name = coalesce($2, name), section_id = $3,
+            position = case when $3::uuid is distinct from section_id
+                            then (select coalesce(max(x.position), 0) + 1 from class_files x where x.section_id = $3 and x.status = 'ready')
+                            else position end
+      where id = $1 and tuition_id = @T
      returning id, section_id, name, kind, content_type, size_bytes, object_key, upload_id, status, created_at`,
     [f.id, name ?? null, sectionId],
   );
@@ -331,7 +385,7 @@ studentLibrary.get('/library', async (c) => {
             s.name as section, s.group_id, s.course_id, g.class_level, g.subject_id, sj.name as subject, co.name as course
        from ${STUDENT_FILE_JOINS}
       where ${STUDENT_SEES}
-      order by s.position, s.created_at, f.created_at, f.name`,
+      order by s.position, s.created_at, f.position, f.created_at, f.name`,
     [me.id, me.class_level],
   );
   type Sec = { id: string; name: string; files: ReturnType<typeof shape>[] };

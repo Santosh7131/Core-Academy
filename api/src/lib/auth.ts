@@ -1,7 +1,9 @@
 import { createHash, pbkdf2 as pbkdf2Cb, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
+import type { Context } from 'hono';
 import { createMiddleware } from 'hono/factory';
-import { clientInfo, knowsCourses, recordInstall, tooOld, updateRequired } from './client.ts';
+import { isWriting } from './attempts.ts';
+import { clientInfo, finishingATest, knowsCourses, recordInstall, tooOld, updateRequired } from './client.ts';
 import { pool, q1, type Db } from './db.ts';
 import { HttpError } from './http.ts';
 import { noTuition } from './tuition.ts';
@@ -21,7 +23,8 @@ export type SessionUser = {
 };
 /** The tuition a request is for: the one named in the x-tuition header, else the person's first. */
 export type Tuition = { id: string; name: string; role: 'owner' | 'tutor' | 'student'; class_level: number | null };
-export type AppEnv = { Variables: { user: SessionUser; tuition: Tuition | null } };
+/** `oldApp`: the app is below the minimum build but was let through to finish a test it had started (see mayFinishATest). */
+export type AppEnv = { Variables: { user: SessionUser; tuition: Tuition | null; oldApp?: boolean } };
 
 export async function hashSecret(secret: string, salt = randomBytes(16).toString('base64')) {
   const hash = (await pbkdf2(secret, salt, ITERATIONS, 32, 'sha256')).toString('base64');
@@ -106,6 +109,16 @@ const FORBIDDEN: Record<SessionUser['role'], string> = {
 const TUITION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
+ * Whether a student's app that is too old may still be served: to finish a test they have started, and for anything else while one is
+ * being written (so reopening the app in the middle of a test still takes them back to it). Starting another test is refused all the
+ * same (routes/student.ts), and once the test is handed in the app is asked to update like any other.
+ */
+async function mayFinishATest(c: Context, user: { id: string; role: string }) {
+  if (user.role !== 'student') return false;
+  return finishingATest(c) || (await isWriting(user.id));
+}
+
+/**
  * Bearer-token auth. With a role, other roles get 403. A teacher or student also gets a tuition:
  * the one the app names in x-tuition (they must be an active member of it), else their first.
  * `tuition: 'required'` (the default when a teacher or student route names its role) refuses a
@@ -137,7 +150,10 @@ export const requireUser = (role?: SessionUser['role'], opts: { tuition?: 'requi
     );
     if (!row) throw new HttpError(401, 'signed_out', 'Please log in again.');
     if (role && row.role !== role) throw new HttpError(403, 'forbidden', FORBIDDEN[role]);
-    if (opts.gate !== false && tooOld(c, row.min_build)) throw updateRequired();
+    // An app below the minimum build is turned away, except a student's app finishing a test they have already started.
+    const old = opts.gate !== false && tooOld(c, row.min_build);
+    if (old && !(await mayFinishATest(c, row))) throw updateRequired();
+    c.set('oldApp', old);
     const mode = opts.tuition ?? (role === 'teacher' || role === 'student' ? 'required' : 'none');
     const tuition: Tuition | null = row.t_id ? { id: row.t_id, name: row.t_name!, role: row.t_role!, class_level: row.t_class } : null;
     if (opts.gate !== false && row.role === 'student' && tuition && tuition.class_level === null && !knowsCourses(c)) {

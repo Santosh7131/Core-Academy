@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { pool, q, tq, tq1, type Db } from './db.ts';
-import { bad, notFound } from './http.ts';
+import { bad, HttpError, notFound } from './http.ts';
+import { levelLabel } from './levels.ts';
 import { orphansAmong } from './orphans.ts';
+import { pushToUsers } from './push.ts';
 import { abortMultipart, deleteObjects, listObjects } from './storage.ts';
 import { ensureGroup } from './tuition.ts';
 
@@ -103,7 +105,10 @@ export async function ownFile(tuition: string, id: string, db: Db = pool): Promi
 /** `where` for sections of a group (by id) or of a course: the column a section is of. */
 export type Shelf = { column: 'group_id' | 'course_id'; id: string };
 
-/** The sections of a shelf with their finished files, in the order the tutor made them and added the files. */
+/**
+ * The sections of a shelf with their finished files, in the order the tutor put them: sections by position, files by position within
+ * their section, and then (for files made before positions existed, which all hold 0) the day they were added and their name.
+ */
 export async function shelfOf(tuition: string, shelf: Shelf | null) {
   if (!shelf) return { sections: [], files: 0, bytes: 0 };
   const sections = await tq<{ id: string; name: string; position: number; created_at: Date }>(
@@ -114,7 +119,7 @@ export async function shelfOf(tuition: string, shelf: Shelf | null) {
   const files = await tq(
     tuition,
     `select ${FILE_COLUMNS} from class_files f join class_sections s on s.id = f.section_id
-      where f.tuition_id = @T and s.${shelf.column} = $1 and f.status = 'ready' order by f.created_at, f.name`,
+      where f.tuition_id = @T and s.${shelf.column} = $1 and f.status = 'ready' order by f.position, f.created_at, f.name`,
     [shelf.id],
   );
   return {
@@ -148,6 +153,114 @@ export const courseLibraryCount = (tuition: string, courseId: string) => shelfCo
 export async function bytesUsed(tuition: string): Promise<number> {
   const r = await tq1<{ n: number }>(tuition, 'select coalesce(sum(size_bytes), 0) as n from class_files where tuition_id = @T');
   return Number(r?.n ?? 0);
+}
+
+export type LibraryUsage = { files: number; pdfs: number; photos: number; uploading: number; bytes: number; pdf_bytes: number; photo_bytes: number };
+
+/**
+ * What every tuition keeps on its shelves, for the developer's app: finished files, how many are PDFs and how many photos (with the bytes
+ * of each), and uploads still going. `bytes` is everything the tuition is charged for, uploads still going included, so it can be more
+ * than the two kinds added up.
+ */
+export async function libraryUsage(): Promise<Map<string, LibraryUsage>> {
+  const rows = await q<Record<keyof LibraryUsage | 'tuition_id', number | string>>(
+    `select tuition_id,
+            count(*) filter (where status = 'ready') as files,
+            count(*) filter (where status = 'ready' and kind = 'pdf') as pdfs,
+            count(*) filter (where status = 'ready' and kind = 'photo') as photos,
+            count(*) filter (where status = 'uploading') as uploading,
+            coalesce(sum(size_bytes) filter (where status = 'ready' and kind = 'pdf'), 0) as pdf_bytes,
+            coalesce(sum(size_bytes) filter (where status = 'ready' and kind = 'photo'), 0) as photo_bytes,
+            coalesce(sum(size_bytes), 0) as bytes
+       from class_files group by tuition_id`,
+  );
+  return new Map(
+    rows.map((r) => [
+      String(r.tuition_id),
+      {
+        files: Number(r.files), pdfs: Number(r.pdfs), photos: Number(r.photos), uploading: Number(r.uploading),
+        bytes: Number(r.bytes), pdf_bytes: Number(r.pdf_bytes), photo_bytes: Number(r.photo_bytes),
+      },
+    ]),
+  );
+}
+
+/**
+ * Puts the ids in this order and gives each the position it now has (1, 2, 3 ...). The list must be every item of the shelf or section
+ * once, so a screen that was out of date (another tutor added one) is told to look again instead of scrambling the order.
+ */
+export async function putInOrder(table: 'class_sections' | 'class_files', tuition: string, where: { sql: string; params: unknown[] }, ids: string[]) {
+  const have = await tq<{ id: string }>(tuition, `select id from ${table} where tuition_id = @T and ${where.sql}`, where.params);
+  const same = ids.length === have.length && new Set(ids).size === ids.length && have.every((h) => ids.includes(h.id));
+  if (!same) throw new HttpError(409, 'out_of_date', 'This list changed since you opened it. Look at it again, then move things.');
+  await tq(
+    tuition,
+    `update ${table} t set position = x.n::int from unnest($1::uuid[]) with ordinality as x(id, n) where t.id = x.id and t.tuition_id = @T`,
+    [ids],
+  );
+}
+
+/**
+ * Tells the students about files the tutor has just added: one notification for each shelf the files are on, naming them. Each file is
+ * told once (announced_at), so asking again, or for a file that is not ready or not this tuition's, tells nobody twice. Returns how many
+ * files were new, how many students they were for and how many phones the notices reached.
+ */
+export async function announceFiles(tuition: string, ids: string[]): Promise<{ files: number; students: number; phones: number }> {
+  const told = await tq<{ name: string; group_id: string | null; course_id: string | null }>(
+    tuition,
+    `update class_files f set announced_at = now() from class_sections s
+      where f.id = any($1::uuid[]) and f.tuition_id = @T and f.status = 'ready' and f.announced_at is null and s.id = f.section_id
+      returning f.name, s.group_id, s.course_id`,
+    [ids],
+  );
+  const byShelf = new Map<string, { column: 'group_id' | 'course_id'; id: string; names: string[] }>();
+  for (const f of told) {
+    const column = f.group_id ? 'group_id' : 'course_id';
+    const id = (f.group_id ?? f.course_id)!;
+    const shelf = byShelf.get(id) ?? byShelf.set(id, { column, id, names: [] }).get(id)!;
+    shelf.names.push(f.name);
+  }
+  let students = 0;
+  let phones = 0;
+  for (const shelf of byShelf.values()) {
+    const people = await studentsOf(tuition, shelf);
+    const listed = shelf.names.length <= 2 ? shelf.names.join(' and ') : `${shelf.names[0]} and ${shelf.names.length - 1} more`;
+    const verb = shelf.names.length === 1 ? 'was' : 'were';
+    students += people.length;
+    phones += await pushToUsers(people.map((p) => p.id), { title: people.label, body: `${listed} ${verb} added to the Library.` });
+  }
+  return { files: told.length, students, phones };
+}
+
+/** The students who can read a shelf, and what the shelf is called for a notification title ("Class 9 Maths", or the course's name). */
+async function studentsOf(tuition: string, shelf: { column: 'group_id' | 'course_id'; id: string }): Promise<{ id: string }[] & { label: string }> {
+  if (shelf.column === 'group_id') {
+    const g = await tq1<{ class_level: number; subject: string }>(
+      tuition,
+      'select g.class_level, (select name from subjects where id = g.subject_id) as subject from groups g where g.id = $1 and g.tuition_id = @T',
+      [shelf.id],
+    );
+    const rows = await tq<{ id: string }>(
+      tuition,
+      `select m.user_id as id from groups g
+         join memberships m on m.tuition_id = g.tuition_id and m.role = 'student' and m.status = 'active' and m.class_level = g.class_level
+         join users u on u.id = m.user_id and u.active
+        where g.id = $1 and g.tuition_id = @T
+          and exists (select 1 from student_subjects ss where ss.tuition_id = g.tuition_id and ss.student_id = m.user_id and ss.subject_id = g.subject_id)`,
+      [shelf.id],
+    );
+    return Object.assign(rows, { label: g ? `${await levelLabel(tuition, g.class_level)} ${g.subject}` : 'Library' });
+  }
+  const co = await tq1<{ name: string }>(tuition, 'select name from courses where id = $1 and tuition_id = @T', [shelf.id]);
+  const rows = await tq<{ id: string }>(
+    tuition,
+    `select cm.student_id as id from course_members cm
+       join memberships m on m.tuition_id = @T and m.user_id = cm.student_id and m.role = 'student' and m.status = 'active'
+       join users u on u.id = cm.student_id and u.active
+      where cm.course_id = $1`,
+    [shelf.id],
+  );
+  return Object.assign(rows, { label: co?.name ?? 'Library' });
 }
 
 // ---------------------------------------------------------------- throwing files away

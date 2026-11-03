@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/brand.dart';
+import '../core/format.dart' as f;
 import '../core/updater.dart';
 import '../theme.dart';
 import 'kit.dart';
@@ -118,6 +119,56 @@ class _Pill extends StatelessWidget {
           decoration: BoxDecoration(color: actionFill, borderRadius: BorderRadius.circular(rPill), boxShadow: e2),
           child: Text(label, style: chipStyle.copyWith(color: actionInk, fontWeight: FontWeight.w600)),
         ),
+      );
+}
+
+/// A newer version is out and a student is about to start a test: offers the update first, because it closes the app for a moment while
+/// it goes in. True when she chooses to start anyway; false when she closed the card or began the update.
+Future<bool> offerUpdateFirst(BuildContext context, {required Release release, required String testTitle, DateTime? closes}) async {
+  final startAnyway = await showCentredCard<bool>(
+    context,
+    title: 'Update first',
+    subtitle: 'Version ${release.version} is ready · ${_mb(release.size)}',
+    builder: (ctx) => _UpdateFirst(release: release, testTitle: testTitle, closes: closes, onStartAnyway: () => Navigator.of(ctx).pop(true)),
+  );
+  return startAnyway ?? false;
+}
+
+class _UpdateFirst extends StatelessWidget {
+  const _UpdateFirst({required this.release, required this.testTitle, required this.closes, required this.onStartAnyway});
+  final Release release;
+  final String testTitle;
+  final DateTime? closes;
+  final VoidCallback onStartAnyway;
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+        listenable: updater,
+        builder: (context, _) {
+          final step = updater.step;
+          // Once the update is on its way a test must not start: Android closes the app while the new version goes in.
+          final working = step == UpdateStep.downloading || step == UpdateStep.installing;
+          return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Fig('Update now, then start your test. It takes about a minute, and your login, tests and results stay as they are.', style: bodyStyle),
+            if (closes != null) ...[
+              const SizedBox(height: 11),
+              Text.rich(TextSpan(children: [
+                figSpan(testTitle, bodyStyle.copyWith(color: ink, fontWeight: FontWeight.w600)),
+                figSpan(' stays open until ${f.whenDate(closes!)}.', bodyStyle),
+              ])),
+            ],
+            const SizedBox(height: 20),
+            // After the first tap the steps (Android's permission, the download, a failure) show here, as they do on Home.
+            if (step == UpdateStep.ready)
+              PrimaryButton('Update to version ${release.version}', leadingIcon: Ph.arrowCircleUp, onTap: updater.update)
+            else
+              UpdateCard(release: release),
+            if (!working) ...[
+              const SizedBox(height: 4),
+              Center(child: TextAction('Start anyway', onTap: onStartAnyway)),
+            ],
+          ]);
+        },
       );
 }
 

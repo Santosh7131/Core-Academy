@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../core/brand.dart';
@@ -8,9 +10,13 @@ import '../../ui/update_card.dart';
 
 /// Shown instead of every other screen when the server no longer accepts this version of the app (a major update
 /// is out). The router sends everyone here until the new version is installed, signed in or not. The update itself
-/// is the one the Home banner offers: the same steps, with the permission Android asks for once.
+/// is the one the Home banner offers: the same steps, with the permission Android asks for once. It starts by itself
+/// (once) as soon as the new version is known, since there is nothing else to do with this one.
 class UpdateRequiredScreen extends StatefulWidget {
-  const UpdateRequiredScreen({super.key});
+  const UpdateRequiredScreen({super.key, this.startByItself = true});
+
+  /// False only to look at the screen before the update has begun.
+  final bool startByItself;
 
   @override
   State<UpdateRequiredScreen> createState() => _UpdateRequiredScreenState();
@@ -18,17 +24,31 @@ class UpdateRequiredScreen extends StatefulWidget {
 
 class _UpdateRequiredScreenState extends State<UpdateRequiredScreen> {
   bool _checking = false;
+  bool _started = false;
 
   @override
   void initState() {
     super.initState();
-    if (updater.available == null) _check();
+    if (updater.available == null) {
+      _check();
+    } else {
+      _startOnce();
+    }
+  }
+
+  /// Begins the update, once: a failure or a cancelled install shows its card, and Try again is hers to tap.
+  void _startOnce() {
+    if (_started || !widget.startByItself || updater.available == null || updater.step != UpdateStep.ready) return;
+    _started = true;
+    unawaited(updater.update());
   }
 
   Future<void> _check() async {
     setState(() => _checking = true);
     await updater.check(force: true);
-    if (mounted) setState(() => _checking = false);
+    if (!mounted) return;
+    setState(() => _checking = false);
+    _startOnce();
   }
 
   @override

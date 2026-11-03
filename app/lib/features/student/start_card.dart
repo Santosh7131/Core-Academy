@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../../core/format.dart' as f;
+import '../../core/updater.dart';
 import '../../theme.dart';
 import '../../ui/kit.dart';
+import '../../ui/update_card.dart';
 
 /// The test to write now, with its one button. On the home screen and on a course's page.
 class TestHero extends StatelessWidget {
@@ -84,8 +86,13 @@ class AllCaughtUp extends StatelessWidget {
 }
 
 /// The card between the home screen and a test: how big it is, that the marks show at once, one button.
-/// Returns true when the student taps Start.
+/// Returns true when the student taps Start. While a newer version of the app is out a card offers the update first.
 Future<bool> confirmStart(BuildContext context, Map<String, dynamic> t) async {
+  final newer = updater.available;
+  if (newer != null) {
+    final startAnyway = await offerUpdateFirst(context, release: newer, testTitle: '${t['title']}', closes: f.parseTime(t['closes_at']));
+    if (!startAnyway || !context.mounted) return false;
+  }
   final limit = t['time_limit_min'] as int?;
   final facts = [
     f.count(t['question_count'] as int, 'question'),

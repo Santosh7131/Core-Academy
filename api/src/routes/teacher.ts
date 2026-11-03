@@ -11,11 +11,12 @@ import { papersToFinish, recentFinished } from '../lib/home.ts';
 import { bad, bool, date, hasNul, HttpError, int, notFound, optionList, str, uuid, uuidOpt } from '../lib/http.ts';
 import { assertLevel, CLASS_MIN, CUSTOM_MAX, levelIn, levelLabel, levelParam } from '../lib/levels.ts';
 import { groupFileCount, groupLibraryCount, subjectFileCount } from '../lib/library.ts';
-import { afterTestChange } from '../lib/notify.ts';
+import { afterTestChange, remindStudents } from '../lib/notify.ts';
 import { pushConfigured, pushToUsers } from '../lib/push.ts';
-import { mustKeepOrder } from '../lib/questions.ts';
+import { difficultyOf, mustKeepOrder, type Difficulty } from '../lib/questions.ts';
+import { closeTest, staleTests } from '../lib/stale.ts';
 import { declaredSize, deleteObjects, maybeViewUrl, uploadUrl } from '../lib/storage.ts';
-import { MATHS, studentSubjects, subjectIds } from '../lib/subjects.ts';
+import { MATHS, renameSubject, studentSubjects, subjectIds } from '../lib/subjects.ts';
 import {
   defaultSubject, elsewhere, ensureGroup, FIRST_TUITION, memberStudents, newImageKey, ownImageKey, ownQuestions, refreshLogin, taughtSubject,
   taughtSubjectIds,
@@ -460,20 +461,15 @@ teacherRoutes.post('/subjects', async (c) => {
   }
 });
 
+/**
+ * Renames a subject of the tuition, any of them: the standard ones too (lib/subjects.ts). The answer is the subject as it is now, and
+ * its id is a new one when a standard subject was renamed, so the app loads its lists again.
+ */
 teacherRoutes.patch('/subjects/:id', async (c) => {
   const T = tuitionOf(c).id;
   const id = uuid(c.req.param('id'));
   const name = str(await readBody(c), 'name', { max: 40 })!;
-  try {
-    const sj = await tq1(T, 'update subjects set name = $2 where id = $1 and tuition_id = @T returning id, name, sort_order', [id, name]);
-    if (sj) return c.json({ subject: sj });
-  } catch (e: any) {
-    if (e.code === '23505') throw new HttpError(409, 'duplicate', `${name} is already a subject.`);
-    throw e;
-  }
-  const std = await q1('select 1 as x from subjects where id = $1 and tuition_id is null', [id]);
-  if (std) throw new HttpError(409, 'standard_subject', 'This is a standard subject, so its name stays as it is.');
-  throw notFound('This subject');
+  return c.json({ subject: await renameSubject(T, id, name) });
 });
 
 teacherRoutes.delete('/subjects/:id', async (c) => {
@@ -597,8 +593,8 @@ teacherRoutes.get('/home', async (c) => {
       writing: out.reduce((s, g) => s + g.live.reduce((n, x) => n + Number(x.writing), 0), 0),
     },
     ...(knowsCourses(c) ? { courses: await courseCards(T) } : {}),
-    // The simpler Home also lists the tests that finished lately and the papers the tutor has yet to finish.
-    ...(knowsSimpleHome(c) ? { finished: await recentFinished(T), papers: await papersToFinish(T) } : {}),
+    // The simpler Home also lists the tests that finished lately, the papers the tutor has yet to finish and the tests left open for a week.
+    ...(knowsSimpleHome(c) ? { finished: await recentFinished(T), papers: await papersToFinish(T), stale: await staleTests(T) } : {}),
   });
 });
 
@@ -766,7 +762,19 @@ function readQuestionBody(b: Record<string, any>) {
     marks: b.marks === undefined || b.marks === null ? 1 : Number(b.marks),
     keep_option_order: typeof b.keep_option_order === 'boolean' ? b.keep_option_order : mustKeepOrder(opts),
     image_key: typeof b.image_key === 'string' && b.image_key ? b.image_key : null,
+    difficulty: readDifficulty(b),
   };
+}
+
+/**
+ * The difficulty in a request: undefined when it is not sent (a new question is then Medium, an edited one keeps its own), else easy, medium or hard.
+ * A question always has a level, so there is no taking it away.
+ */
+function readDifficulty(b: Record<string, any>): Difficulty | undefined {
+  if (!('difficulty' in b)) return undefined;
+  const d = difficultyOf(b.difficulty);
+  if (!d) throw bad('How hard a question is must be easy, medium or hard.');
+  return d;
 }
 
 /** A group's question: it has a class, and a chapter and subject. */
@@ -787,6 +795,7 @@ function readCourseQuestion(b: Record<string, any>) {
 const QUESTION_COLS = `qq.id, qq.class_level, qq.course_id, qq.chapter_id, ch.name as chapter, qq.subject_id,
   (select name from subjects where id = qq.subject_id) as subject, qq.text, qq.options, qq.correct_option,
   qq.solution, qq.marks, qq.keep_option_order, qq.image_key, qq.source, qq.paper_id, qq.created_at, qq.updated_at,
+  coalesce(qq.difficulty, 'medium') as difficulty, qq.difficulty_by,
   (select exam_name from papers where id = qq.paper_id) as paper, (select category from papers where id = qq.paper_id) as category,
   (select count(*) from test_questions tq where tq.question_id = qq.id) as used_in`;
 
@@ -848,6 +857,9 @@ teacherRoutes.get('/questions', async (c) => {
   const g = groupFilter(c.req.query('group'));
   const courseId = uuidOpt(c.req.query('course'), 'course');
   if (courseId) await ownCourse(T, courseId);
+  // ?difficulty=easy|medium|hard picks the questions with that level (a question from before levels counts as Medium).
+  const level = c.req.query('difficulty');
+  if (level && !difficultyOf(level)) throw bad('Difficulty must be easy, medium or hard.');
   const rows = await tq(
     T,
     `select ${QUESTION_COLS} from questions qq left join chapters ch on ch.id = qq.chapter_id left join papers pa on pa.id = qq.paper_id
@@ -860,6 +872,7 @@ teacherRoutes.get('/questions', async (c) => {
         and ($6::text is null or pa.category = $6)
         and (not $7 or pa.category is null)
         and qq.course_id is not distinct from $8::uuid
+        and ($9::text is null or coalesce(qq.difficulty, 'medium') = $9)
       order by ${g.source === 'paper'
         // A paper group: newest paper first, each paper's questions in the order they were printed.
         ? `pa.created_at desc, qq.paper_id, (select d.page_no * 1000 + d.seq from paper_drafts d where d.question_id = qq.id limit 1)`
@@ -867,7 +880,7 @@ teacherRoutes.get('/questions', async (c) => {
                ch.sort_order nulls last, ch.name, qq.created_at desc`}
       limit ${g.source ? 1000 : 300}`,
     [cls, chapter ? uuid(chapter, 'chapter') : null, search?.trim() || null, subject ? uuid(subject, 'subject') : null,
-      g.source, g.category, g.uncategorised, courseId],
+      g.source, g.category, g.uncategorised, courseId, level || null],
   );
   return c.json({ questions: await Promise.all(rows.map(withImage)) });
 });
@@ -892,10 +905,10 @@ teacherRoutes.post('/questions', async (c) => {
   const row = await tq1(
     T,
     `insert into questions (tuition_id, class_level, chapter_id, text, options, correct_option, solution, marks, keep_option_order, image_key, created_by,
-                            subject_id)
-     values (@T, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) returning id`,
+                            subject_id, difficulty, difficulty_by)
+     values (@T, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, coalesce($12::text, 'medium'), case when $12::text is null then null else 'tutor' end) returning id`,
     [x.class_level, x.chapter_id, x.text, x.options, x.correct_option, x.solution, x.marks, x.keep_option_order, x.image_key, c.get('user').id,
-      subject],
+      subject, x.difficulty ?? null],
   );
   await ensureGroup(T, x.class_level, subject);
   return c.json({ id: row.id }, 201);
@@ -917,9 +930,12 @@ teacherRoutes.patch('/questions/:id', async (c) => {
     await cx.query(
       `update questions set class_level = $2, chapter_id = $3, text = $4, options = $5, correct_option = $6, solution = $7,
                             marks = $8, keep_option_order = $9, image_key = $10, updated_at = now(),
-                            subject_id = coalesce($11::uuid, subject_id)
+                            subject_id = coalesce($11::uuid, subject_id),
+                            difficulty = case when $12::boolean then $13::text else difficulty end,
+                            difficulty_by = case when $12::boolean then 'tutor' else difficulty_by end
         where id = $1`,
-      [id, x.class_level, x.chapter_id, x.text, x.options, x.correct_option, x.solution, x.marks, x.keep_option_order, x.image_key, subject],
+      [id, x.class_level, x.chapter_id, x.text, x.options, x.correct_option, x.solution, x.marks, x.keep_option_order, x.image_key, subject,
+        x.difficulty !== undefined, x.difficulty ?? null],
     );
     // A corrected answer or new marks re-mark every submitted test that had this question, so
     // a student who chose the right option gets the mark even if the key was wrong when she wrote it.
@@ -1157,13 +1173,32 @@ teacherRoutes.post('/tests/:id/publish', async (c) => {
     if (!own.closes_at) await pool.query('update tests set closes_at = $2 where id = $1', [id, defaultClosing()]);
     else if (own.closes_at <= own.now) throw new HttpError(400, 'closing_passed', 'The closing time has already passed. Choose a later one.');
   }
+  // Posting stamps the day it was posted, which the "open for a week" warning counts from; taking a test down clears it with the rest.
   const t = await q1(
-    `update tests set status = $2 where id = $1 returning id, status`,
+    `update tests set status = $2,
+            published_at = case when $2 = 'published' then coalesce(published_at, now()) end,
+            stale_notified_at = case when $2 = 'published' then stale_notified_at end,
+            nudged_at = case when $2 = 'published' then nudged_at end
+      where id = $1 returning id, status`,
     [id, published ? 'published' : 'draft'],
   );
   // Students hear about it after the teacher's screen has its answer.
   if (published) waitUntil(afterTestChange());
   return c.json({ test: t });
+});
+
+/**
+ * Closes a test now, which the warning for a test left open a week offers: nobody can start it any more, and a student still writing
+ * has a few minutes to finish (lib/stale.ts).
+ */
+teacherRoutes.post('/tests/:id/close', async (c) => {
+  const test = await closeTest(tuitionOf(c).id, uuid(c.req.param('id'), 'test id'));
+  return c.json({ test });
+});
+
+/** Reminds the students who have not handed a test in, with a notification (lib/notify.ts). The warning on Home then stays away for a week. */
+teacherRoutes.post('/tests/:id/remind', async (c) => {
+  return c.json(await remindStudents(tuitionOf(c).id, uuid(c.req.param('id'), 'test id')));
 });
 
 /** Deletes a test. One students have written goes only with ?with_results=1, and takes their results with it. */
