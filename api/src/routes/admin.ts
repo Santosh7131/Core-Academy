@@ -536,7 +536,11 @@ adminRoutes.get('/clients/:id', async (c) => {
       students: num(t.students), tutors: num(t.tutors), pending: num(t.pending), groups: num(t.groups), tests: num(t.tests), papers: num(t.papers),
       last_active_at: t.last_active_at,
     },
-    storage: await storageOf(id),
+    // The page must still open when the storage listing cannot be had; the app shows the Storage section only when it is there.
+    storage: await storageOf(id).catch((e) => {
+      console.error('storage listing failed', e?.message ?? e);
+      return null;
+    }),
     requests: { days: requests, total: num(totals?.total), month: num(totals?.month), errors: num(totals?.errors), counting_since: totals?.since ?? null },
     ai: {
       cost_month_inr: rupees(costOf(month)),
