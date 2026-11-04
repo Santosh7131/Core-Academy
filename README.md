@@ -545,6 +545,7 @@ and the scripts that read it would then point at the live database.
 | `node tools/answers-test.ts` | 45 checks of the answers and second-opinion steps with scripted models (the API runs in the process against the dev database, every AI call is answered by a script, no keys or quota needed): a model down, slow or answering junk, two that split or doubt, a partial answer kept, the writer's own answer, a question left "not checked yet" and asked again. |
 | `node tools/replace-test.ts` | Checks that the question maker replaces what its checks could not settle and never touches what the tutor has, what waits for a second opinion, what a call is working on, or an uploaded paper. The new questions come from the real writer, so the API needs its AI keys. Dev only. |
 | `node tools/courses-test.ts` | 114 checks of courses: people from any class or with no class at all, a course's papers, questions and tests kept out of every group, app versions from before courses kept away from them and told to update, the minimum-build gate, and deleting a course while its people stay. Against the local dry-run API (`--base http://127.0.0.1:8787 --log server.log`) it adds a check that the push names the course. It makes its own data and removes it. Dev only. `tools/courses-demo.ts` sets up a small demo of courses on dev (`--clear` removes it). |
+| `node tools/bank-test.ts` | 28 checks of the Bank (`GET /teacher/bank`, app 1.8.1): every paper the tutor has posted once, with how often it was used and the latest test to post it again from. The same questions in another order, fewer of them or for another class are other papers; a draft, a test taken down or a test deleted is no longer a use; who the test went to (the group, or students chosen one by one) is in the row. It makes its own questions and tests through the API, needs no database connection, and removes them again. Dev only. |
 | `node tools/v180-extras-test.ts` | 135 checks of what app 1.8.0 adds on the server: the update gate (a test already started can still be finished), a test left open for a week (the list on Home, Close the test, Remind the students, and the tutor's notification), Library files in the tutor's own order and the notice to students, renaming any subject, easy, medium and hard levels on questions and drafts, and storage per tuition for the developer's app. The notifications are only seen against the local dry-run API (`--base http://127.0.0.1:8787 --log server.log`); `--ai` also has the AI write a few questions. It makes its own data and removes it. Dev only. |
 | `node tools/text-test.mjs` | Hindi and Tamil text handling, the test writer's answer matching and suggested usernames. |
 | `node tools/summary-test.ts --log server.log` | 7 checks that the evening summary goes to each tuition's own tutors (after 8 pm India time; local API, dry-run push). |
@@ -648,6 +649,18 @@ to uninstall and reinstall.
    ```powershell
    .\tools\phone.ps1 release
    ```
+
+   To try the version on a phone before it goes live, with no risk to live data, build the
+   dev copy instead and send or install `tools/out/core-academy-dev-<version>.apk`:
+
+   ```powershell
+   .\tools\build-dev-copy.ps1
+   ```
+
+   It is the release build (so it feels as the real one will) under its own app id
+   (`com.coreacademy.core_academy.dev`, "Core Academy Dev"), so it sits beside the live app,
+   pointed at the dev server alone. The script checks all of that in the finished file and stops
+   if the live server's address is inside it.
 
 3. Write what changed in a plain text file, a line per change. GitHub shows it on the
    release, and the app shows it in its "What is new" card.

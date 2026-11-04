@@ -9,6 +9,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/intl.dart' show DateFormat;
 
+import 'support/time_wheels.dart';
+
 /// The space inside a time or a date that does not let a line break (see core/format.dart).
 const _nb = '\u00A0';
 
@@ -187,6 +189,56 @@ void main() {
       await _show(t, null, noneLabel: 'Now');
       expect(find.text('Now'), findsOneWidget);
       expect(find.byType(SelectField), findsOneWidget);
+    });
+  });
+
+  // The Time box used to open a list of half hours from 6:00 am to 9:30 pm. It opens wheels now, for any time to the minute.
+  group('the Time box', () {
+    Future<void> setTime(WidgetTester t, int hour, int minute) async {
+      turnWheels(t, hour, minute);
+      await t.pump();
+      await t.tap(find.text('Done'));
+      await t.pumpAndSettle();
+    }
+
+    testWidgets('opens wheels that start at the time it shows', (t) async {
+      await _show(t, _at(1, hour: 18, minute: 25));
+      await t.tap(find.text('6:25${_nb}pm'));
+      await t.pumpAndSettle();
+      expect(find.text('Time'), findsOneWidget, reason: 'the title of the card');
+      expect(wheelsShow(t), 18 * 60 + 25);
+    });
+
+    testWidgets('any time can be picked, to the minute, and the day stays', (t) async {
+      DateTime? picked;
+      await _show(t, _at(1, hour: 18), onChanged: (v) => picked = v);
+      await t.tap(find.text('6:00${_nb}pm'));
+      await t.pumpAndSettle();
+      await setTime(t, 6, 25);
+      expect(picked, _at(1, hour: 6, minute: 25));
+    });
+
+    testWidgets('the hours the half-hour list left out can be picked: the small hours and late at night', (t) async {
+      for (final (hour, minute) in [(0, 5), (4, 40), (23, 45), (23, 59)]) {
+        DateTime? picked;
+        await _show(t, _at(2, hour: 18), onChanged: (v) => picked = v);
+        await t.tap(find.text('6:00${_nb}pm'));
+        await t.pumpAndSettle();
+        await setTime(t, hour, minute);
+        expect(picked, _at(2, hour: hour, minute: minute), reason: '$hour:$minute');
+      }
+    });
+
+    testWidgets('closing the card without Done changes nothing', (t) async {
+      DateTime? picked;
+      await _show(t, _at(1, hour: 18), onChanged: (v) => picked = v);
+      await t.tap(find.text('6:00${_nb}pm'));
+      await t.pumpAndSettle();
+      turnWheels(t, 9, 9);
+      await t.pump();
+      await t.tap(find.byIcon(Ph.x));
+      await t.pumpAndSettle();
+      expect(picked, isNull);
     });
   });
 }

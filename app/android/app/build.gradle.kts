@@ -63,6 +63,12 @@ android {
         }
         release {
             signingConfig = signingConfigs.getByName(if (keystorePropertiesFile.exists()) "release" else "debug")
+            // A copy to try before a version goes live (tools/build-dev-copy.ps1 passes -PdevCopy=true): release speed, but its own app id and
+            // name, so it sits beside the live app. The same script gives it the dev server's address.
+            if (project.hasProperty("devCopy")) {
+                applicationIdSuffix = ".dev"
+                manifestPlaceholders["appLabel"] = "Core Academy Dev"
+            }
         }
     }
 }

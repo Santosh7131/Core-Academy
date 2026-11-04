@@ -18,7 +18,7 @@ const names = [
   'chalkboardTeacher', 'downloadSimple', 'export', 'listChecks', 'squaresFour', 'sortAscending', 'funnel', 'crop',
   'fileText', 'arrowCircleUp', 'dotsThreeVertical', 'sparkle', 'wifiSlash', 'clockCountdown', 'caretLeft', 'warningCircle', 'graduationCap', 'userMinus', 'circle',
   'arrowsOutSimple', 'linkSimple', 'scissors', 'calendarBlank', 'folderSimple',
-  'hourglassMedium', 'bellRinging', 'lockSimple', 'chartBarHorizontal',
+  'hourglassMedium', 'bellRinging', 'lockSimple', 'chartBarHorizontal', 'bank',
 ];
 
 // The developer's admin app (admin/).

@@ -12,6 +12,7 @@ import '../../core/format.dart' as f;
 import '../../core/pool.dart';
 import '../../theme.dart';
 import '../../ui/kit.dart';
+import '../../ui/time_wheels.dart';
 import '../../ui/tokens.dart';
 import 'common.dart';
 import 'make_test.dart';
@@ -1496,7 +1497,7 @@ class _FormResult {
 /// The times of one test, or of every test: when it opens and closes, how long it takes, and the order of its questions. With a
 /// [name] and a [day] it is the form of a single test.
 class _TimesForm extends StatefulWidget {
-  const _TimesForm({required this.initial, this.name, this.day, this.today, required this.saveLabel, this.canShare = false});
+  const _TimesForm({required this.initial, this.name, this.day, this.today, required this.saveLabel, this.canShare = false, this.blockPast = false, this.compact = false});
   final _Times initial;
   final String? name;
   final DateTime? day;
@@ -1505,6 +1506,12 @@ class _TimesForm extends StatefulWidget {
 
   /// Offers "Use the same as the others".
   final bool canShare;
+
+  /// For a test about to be posted at once: a closing time that has already passed cannot be saved.
+  final bool blockPast;
+
+  /// Less space between the boxes, so the button at the bottom stays in sight on a phone of usual height.
+  final bool compact;
 
   @override
   State<_TimesForm> createState() => _TimesFormState();
@@ -1515,7 +1522,6 @@ class _TimesFormState extends State<_TimesForm> {
   late DateTime? _day = widget.day;
   late final TextEditingController _name = TextEditingController(text: widget.name ?? '');
 
-  static final _clocks = [for (var m = 5 * 60; m <= 23 * 60 + 30; m += 30) m];
   static const _limits = [10, 15, 20, 30, 45, 60, 90, 120, 180];
 
   @override
@@ -1535,9 +1541,10 @@ class _TimesFormState extends State<_TimesForm> {
     if (c?.value != null && mounted) setState(() => _day = DateTime(today.year, today.month, today.day + c!.value!));
   }
 
+  /// Any time of day, to the minute, on wheels.
   Future<void> _pickClock(String title, int value, void Function(int) set) async {
-    final c = await showChoices<int>(context, title: title, options: [for (final m in {..._clocks, value}.toList()..sort()) Choice(m, _clock(m))], selected: value);
-    if (c?.value != null && mounted) setState(() => set(c!.value!));
+    final m = await pickTimeOfDay(context, title: title, minutes: value);
+    if (m != null && mounted) setState(() => set(m));
   }
 
   Future<void> _pickLimit() async {
@@ -1556,44 +1563,109 @@ class _TimesFormState extends State<_TimesForm> {
   @override
   Widget build(BuildContext context) {
     final backwards = _t.closes <= _t.opens;
+    final past = widget.blockPast && _day != null && !_at(_day!, _t.closes).isAfter(DateTime.now());
+    final gap = widget.compact ? 14.0 : 22.0;
     return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       if (widget.name != null) ...[
         const FormLabel('Name', top: 0),
         GroupedInputs(children: [BareField(controller: _name, placeholder: 'Name of the test', capitalization: TextCapitalization.sentences, maxLength: 80)]),
       ],
       if (_day != null) ...[
-        const FormLabel('Day'),
+        FormLabel('Day', top: gap),
         SelectField(value: f.dayTitle(_day!), onTap: _pickDay),
       ],
       Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            FormLabel('Opens', top: widget.name == null ? 0 : 22),
+            FormLabel('Opens', top: widget.name == null ? 0 : gap),
             SelectField(value: _clock(_t.opens), onTap: () => _pickClock('Opens', _t.opens, (m) => _t = _t.copyWith(opens: m))),
           ]),
         ),
         const SizedBox(width: 10),
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            FormLabel('Closes', top: widget.name == null ? 0 : 22),
+            FormLabel('Closes', top: widget.name == null ? 0 : gap),
             SelectField(value: _clock(_t.closes), onTap: () => _pickClock('Closes', _t.closes, (m) => _t = _t.copyWith(closes: m))),
           ]),
         ),
       ]),
-      const FormLabel('Time limit'),
+      FormLabel('Time limit', top: gap),
       SelectField(value: _limitWords(_t.limit), onTap: _pickLimit),
-      const FormLabel('Order of the questions'),
+      FormLabel('Order of the questions', top: gap),
       Wrap(spacing: 8, runSpacing: 8, children: [
         SegChip('Shuffled', selected: _t.shuffle, onTap: () => setState(() => _t = _t.copyWith(shuffle: true))),
         SegChip('Same for all', selected: !_t.shuffle, onTap: () => setState(() => _t = _t.copyWith(shuffle: false))),
       ]),
       if (backwards) ...[const SizedBox(height: 14), const InlineNotice('The test has to close after it opens.', icon: Ph.warning)],
-      const SizedBox(height: 20),
-      PrimaryButton(widget.saveLabel, onTap: backwards ? null : () => Navigator.of(context).pop(_FormResult(name: widget.name == null ? null : _name.text, day: _day, times: _t))),
+      if (!backwards && past) ...[const SizedBox(height: 14), const InlineNotice('That closing time has already passed. Choose a later time or day.', icon: Ph.warning)],
+      SizedBox(height: widget.compact ? 16 : 20),
+      PrimaryButton(widget.saveLabel, onTap: backwards || past ? null : () => Navigator.of(context).pop(_FormResult(name: widget.name == null ? null : _name.text, day: _day, times: _t))),
       if (widget.canShare) ...[
         const SizedBox(height: 8),
         Center(child: TextAction('Use the same as the others', onTap: () => Navigator.of(context).pop(_FormResult(name: _name.text, day: _day, useShared: true)))),
       ],
     ]);
   }
+}
+
+// ---------------------------------------------------------------- posting a paper again
+
+/// When and how a paper from the Bank is posted again.
+class WhenToPost {
+  const WhenToPost({required this.name, required this.opens, required this.closes, required this.limit, required this.shuffle});
+
+  /// The test's name: the paper's own unless the tutor changed it.
+  final String name;
+
+  /// Null when it opens at once: the opening time chosen has passed.
+  final DateTime? opens;
+  final DateTime closes;
+
+  /// Minutes; null is a minute and a half a question.
+  final int? limit;
+  final bool shuffle;
+}
+
+/// Asks when to post a paper again, on its own card: the day (tomorrow to begin with), when it opens and closes, the time limit and the
+/// order of its questions. It starts from how the paper's latest test ran ([opened] and [closed] give its times of day), so a paper given
+/// from 4 to 6 in the evening is offered for the same hours. Null when the tutor closed the card without posting.
+Future<WhenToPost?> askWhenToPost(
+  BuildContext context, {
+  required String name,
+  required String subtitle,
+  DateTime? opened,
+  DateTime? closed,
+  int? limit,
+  bool shuffle = true,
+}) async {
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  int clock(DateTime? t, int fallback) => t == null ? fallback : t.toLocal().hour * 60 + t.toLocal().minute;
+  var opens = clock(opened, 8 * 60), closes = clock(closed, 21 * 60);
+  // A test that ran over midnight has no times of day that fit one day: start from the usual ones.
+  if (closes <= opens) (opens, closes) = (8 * 60, 21 * 60);
+  final r = await showCentredCard<_FormResult>(
+    context,
+    title: 'Post again',
+    subtitle: subtitle,
+    builder: (ctx) => _TimesForm(
+      initial: _Times(opens: opens, closes: closes, limit: limit, shuffle: shuffle),
+      name: name,
+      day: DateTime(today.year, today.month, today.day + 1),
+      today: today,
+      saveLabel: 'Post',
+      blockPast: true,
+      compact: true,
+    ),
+  );
+  final times = r?.times, day = r?.day;
+  if (r == null || times == null || day == null) return null;
+  final opensAt = _at(day, times.opens);
+  return WhenToPost(
+    name: (r.name ?? '').trim().isEmpty ? name : r.name!.trim(),
+    opens: opensAt.isAfter(DateTime.now()) ? opensAt : null,
+    closes: _at(day, times.closes),
+    limit: times.limit,
+    shuffle: times.shuffle,
+  );
 }

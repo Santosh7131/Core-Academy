@@ -4,12 +4,15 @@ import '../theme.dart';
 import 'kit.dart';
 
 /// The floating navigation surface (solid, no blur): a pill of icon-and-label tabs that sits above the screen's
-/// content. The tutor's Home, Courses and Groups use it, and so does a student's Tests and Courses.
+/// content. The tutor's Home, Groups & courses and Bank use it, and so does a student's Tests and Courses.
 class FloatingTabs extends StatelessWidget {
-  const FloatingTabs({super.key, required this.items, required this.index, required this.onTap});
+  const FloatingTabs({super.key, required this.items, required this.index, required this.onTap, this.weights});
 
   /// Each tab's icon and label.
   final List<(IconData, String)> items;
+
+  /// How wide each tab is next to the others; equal widths when null. A tab with a long name takes more of the bar.
+  final List<double>? weights;
   final int index;
   final ValueChanged<int> onTap;
 
@@ -32,6 +35,7 @@ class FloatingTabs extends StatelessWidget {
         child: Row(children: [
           for (final (i, (icon, label)) in items.indexed)
             Expanded(
+              flex: weights == null ? 1 : (weights![i] * 100).round(),
               child: Pressable(
                 label: label,
                 onTap: () => onTap(i),

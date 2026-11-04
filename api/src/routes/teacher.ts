@@ -1070,6 +1070,43 @@ teacherRoutes.get('/tests', async (c) => {
   return c.json({ tests: rows });
 });
 
+/**
+ * The Bank: every question paper the tutor has posted, once each, to post again. A paper is the same questions in the same order for
+ * the same class (or course) and subject, so a paper posted five times is one row that says it was used five times. Only posted tests
+ * count; a draft is still a draft on Home. A row is its latest test, which the app reads (GET /tests/:id) to make the next one.
+ * Nothing is stored for the Bank: it is these tests, so a paper leaves it when every test made from it is deleted. A row also says who
+ * its test went to (the group, or `chosen` students picked one by one), so posting it again can say who will get it.
+ */
+teacherRoutes.get('/bank', async (c) => {
+  const rows = await tq(
+    tuitionOf(c).id,
+    `with given as (
+       select t.id, t.title, t.class_level, t.course_id, t.subject_id, t.time_limit_min, t.shuffle, t.opens_at, t.closes_at, t.created_at,
+              t.assign_all, t.assign_group, (select count(*) from test_students ts where ts.test_id = t.id) as chosen,
+              coalesce(t.opens_at, t.published_at, t.created_at) as given_at,
+              count(*) as question_count,
+              md5(string_agg(tq.question_id::text, ',' order by tq.position)) as sig
+         from tests t join test_questions tq on tq.test_id = t.id
+        where t.tuition_id = @T and t.status = 'published'
+        group by t.id
+     ), kept as (
+       select g.*, count(*) over w as uses, min(g.created_at) over w as first_made,
+              row_number() over (w order by g.given_at desc, g.created_at desc, g.id) as latest
+         from given g
+       window w as (partition by g.course_id, g.class_level, g.subject_id, g.sig)
+     )
+     select k.id, k.title, k.class_level, k.course_id, (select name from courses where id = k.course_id) as course,
+            k.subject_id, (select name from subjects where id = k.subject_id) as subject,
+            k.question_count, k.time_limit_min, k.shuffle, k.opens_at, k.closes_at, k.assign_all, k.assign_group, k.chosen,
+            k.given_at as last_given, k.first_made, k.uses
+       from kept k
+      where k.latest = 1
+      order by k.given_at desc, k.title
+      limit 500`,
+  );
+  return c.json({ papers: rows });
+});
+
 teacherRoutes.post('/tests', async (c) => {
   const T = tuitionOf(c).id;
   const t = readTest(await readBody(c));

@@ -83,6 +83,7 @@ abstract final class Ph {
   static const bellRinging = IconData(0xe5e8, fontFamily: _family);
   static const lockSimple = IconData(0xe308, fontFamily: _family);
   static const chartBarHorizontal = IconData(0xe152, fontFamily: _family);
+  static const bank = IconData(0xe0b4, fontFamily: _family);
   static const gauge = IconData(0xe628, fontFamily: _family);
   static const deviceMobile = IconData(0xe1e0, fontFamily: _family);
   static const hardDrives = IconData(0xe2a0, fontFamily: _family);

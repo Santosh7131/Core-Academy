@@ -8,6 +8,7 @@ import '../../core/levels.dart';
 import '../../core/session.dart';
 import '../../theme.dart';
 import '../../ui/kit.dart';
+import '../../ui/time_wheels.dart';
 
 /// Every test has a closing time, so a new one starts with the next 9:00 pm that is at least
 /// three hours away.
@@ -231,8 +232,6 @@ class DayTimeChooser extends StatelessWidget {
     // out which day "tomorrow" is.
     String dayLabel(int i) => f.dayTitle(day0.add(Duration(days: i)));
 
-    // 6:00 am to 9:30 pm in half hours.
-    final times = [for (var m = 6 * 60; m <= 21 * 60 + 30; m += 30) m];
     String timeLabel(int m) => f.time(DateTime(2000, 1, 1, m ~/ 60, m % 60));
 
     void pick({DateTime? dayValue, int? minutes}) {
@@ -241,7 +240,7 @@ class DayTimeChooser extends StatelessWidget {
       onChanged(DateTime(d.year, d.month, d.day, m ~/ 60, m % 60));
     }
 
-    // A value from before the 14-day window, or not on a half hour, still shows as itself. Beside the time a near day takes two short
+    // A value from before the 14-day window still shows as itself. Beside the time a near day takes two short
     // lines ("Tomorrow" over "Fri 30 Oct"); on a line of its own, and in the list of days, it is one ("Tomorrow · Fri 30 Oct").
     Widget dayField({required bool oneLine, double? minHeight}) => SelectField(
           value: selDay == null ? noneLabel : (oneLine ? f.dayTitle(selDay) : f.dayTitle(selDay).replaceFirst(' · ', '\n')),
@@ -266,9 +265,10 @@ class DayTimeChooser extends StatelessWidget {
     Widget timeField({double? minHeight}) => SelectField(
           value: timeLabel(selMinutes!),
           minHeight: minHeight,
+          // Any time of day, to the minute, on wheels.
           onTap: () async {
-            final c = await showChoices<int>(context, title: 'Time', options: [for (final m in times) Choice(m, timeLabel(m))], selected: selMinutes);
-            if (c?.value != null) pick(minutes: c!.value);
+            final m = await pickTimeOfDay(context, title: 'Time', minutes: selMinutes);
+            if (m != null) pick(minutes: m);
           },
         );
 

@@ -25,6 +25,7 @@ import 'package:core_academy/features/student/profile_screen.dart';
 import 'package:core_academy/features/student/start_card.dart' show confirmStart;
 import 'package:core_academy/features/student/result_screen.dart';
 import 'package:core_academy/features/student/test_screen.dart';
+import 'package:core_academy/features/teacher/bank_screen.dart';
 import 'package:core_academy/features/teacher/classes_screen.dart';
 import 'package:core_academy/features/teacher/course_screens.dart';
 import 'package:core_academy/features/teacher/group_screens.dart' show GroupScreen;
@@ -55,6 +56,7 @@ import '../support/library_fakes.dart' as lib;
 import '../support/make_fakes.dart';
 import '../support/page_images.dart' show FakePages, cacheNetworkImage, forgetNetworkImages, settle;
 import '../support/printed_pages.dart';
+import '../support/time_wheels.dart';
 
 final _shots = Platform.environment['SHOTS'] == '1';
 
@@ -1053,13 +1055,19 @@ void main() {
       await tapText(t, 'Next: choose the days');
     }
 
+    /// Taps the box [field], turns the wheels of the card it opens to [hour] and [minute], and taps Done.
+    Future<void> setClock(WidgetTester t, String field, int hour, [int minute = 0, bool last = false]) async {
+      await tapText(t, field, last: last);
+      turnWheels(t, hour, minute);
+      await _settle(t);
+      await tapText(t, 'Done', last: true);
+    }
+
     /// Quadratic equations on its own times: 4:00 pm to 8:00 pm, 45 minutes.
     Future<void> ownTimes(WidgetTester t) async {
       await tapText(t, 'Quadratic equations');
-      await tapText(t, clock(8));
-      await tapText(t, clock(16), last: true);
-      await tapText(t, clock(21), last: true);
-      await tapText(t, clock(20), last: true);
+      await setClock(t, clock(8), 16);
+      await setClock(t, clock(21), 20, 0, true);
       await tapText(t, '1½ minutes a question', last: true);
       await tapText(t, '45 min', last: true);
     }
@@ -1080,6 +1088,15 @@ void main() {
     await each('make-own', inMaths, (t) async {
       await toDays(t);
       await ownTimes(t);
+    });
+
+    // The card a tap on Opens opens: the hour, the minute and am or pm on wheels, so any time can be set (here 8:10 am, which no list had).
+    await each('make-clock', inMaths, (t) async {
+      await toDays(t);
+      await tapText(t, 'Quadratic equations');
+      await tapText(t, clock(8));
+      turnWheels(t, 8, 10);
+      await _settle(t);
     });
 
     // Half way: two papers read, the third on its second page, the last two waiting.
@@ -1113,6 +1130,64 @@ void main() {
       await tapText(t, 'Post 5 tests');
       await until(t, () => shows('5 tests are set'));
     });
+  });
+
+  // The Bank: the papers posted before, to post again. The list, the class list, one class, the card a tap on a paper opens, and the
+  // card that says it is posted.
+  shotTest('bank: the papers posted before, to post again', (t) async {
+    _sessionAs(role: 'teacher', tuitions: tutorTuition);
+    Map<String, Object?> paper(String id, String title,
+        {int cls = 9, String subject = 'Maths', int questions = 20, int uses = 1, required int daysAgo, int open = 8 * 60, int close = 21 * 60, int? limit = 30, String? courseId, String? course, int chosen = 0}) {
+      final n = DateTime.now();
+      DateTime at(int minutes) => DateTime(n.year, n.month, n.day - daysAgo, minutes ~/ 60, minutes % 60);
+      return {
+        'id': id, 'title': title, 'class_level': courseId == null ? cls : null, 'course_id': courseId, 'course': course,
+        'subject_id': courseId == null ? 'sub-$subject' : null, 'subject': courseId == null ? subject : null,
+        'question_count': questions, 'time_limit_min': limit, 'shuffle': true,
+        'opens_at': at(open).toUtc().toIso8601String(), 'closes_at': at(close).toUtc().toIso8601String(),
+        'assign_all': false, 'assign_group': chosen == 0, 'chosen': chosen,
+        'last_given': at(open).toUtc().toIso8601String(), 'first_made': at(open).subtract(Duration(days: 20 * uses)).toUtc().toIso8601String(), 'uses': uses,
+      };
+    }
+
+    final papers = [
+      paper('b4', 'Trigonometry test', cls: 10, questions: 30, uses: 4, daysAgo: 2, open: 16 * 60, close: 18 * 60, limit: 45),
+      paper('b6', 'Tenses quiz', courseId: 'c-1', course: 'Spoken English, Batch 1', questions: 10, uses: 3, daysAgo: 3, limit: 15),
+      paper('b3', 'Cells and tissues', subject: 'Science', questions: 25, uses: 2, daysAgo: 4, limit: 45),
+      paper('b1', 'Real Numbers test', uses: 3, daysAgo: 6, open: 16 * 60 + 30, close: 18 * 60, limit: 30),
+      paper('b5', 'Light and reflection', cls: 10, subject: 'Science', questions: 18, daysAgo: 9, limit: 30),
+      paper('b2', 'Polynomials test', questions: 15, daysAgo: 13, limit: 20),
+      paper('b7', 'Fractions: practice for 3 students', questions: 12, daysAgo: 20, chosen: 3, limit: 20),
+    ];
+    routes['/teacher/bank'] = (_) => {'papers': papers};
+    routes['GET /teacher/tests/b1'] = (_) => {
+          'test': {'id': 'b1', 'title': 'Real Numbers test', 'class_level': 9, 'course_id': null, 'subject_id': 'sub-Maths', 'status': 'published', 'assign_group': true, 'assign_all': false, 'paper_id': null},
+          'questions': [for (var i = 1; i <= 20; i++) {'id': 'q$i', 'position': i - 1}],
+          'students': <Object?>[],
+        };
+    routes['POST /teacher/tests'] = (_) => {'id': 'new-1'};
+    routes['POST /teacher/tests/new-1/publish'] = (_) => {'test': {'id': 'new-1', 'status': 'published'}};
+
+    Future<void> tapIt(WidgetTester t, String text) async {
+      await t.ensureVisible(find.text(text).first);
+      await t.pump(const Duration(milliseconds: 100));
+      await t.tap(find.text(text).first);
+      await _settle(t);
+    }
+
+    await _both(t, 'bank', () => const Scaffold(body: BankScreen()));
+    await _both(t, 'bank-class', () => const Scaffold(body: BankScreen()), then: (t) async => tapIt(t, 'All classes & courses'));
+    await _both(t, 'bank-class9', () => const Scaffold(body: BankScreen()), then: (t) async {
+      await tapIt(t, 'All classes & courses');
+      await tapIt(t, 'Class 9');
+    });
+    await _both(t, 'bank-post', () => const Scaffold(body: BankScreen()), then: (t) async => tapIt(t, 'Real Numbers test'));
+    await _both(t, 'bank-posted', () => const Scaffold(body: BankScreen()), then: (t) async {
+      await tapIt(t, 'Real Numbers test');
+      await tapIt(t, 'Post');
+    });
+    routes['/teacher/bank'] = (_) => {'papers': <Object?>[]};
+    await _both(t, 'bank-empty', () => const Scaffold(body: BankScreen()));
   });
 
   // A test that opens tomorrow and closes four days later: the Day box and the lines under it say which day and date each is.

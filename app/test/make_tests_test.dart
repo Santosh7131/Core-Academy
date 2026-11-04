@@ -21,6 +21,7 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/make_fakes.dart';
+import 'support/time_wheels.dart';
 
 late PaperServer _s;
 
@@ -91,6 +92,14 @@ DateTime _inDays(int n) {
 }
 
 String _clock(int h, [int m = 0]) => f.time(DateTime(2000, 1, 1, h, m));
+
+/// Taps the box [field], turns the wheels of the card it opens to [hour] (0 to 23) and [minute], and taps Done.
+Future<void> _setClock(WidgetTester t, Finder field, int hour, [int minute = 0]) async {
+  await _tap(t, field);
+  turnWheels(t, hour, minute);
+  await _pump(t, 100);
+  await _tap(t, find.text('Done'));
+}
 
 /// Taps Choose PDFs: whatever files the stand-in holds are added.
 Future<void> _addFive(WidgetTester t) async {
@@ -278,10 +287,8 @@ void main() {
       await _tap(t, find.text('Quadratic equations'));
       expect(find.text('Test 4 of 5 · 5 pages'), findsOneWidget);
       expect(t.widget<TextField>(find.byType(TextField)).controller!.text, 'Quadratic equations', reason: 'the field holds the name');
-      await _tap(t, find.text(_clock(8)).first);
-      await _tap(t, find.text(_clock(16)));
-      await _tap(t, find.text(_clock(21)).last);
-      await _tap(t, find.text(_clock(20)));
+      await _setClock(t, find.text(_clock(8)).first, 16);
+      await _setClock(t, find.text(_clock(21)).last, 20);
       await _tap(t, find.text('1½ minutes a question').last);
       await _tap(t, find.text('45 min'));
       await _tap(t, find.text('Same for all'));
@@ -307,8 +314,7 @@ void main() {
       await toDays(t);
       await _tap(t, find.text('Change'));
       expect(find.text('For the tests that do not have times of their own.'), findsOneWidget);
-      await _tap(t, find.text(_clock(21)).last);
-      await _tap(t, find.text(_clock(20)));
+      await _setClock(t, find.text(_clock(21)).last, 20);
       await _tap(t, find.text('Save'));
       expect(find.text('Every test: ${_clock(8)} to ${_clock(20)}'), findsOneWidget);
       expect(find.text('${_clock(8)} to ${_clock(20)}'), findsNWidgets(5));
@@ -317,8 +323,7 @@ void main() {
     testWidgets('a test cannot close before it opens: the card says so and will not save', (t) async {
       await toDays(t);
       await _tap(t, find.text('Change'));
-      await _tap(t, find.text(_clock(21)).last);
-      await _tap(t, find.text(_clock(7)));
+      await _setClock(t, find.text(_clock(21)).last, 7);
       expect(find.text('The test has to close after it opens.'), findsOneWidget);
       await _tap(t, find.text('Save'), 200);
       expect(find.text('Every test'), findsOneWidget, reason: 'the card stays open');
@@ -329,16 +334,52 @@ void main() {
       await _tap(t, find.text(_day(_inDays(1))).first);
       await _tap(t, find.text(f.dayTitle(_inDays(0))).last);
       await _tap(t, find.text('Change'));
-      await _tap(t, find.text(_clock(8)).last);
-      await _tap(t, find.text(_clock(5)));
-      await _tap(t, find.text(_clock(21)).last);
-      await _tap(t, find.text(_clock(5, 30)));
+      await _setClock(t, find.text(_clock(8)).last, 0, 1);
+      await _setClock(t, find.text(_clock(21)).last, 0, 5);
       await _tap(t, find.text('Save'));
       expect(find.text('Test 1 closes in the past. Change its day or its times.'), findsOneWidget);
       await _tap(t, find.text('Read the 5 papers with AI'), 200);
       expect(find.text('Reading your papers'), findsNothing);
-      // Before 6 am no closing time the form offers (the earliest is 5:30 am) has passed yet.
-    }, skip: DateTime.now().hour < 6);
+      // Opens at 12:01 am and closes at 12:05 am: in the first ten minutes of the day that closing time has not passed yet.
+    }, skip: DateTime.now().hour == 0 && DateTime.now().minute < 15);
+
+    testWidgets('any time can be chosen: before 5 am, after 11:30 pm, and between the half hours', (t) async {
+      await toDays(t);
+      await _tap(t, find.text('Quadratic equations'));
+      await _setClock(t, find.text(_clock(8)).first, 4, 20);
+      await _setClock(t, find.text(_clock(21)).last, 23, 59);
+      expect(find.text(_clock(4, 20)), findsOneWidget, reason: 'the Opens box says 4:20 am');
+      expect(find.text(_clock(23, 59)), findsOneWidget, reason: 'the Closes box says 11:59 pm');
+      await _tap(t, find.text('Save'));
+      expect(find.text('${_clock(4, 20)} to ${_clock(23, 59)}'), findsOneWidget, reason: 'the test\'s row has its own times');
+      expect(find.text('${_clock(8)} to ${_clock(21)}'), findsNWidgets(4), reason: 'the others keep the shared ones');
+
+      await _tap(t, find.text('Quadratic equations'));
+      await _setClock(t, find.text(_clock(4, 20)).first, 8, 10);
+      await _tap(t, find.text('Save'));
+      expect(find.text('${_clock(8, 10)} to ${_clock(23, 59)}'), findsOneWidget, reason: 'and 8:10 am is a time like any other');
+    });
+
+    testWidgets('the wheels start at the time the box shows', (t) async {
+      await toDays(t);
+      await _tap(t, find.text('Change'));
+      await _tap(t, find.text(_clock(21)).last);
+      expect(wheelsShow(t), 21 * 60);
+      await _tap(t, find.byIcon(Ph.x).last);
+      await _tap(t, find.text(_clock(8)).last);
+      expect(wheelsShow(t), 8 * 60);
+    });
+
+    testWidgets('closing the wheels without Done leaves the time as it was', (t) async {
+      await toDays(t);
+      await _tap(t, find.text('Change'));
+      await _tap(t, find.text(_clock(21)).last);
+      turnWheels(t, 3, 33);
+      await _pump(t, 100);
+      await _tap(t, find.byIcon(Ph.x).last);
+      expect(find.text(_clock(21)), findsOneWidget);
+      expect(find.text(_clock(3, 33)), findsNothing);
+    });
 
     testWidgets('Back from the days goes to the papers, which are still there', (t) async {
       await toDays(t);

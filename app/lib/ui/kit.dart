@@ -339,8 +339,9 @@ class SegChip extends StatelessWidget {
         decoration: selected
             ? BoxDecoration(color: actionFill, borderRadius: BorderRadius.circular(rPill), boxShadow: e2)
             : surface(radius: rPill, shadow: e1),
+        // A label too long for the room (a card on a narrow phone at the largest text) is cut with an ellipsis, not run off the card.
         child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Text(label, style: chipStyle.copyWith(color: fg)),
+          Flexible(child: Text(label, style: chipStyle.copyWith(color: fg), maxLines: 1, overflow: TextOverflow.ellipsis)),
           if (count != null) ...[
             const SizedBox(width: 6),
             Text('$count', style: numStyle(size: 12.5, color: fg.withValues(alpha: 0.75))),
