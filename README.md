@@ -660,7 +660,12 @@ to uninstall and reinstall.
    It is the release build (so it feels as the real one will) under its own app id
    (`com.coreacademy.core_academy.dev`, "Core Academy Dev"), so it sits beside the live app,
    pointed at the dev server alone. The script checks all of that in the finished file and stops
-   if the live server's address is inside it.
+   if the live server's address is inside it. It is signed with the debug key, like the debug
+   builds that share that app id, so it updates a practice copy already on a phone in place.
+
+   The project sits on E: while the pub cache is on C:, which Kotlin's incremental compile
+   cannot handle, so `app/android/gradle.properties` turns it off (`kotlin.incremental=false`).
+   The first build there takes a quarter of an hour; later ones are quicker.
 
 3. Write what changed in a plain text file, a line per change. GitHub shows it on the
    release, and the app shows it in its "What is new" card.

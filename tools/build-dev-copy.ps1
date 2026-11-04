@@ -1,6 +1,7 @@
 # Builds a copy of the app to try before a version goes live: release speed (so it feels as the real one will), its own app id
 # (com.coreacademy.core_academy.dev, named "Core Academy Dev") so it sits beside the live app, and the dev server's address, so nothing
-# it does touches the live data. Signed with the release key, arm64 only (that is every current phone).
+# it does touches the live data. Signed with the debug key, like the debug builds that share its app id (a different key is refused when
+# a practice copy is already on the phone, and the update would then need an uninstall first), arm64 only (that is every current phone).
 #
 #   .\tools\build-dev-copy.ps1      # writes tools\out\core-academy-dev-<version>.apk and checks it
 $ErrorActionPreference = 'Stop'
@@ -56,5 +57,7 @@ try {
 "the dev server's address is inside: $hasDev; the live server's address is inside: $hasLive"
 if (-not $hasDev -or $hasLive) { throw 'The build does not point at the dev server alone' }
 
-& (Join-Path $tools.FullName 'apksigner.bat') verify --print-certs $out | Select-Object -First 3
+$cert = & (Join-Path $tools.FullName 'apksigner.bat') verify --print-certs $out | Select-Object -First 3
+$cert
+if (($cert | Out-String) -notmatch 'CN=Android Debug') { throw 'Not signed with the debug key: it would not update a practice copy already on a phone' }
 "$out ({0:N1} MB)" -f ((Get-Item $out).Length / 1MB)

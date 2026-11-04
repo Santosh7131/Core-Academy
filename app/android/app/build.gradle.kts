@@ -64,10 +64,12 @@ android {
         release {
             signingConfig = signingConfigs.getByName(if (keystorePropertiesFile.exists()) "release" else "debug")
             // A copy to try before a version goes live (tools/build-dev-copy.ps1 passes -PdevCopy=true): release speed, but its own app id and
-            // name, so it sits beside the live app. The same script gives it the dev server's address.
+            // name, so it sits beside the live app. The same script gives it the dev server's address. It is signed with the debug key, like the
+            // debug builds that share its app id, so it updates a practice copy already on a phone in place (a different key is refused).
             if (project.hasProperty("devCopy")) {
                 applicationIdSuffix = ".dev"
                 manifestPlaceholders["appLabel"] = "Core Academy Dev"
+                signingConfig = signingConfigs.getByName("debug")
             }
         }
     }
