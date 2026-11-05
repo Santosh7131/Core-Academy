@@ -1,4 +1,4 @@
-/* ChalkDeck landing page behaviour. No framework. Everything here is an enhancement: with scripts
+/* Core Academy landing page behaviour. No framework. Everything here is an enhancement: with scripts
    off, the page still reads top to bottom and every screen shows its finished state. */
 (() => {
   'use strict';

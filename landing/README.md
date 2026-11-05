@@ -2,7 +2,9 @@
 
 A static page that explains the app and lets people download the APK. It is plain HTML, CSS and a little JavaScript, with no build step and no framework, so it deploys anywhere that serves files.
 
-The product name on it is a placeholder, **ChalkDeck**. Nothing on it is invented: every claim was checked against the app's code on 10 October 2026, there are no prices, no testimonials and no usage figures, and everything that needs a decision from the owner is marked in yellow with the words `FILL IN`.
+The product name on it is **Core Academy** for now, because that is what the app and the download file are called today; the owner has not picked a final product name, and the rename command below changes it everywhere. Nothing on it is invented: every claim was checked against the app's code on 10 October 2026, there are no prices, no testimonials and no usage figures, and everything that needs a decision from the owner is marked in yellow with the words `FILL IN`.
+
+**Held back on purpose (decided 5 November 2026):** the footer's contact and owner lines, the Privacy link and the "What happens to the data?" answer are not on the page, and `privacy.html` is listed in `.vercelignore` so it is not published. They come back once the blanks are filled in and the children's-data wording has had a legal review: put the footer lines and the Privacy link back, restore the last question in the FAQ, and take `privacy.html` out of `.vercelignore`.
 
 ## Look at it locally
 
