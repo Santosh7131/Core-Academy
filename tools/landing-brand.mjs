@@ -1,4 +1,5 @@
-// Renames the product on the landing page, in one go.
+// Renames the product on the tutor-facing page (landing-tutors/, parked, not deployed), in one go.
+// The student download page (landing/) is small enough to edit by hand and does not use this tool.
 //
 //   node tools/landing-brand.mjs "NewName"
 //   node tools/landing-brand.mjs "NewName" --repo owner/repo
@@ -6,14 +7,14 @@
 //   node tools/landing-brand.mjs --check                      (lists what is still to fill in, changes nothing)
 //
 // The current name, the GitHub repository the download button reads from and, once known, the address
-// the page lives at are kept in landing/brand.json. The page is plain files with no build step, so a
+// the page lives at are kept in landing-tutors/brand.json. The page is plain files with no build step, so a
 // rename is a find and replace across them; this script does it and updates brand.json. The Open Graph
-// picture (landing/assets/og.png) carries the name too and has to be redrawn by hand.
+// picture (landing-tutors/assets/og.png) carries the name too and has to be redrawn by hand.
 import { readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs';
 import { join, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = join(dirname(fileURLToPath(import.meta.url)), '..', 'landing');
+const root = join(dirname(fileURLToPath(import.meta.url)), '..', 'landing-tutors');
 const brandPath = join(root, 'brand.json');
 const brand = JSON.parse(readFileSync(brandPath, 'utf8'));
 const TEXT = new Set(['.html', '.css', '.js', '.svg', '.txt', '.md', '.json', '']);
@@ -107,4 +108,4 @@ if (newName) brand.name = newName;
 if (newRepo) brand.repo = newRepo;
 writeFileSync(brandPath, `${JSON.stringify(brand, null, 2)}\n`);
 console.log(`\n${changed} file(s) changed. Name: ${brand.name}. Repository: ${brand.repo}.${brand.site ? ` Address: ${brand.site}.` : ''}`);
-if (newName) console.log('Redraw landing/assets/og.png if it shows the old name.');
+if (newName) console.log('Redraw landing-tutors/assets/og.png if it shows the old name.');

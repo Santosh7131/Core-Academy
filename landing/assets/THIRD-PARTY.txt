@@ -1,11 +1,11 @@
 Third-party material used by this site
 
-1. Geist and Geist Mono (fonts)
+1. Geist (font)
    Copyright (c) 2023 Vercel, in collaboration with basement.studio.
    SIL Open Font License 1.1. The full licence is in fonts/OFL.txt.
-   The files in fonts/ are subsets of the originals (Latin letters, digits and common punctuation).
+   The file in fonts/ is a subset of the original (Latin letters, digits and common punctuation).
 
-2. Phosphor Icons, Light weight (the icons in the inline sprite at the end of each page)
+2. Phosphor Icons, Light weight (the icons in the inline sprite at the top of index.html)
    MIT License. Copyright (c) 2023 Phosphor Icons.
 
    Permission is hereby granted, free of charge, to any person obtaining a copy
