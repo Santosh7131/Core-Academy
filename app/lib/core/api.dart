@@ -53,24 +53,48 @@ class Api {
   Future<dynamic> patch(String path, [Object? body]) => _send('PATCH', path, body: body);
   Future<dynamic> delete(String path) => _send('DELETE', path);
 
+  /// A read that cannot connect is tried once more after this short wait. A phone that has sat idle often finds the connection it was going
+  /// to reuse closed by the network, and the first request on it fails although the internet is fine.
+  static const _retryAfter = Duration(milliseconds: 700);
+
   Future<dynamic> _send(String method, String path, {Object? body, Duration? timeout}) async {
-    final req = http.Request(method, Uri.parse('$apiBase$path'));
-    req.headers.addAll(Device.headers);
-    if (token != null) req.headers['authorization'] = 'Bearer $token';
-    if (tuitionId != null) req.headers['x-tuition'] = tuitionId!;
-    if (body != null) {
-      req.headers['content-type'] = 'application/json';
-      req.body = jsonEncode(body);
+    final limit = timeout ?? const Duration(seconds: 25);
+    // A request can be sent only once, so every try builds its own.
+    http.Request build() {
+      final req = http.Request(method, Uri.parse('$apiBase$path'));
+      req.headers.addAll(Device.headers);
+      if (token != null) req.headers['authorization'] = 'Bearer $token';
+      if (tuitionId != null) req.headers['x-tuition'] = tuitionId!;
+      if (body != null) {
+        req.headers['content-type'] = 'application/json';
+        req.body = jsonEncode(body);
+      }
+      return req;
     }
+
     http.Response res;
-    try {
-      res = await http.Response.fromStream(await _client.send(req).timeout(timeout ?? const Duration(seconds: 25)));
-    } on TimeoutException {
-      throw ApiException(0, 'offline', 'The server is taking too long. Check your internet and try again.');
-    } on SocketException {
-      throw ApiException(0, 'offline', 'No internet connection. Check your connection and try again.');
-    } on http.ClientException {
-      throw ApiException(0, 'offline', 'No internet connection. Check your connection and try again.');
+    for (var attempt = 0;; attempt++) {
+      try {
+        // The whole answer has to arrive in time, not only its first line: a connection that stalls after the headers would otherwise be
+        // waited on for ever.
+        res = await (() async => http.Response.fromStream(await _client.send(build())))().timeout(limit);
+        break;
+      } on TimeoutException {
+        throw ApiException(0, 'offline', 'The server is taking too long. Check your internet and try again.');
+      } on SocketException {
+        // Only a read is sent again: a write that failed may still have gone through.
+        if (method == 'GET' && attempt == 0) {
+          await Future<void>.delayed(_retryAfter);
+          continue;
+        }
+        throw ApiException(0, 'offline', 'No internet connection. Check your connection and try again.');
+      } on http.ClientException {
+        if (method == 'GET' && attempt == 0) {
+          await Future<void>.delayed(_retryAfter);
+          continue;
+        }
+        throw ApiException(0, 'offline', 'No internet connection. Check your connection and try again.');
+      }
     }
     dynamic json;
     try {
