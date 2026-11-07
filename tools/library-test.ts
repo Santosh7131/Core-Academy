@@ -282,6 +282,43 @@ try {
   const sw = await api('DELETE', `/teacher/library/sections/${sec}?with_files=1`, T1);
   created.sections = created.sections.filter((x) => x !== sec);
   check('the first section goes with its big file', sw.status === 200 && (await fetch(bview.body.url)).status === 404, sw);
+
+  // ------------------------------------------------------------------ the limits hold when files are started at the same moment
+  // The count and the room used to be read before the row was written, so files started together all passed the same check.
+  const outcome = (rs: { status: number; body: any }[], ok: number) => {
+    const n: Record<string, number> = {};
+    for (const r of rs) { const k = r.status === ok ? 'started' : (code(r) ?? String(r.status)); n[k] = (n[k] ?? 0) + 1; }
+    return n;
+  };
+  const crowd = await api('POST', `${shelf}/sections`, T1, { name: `Crowd ${run}` });
+  created.sections.push(crowd.body.section.id);
+  const manyAtOnce = await Promise.all(Array.from({ length: 108 }, (_, i) =>
+    api('POST', `/teacher/library/sections/${crowd.body.section.id}/files`, T1, { name: `small ${i}.pdf`, content_type: 'application/pdf', size: 1000 })));
+  const seen = outcome(manyAtOnce, 201);
+  check('108 files started at once: a section holds exactly 100', seen.started === 100 && seen.too_many_files === 8, seen);
+
+  // The same for files moved into a section that has room for just one more.
+  const first = manyAtOnce.find((r) => r.status === 201)!;
+  await api('DELETE', `/teacher/library/files/${first.body.file.id}`, T1);
+  const movers = await api('POST', `${shelf}/sections`, T1, { name: `Movers ${run}` });
+  created.sections.push(movers.body.section.id);
+  const five: string[] = [];
+  for (let i = 0; i < 5; i++) {
+    const m = await api('POST', `/teacher/library/sections/${movers.body.section.id}/files`, T1, { name: `mover ${i}.pdf`, content_type: 'application/pdf', size: 1000 });
+    five.push(m.body.file.id);
+  }
+  const movedAtOnce = await Promise.all(five.map((id) => api('PATCH', `/teacher/library/files/${id}`, T1, { section_id: crowd.body.section.id })));
+  const seenMoves = outcome(movedAtOnce, 200);
+  check('5 files moved at once into a section with room for one: exactly one gets in', seenMoves.started === 1 && seenMoves.too_many_files === 4, seenMoves);
+
+  const roomy = await api('POST', `${shelf}/sections`, T1, { name: `Room ${run}` });
+  created.sections.push(roomy.body.section.id);
+  const shelfNow = (await api('GET', shelf, T1)).body.library;
+  const fits = Math.floor((shelfNow.quota_bytes - shelfNow.used_bytes) / (100 * MB));
+  const bigAtOnce = await Promise.all(Array.from({ length: fits + 6 }, (_, i) =>
+    api('POST', `/teacher/library/sections/${roomy.body.section.id}/files`, T1, { name: `big ${i}.pdf`, content_type: 'application/pdf', size: 100 * MB })));
+  const seenBig = outcome(bigAtOnce, 201);
+  check(`${fits + 6} big files started at once: the tuition's room takes exactly ${fits}`, fits > 0 && seenBig.started === fits && seenBig.library_full === 6, { fits, ...seenBig });
 } finally {
   for (const id of created.sections) await api('DELETE', `/teacher/library/sections/${id}?with_files=1`, T1).catch(() => {});
   for (const id of created.courses) await api('DELETE', `/teacher/courses/${id}?with_results=1`, T1).catch(() => {});

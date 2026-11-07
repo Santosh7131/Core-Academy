@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { pool, q, tq, tq1, type Db } from './db.ts';
+import type pg from 'pg';
+import { pool, q, tq, tq1, tx, type Db } from './db.ts';
 import { bad, HttpError, notFound } from './http.ts';
 import { levelLabel } from './levels.ts';
 import { orphansAmong } from './orphans.ts';
@@ -150,10 +151,21 @@ export async function groupLibraryCount(tuition: string, cls: number, subjectId:
 export const courseLibraryCount = (tuition: string, courseId: string) => shelfCount(tuition, { column: 'course_id', id: courseId });
 
 /** The bytes a tuition has on its shelves, counting uploads still going (they have been promised the room). */
-export async function bytesUsed(tuition: string): Promise<number> {
-  const r = await tq1<{ n: number }>(tuition, 'select coalesce(sum(size_bytes), 0) as n from class_files where tuition_id = @T');
+export async function bytesUsed(tuition: string, db: Db = pool): Promise<number> {
+  const r = await tq1<{ n: number }>(tuition, 'select coalesce(sum(size_bytes), 0) as n from class_files where tuition_id = @T', [], db);
   return Number(r?.n ?? 0);
 }
+
+/**
+ * Runs `fn` with the tuition's other Library changes that count its shelves held back one at a time: starting a file and moving one. The
+ * count and the room are read, and the row is written, inside it, so files arriving at the same instant cannot each pass the same count
+ * and the same room (the 100 files of a section, the 2 GB of a tuition).
+ */
+export const withShelfLock = <T>(tuition: string, fn: (cx: pg.PoolClient) => Promise<T>): Promise<T> =>
+  tx(async (cx) => {
+    await cx.query('select pg_advisory_xact_lock(hashtextextended($1, 0))', [`library:${tuition}`]);
+    return fn(cx);
+  });
 
 export type LibraryUsage = { files: number; pdfs: number; photos: number; uploading: number; bytes: number; pdf_bytes: number; photo_bytes: number };
 

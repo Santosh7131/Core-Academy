@@ -8,7 +8,7 @@ import { levelParam } from '../lib/levels.ts';
 import {
   announceFiles, bytesUsed, discardObjects, downloadName, FILE_COLUMNS, fileType, groupIdOf, looksLike, MAX_FILE_BYTES, MAX_FILES_PER_SECTION, MAX_SECTIONS,
   newFileKey, ownFile, ownSection, PART_BYTES, partSizes, putInOrder, quotaBytes, shelfOf, STUDENT_FILE_JOINS, STUDENT_SEES, sweepStaleUploads,
-  type FileRow, type Shelf,
+  withShelfLock, type FileRow, type Shelf,
 } from '../lib/library.ts';
 import { fileUrl, finishMultipart, objectSize, partUrl, peekObject, startMultipart, uploadedParts, uploadUrl } from '../lib/storage.ts';
 import { taughtSubject } from '../lib/tuition.ts';
@@ -218,23 +218,26 @@ libraryRoutes.post('/library/sections/:id/files', async (c) => {
   const size = b.size;
   if (typeof size !== 'number' || !Number.isInteger(size) || size < 1) throw bad('Say how many bytes the file has.');
   if (size > MAX_FILE_BYTES) throw new HttpError(413, 'too_big', 'That file is too big. Files can be up to 100 MB.');
-  const inSection = await tq1<{ n: number }>(T, 'select count(*) as n from class_files where section_id = $1 and tuition_id = @T', [sec.id]);
-  if ((inSection?.n ?? 0) >= MAX_FILES_PER_SECTION) throw new HttpError(409, 'too_many_files', `A section can hold up to ${MAX_FILES_PER_SECTION} files.`);
-  const used = await bytesUsed(T);
-  if (used + size > quotaBytes()) {
-    throw new HttpError(413, 'library_full', 'There is no room for this file. The Library holds up to 2 GB for the whole tuition, so delete some files first.');
-  }
-  const key = newFileKey(T, type.ext);
-  const f = await tq1<FileRow>(
-    T,
-    `insert into class_files (section_id, tuition_id, name, kind, content_type, size_bytes, object_key, created_by)
-     values ($1, @T, $2, $3, $4, $5, $6, $7)
-     returning id, section_id, name, kind, content_type, size_bytes, object_key, upload_id, status, created_at`,
-    [sec.id, name, type.kind, type.type, size, key, c.get('user').id],
-  );
+  // The count, the room and the new row are one step, held apart from other files starting at the same moment (withShelfLock).
+  const f = await withShelfLock(T, async (cx) => {
+    const inSection = await tq1<{ n: number }>(T, 'select count(*) as n from class_files where section_id = $1 and tuition_id = @T', [sec.id], cx);
+    if ((inSection?.n ?? 0) >= MAX_FILES_PER_SECTION) throw new HttpError(409, 'too_many_files', `A section can hold up to ${MAX_FILES_PER_SECTION} files.`);
+    const used = await bytesUsed(T, cx);
+    if (used + size > quotaBytes()) {
+      throw new HttpError(413, 'library_full', 'There is no room for this file. The Library holds up to 2 GB for the whole tuition, so delete some files first.');
+    }
+    return tq1<FileRow>(
+      T,
+      `insert into class_files (section_id, tuition_id, name, kind, content_type, size_bytes, object_key, created_by)
+       values ($1, @T, $2, $3, $4, $5, $6, $7)
+       returning id, section_id, name, kind, content_type, size_bytes, object_key, upload_id, status, created_at`,
+      [sec.id, name, type.kind, type.type, size, newFileKey(T, type.ext), c.get('user').id],
+      cx,
+    );
+  });
   try {
     if (size > PART_BYTES) {
-      const uploadId = await startMultipart(key, type.type);
+      const uploadId = await startMultipart(f!.object_key, type.type);
       f!.upload_id = uploadId;
       await tq(T, 'update class_files set upload_id = $2 where id = $1 and tuition_id = @T', [f!.id, uploadId]);
     }
@@ -323,22 +326,28 @@ libraryRoutes.patch('/library/files/:id', async (c) => {
     const to = await ownSection(T, uuid(b.section_id, 'section id'));
     const from = await ownSection(T, f.section_id);
     if (to.group_id !== from.group_id || to.course_id !== from.course_id) throw bad('A file can only move to another section of the same group or course.');
-    const there = await tq1<{ n: number }>(T, 'select count(*) as n from class_files where section_id = $1 and tuition_id = @T', [to.id]);
-    if ((there?.n ?? 0) >= MAX_FILES_PER_SECTION) throw new HttpError(409, 'too_many_files', `A section can hold up to ${MAX_FILES_PER_SECTION} files.`);
     sectionId = to.id;
   }
   if (name === undefined && sectionId === f.section_id) return c.json({ file: shape(f) });
-  // A file moved to another section goes to the end of it.
-  const row = await tq1<FileRow>(
-    T,
-    `update class_files set name = coalesce($2, name), section_id = $3,
-            position = case when $3::uuid is distinct from section_id
-                            then (select coalesce(max(x.position), 0) + 1 from class_files x where x.section_id = $3 and x.status = 'ready')
-                            else position end
-      where id = $1 and tuition_id = @T
-     returning id, section_id, name, kind, content_type, size_bytes, object_key, upload_id, status, created_at`,
-    [f.id, name ?? null, sectionId],
-  );
+  // The count of the new section and the move are one step, held apart from other files arriving at the same moment (withShelfLock).
+  const row = await withShelfLock(T, async (cx) => {
+    if (sectionId !== f.section_id) {
+      const there = await tq1<{ n: number }>(T, 'select count(*) as n from class_files where section_id = $1 and tuition_id = @T', [sectionId], cx);
+      if ((there?.n ?? 0) >= MAX_FILES_PER_SECTION) throw new HttpError(409, 'too_many_files', `A section can hold up to ${MAX_FILES_PER_SECTION} files.`);
+    }
+    // A file moved to another section goes to the end of it.
+    return tq1<FileRow>(
+      T,
+      `update class_files set name = coalesce($2, name), section_id = $3,
+              position = case when $3::uuid is distinct from section_id
+                              then (select coalesce(max(x.position), 0) + 1 from class_files x where x.section_id = $3 and x.status = 'ready')
+                              else position end
+        where id = $1 and tuition_id = @T
+       returning id, section_id, name, kind, content_type, size_bytes, object_key, upload_id, status, created_at`,
+      [f.id, name ?? null, sectionId],
+      cx,
+    );
+  });
   return c.json({ file: shape(row!) });
 });
 
