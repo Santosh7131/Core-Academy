@@ -53,6 +53,10 @@ class _TestScreenState extends State<TestScreen> {
   Map<String, Map<String, dynamic>> _pending = {};
   Timer? _flushTimer;
   Timer? _ticker;
+
+  /// Counts the seconds, so the clock redraws itself every second and nothing else on the screen does: a question can be a formula, and
+  /// drawing one every second wastes a slow phone's time and battery.
+  final _seconds = ValueNotifier<int>(0);
   bool _flushing = false;
   bool _offline = false;
   bool _submitting = false;
@@ -68,6 +72,7 @@ class _TestScreenState extends State<TestScreen> {
   void dispose() {
     _flushTimer?.cancel();
     _ticker?.cancel();
+    _seconds.dispose();
     super.dispose();
   }
 
@@ -109,7 +114,7 @@ class _TestScreenState extends State<TestScreen> {
     if (left <= Duration.zero && !_submitting) {
       _submit(auto: true);
     } else {
-      setState(() {});
+      _seconds.value++;
     }
   }
 
@@ -310,8 +315,6 @@ class _TestScreenState extends State<TestScreen> {
     }
 
     final q = _qs[_i];
-    final left = _left;
-    final low = left != null && left.inMinutes < 5;
     final isLast = _i == _qs.length - 1;
 
     return PopScope(
@@ -348,17 +351,7 @@ class _TestScreenState extends State<TestScreen> {
                   ),
                 ),
                 const SizedBox(width: 14),
-                if (left != null)
-                  Container(
-                    height: 36,
-                    padding: const EdgeInsets.symmetric(horizontal: 14),
-                    decoration: low ? BoxDecoration(color: warningSoft, borderRadius: BorderRadius.circular(rPill)) : surface(radius: rPill, shadow: e1),
-                    child: Row(children: [
-                      Icon(Ph.timer, size: 16, color: low ? warning : ink),
-                      const SizedBox(width: 6),
-                      Text(f.clock(left), style: numStyle(size: 14, color: low ? warning : ink)),
-                    ]),
-                  ),
+                if (_deadline != null) ValueListenableBuilder<int>(valueListenable: _seconds, builder: (_, _, _) => _ClockPill(left: _left!)),
               ]),
             ),
             Expanded(
@@ -439,6 +432,28 @@ class _TestScreenState extends State<TestScreen> {
           ]),
         ),
       ),
+    );
+  }
+}
+
+/// The time left, in a pill that turns amber in the last five minutes. It sits in a [ValueListenableBuilder] of its own, so a second
+/// passing redraws this and not the question under it.
+class _ClockPill extends StatelessWidget {
+  const _ClockPill({required this.left});
+  final Duration left;
+
+  @override
+  Widget build(BuildContext context) {
+    final low = left.inMinutes < 5;
+    return Container(
+      height: 36,
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      decoration: low ? BoxDecoration(color: warningSoft, borderRadius: BorderRadius.circular(rPill)) : surface(radius: rPill, shadow: e1),
+      child: Row(children: [
+        Icon(Ph.timer, size: 16, color: low ? warning : ink),
+        const SizedBox(width: 6),
+        Text(f.clock(left), style: numStyle(size: 14, color: low ? warning : ink)),
+      ]),
     );
   }
 }
