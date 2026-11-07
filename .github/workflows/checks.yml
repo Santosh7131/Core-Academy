@@ -1,0 +1,59 @@
+# Runs the checks that need no secrets and no database on every push to main and every pull request, so a mistake shows up as a red mark
+# on the commit instead of in a student's hands: the server's types and unit tests, and both apps' analysis and tests.
+# The suites that need the dev database (tools/api-test.ts and the others) stay a manual step: they need keys that must not live here.
+name: Checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run test:latex
+      - run: npm run test:text
+      - run: node tools/orphans-test.mjs
+      - run: node tools/pieces-test.mjs
+
+  app:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Flutter straight from its own repository at the version the project is built with (no third-party action in between).
+      - name: Install Flutter
+        run: |
+          git clone --depth 1 --branch 3.47.2 https://github.com/flutter/flutter.git "$HOME/flutter"
+          echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
+      - name: Analyze and test the Core Academy app
+        working-directory: app
+        run: |
+          flutter pub get
+          flutter analyze
+          flutter test
+
+  admin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Flutter
+        run: |
+          git clone --depth 1 --branch 3.47.2 https://github.com/flutter/flutter.git "$HOME/flutter"
+          echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
+      - name: Analyze and test the developer app
+        working-directory: admin
+        run: |
+          flutter pub get
+          flutter analyze
+          flutter test
