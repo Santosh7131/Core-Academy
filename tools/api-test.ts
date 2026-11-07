@@ -137,6 +137,22 @@ try {
   const resume = await api('POST', `/student/tests/${A}/start`, S1);
   check('saved answers come back on resume', resume.body.questions.every((x: any) => x.chosen !== null), resume.body.questions);
 
+  // One request can carry the same question twice (a phone catching up after a bad connection): the later answer counts. And a question
+  // that is not part of the test refuses the whole request, so none of it is saved. Then the original answers go back for what follows.
+  const attemptUrl = `/student/attempts/${st1.body.attempt.id}/answers`;
+  const q1a = st1.body.questions[1].id;
+  const twice = await api('PUT', attemptUrl, S1, { answers: [{ question_id: q1a, choice: 0 }, { question_id: q1a, choice: 2, flagged: true }] });
+  const afterTwice = (await api('POST', `/student/tests/${A}/start`, S1)).body.questions.find((x: any) => x.id === q1a);
+  check('the same question twice in one save: the later answer counts', twice.status === 200 && twice.body.saved === 2 && afterTwice?.chosen === 2 && afterTwice?.flagged === true, [twice.body, afterTwice]);
+  const refused = await api('PUT', attemptUrl, S1, { answers: [{ question_id: q1a, choice: 1 }, { question_id: '00000000-0000-4000-8000-0000000000aa', choice: 0 }] });
+  const afterRefused = (await api('POST', `/student/tests/${A}/start`, S1)).body.questions.find((x: any) => x.id === q1a);
+  check('a question that is not in the test refuses the whole save, and none of it is kept', refused.status === 400 && afterRefused?.chosen === 2, [refused.body, afterRefused]);
+  const emptySave = await api('PUT', attemptUrl, S1, { answers: [] });
+  check('an empty save is fine', emptySave.status === 200 && emptySave.body.saved === 0, emptySave.body);
+  const many = await api('PUT', attemptUrl, S1, { answers: Array.from({ length: 200 }, (_, i) => ({ question_id: st1.body.questions[i % 3].id, choice: i % 4 })) });
+  check('200 answers in one save go through', many.status === 200 && many.body.saved === 200, many.body);
+  check('and the original answers can go back', (await api('PUT', attemptUrl, S1, { answers })).status === 200);
+
   const sub = await api('POST', `/student/attempts/${st1.body.attempt.id}/submit`, S1, {});
   check('submit grades 2 of 3', sub.status === 200 && sub.body.attempt.score === 2 && sub.body.attempt.max_score === 3, sub.body?.attempt);
   const reviewOk = sub.body.review.every((r: any) => {

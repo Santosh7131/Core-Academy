@@ -260,19 +260,29 @@ async function lockAttempt(c: pg.PoolClient, studentId: string, attemptId: strin
   return a;
 }
 
+/**
+ * Saves the answers in one statement, however many there are: a phone that was offline for a whole test sends every answer at once, and
+ * one round trip each (up to 200) kept the attempt locked for a long time. Every question is checked first, so one that is not part of
+ * the attempt refuses the whole request and nothing is saved. A question named twice keeps its last answer, as it did when they were
+ * saved one by one (one statement cannot change the same row twice).
+ */
 async function writeAnswers(c: pg.PoolClient, a: AttemptRow, answers: AnswerInput[]) {
+  const latest = new Map<string, { chosen: number | null; flagged: boolean }>();
   for (const x of answers) {
     const order = Object.hasOwn(a.option_orders, x.question_id) ? a.option_orders[x.question_id] : undefined;
     if (!order) throw new HttpError(400, 'invalid', 'That question is not part of this test.');
-    const original = x.choice === null ? null : order[x.choice];
-    await c.query(
-      `insert into answers (attempt_id, question_id, chosen_option, flagged, answered_at)
-       values ($1, $2, $3, $4, now())
-       on conflict (attempt_id, question_id)
-       do update set chosen_option = excluded.chosen_option, flagged = excluded.flagged, answered_at = now()`,
-      [a.id, x.question_id, original, x.flagged ?? false],
-    );
+    latest.set(x.question_id, { chosen: x.choice === null ? null : order[x.choice], flagged: x.flagged ?? false });
   }
+  if (!latest.size) return;
+  const ids = [...latest.keys()];
+  await c.query(
+    `insert into answers (attempt_id, question_id, chosen_option, flagged, answered_at)
+     select $1::uuid, t.question_id, t.chosen_option, t.flagged, now()
+       from unnest($2::uuid[], $3::smallint[], $4::boolean[]) as t(question_id, chosen_option, flagged)
+     on conflict (attempt_id, question_id)
+     do update set chosen_option = excluded.chosen_option, flagged = excluded.flagged, answered_at = now()`,
+    [a.id, ids, ids.map((id) => latest.get(id)!.chosen), ids.map((id) => latest.get(id)!.flagged)],
+  );
 }
 
 export async function saveAnswers(studentId: string, attemptId: string, raw: unknown) {
