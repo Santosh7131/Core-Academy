@@ -101,12 +101,53 @@ Future<void> _setClock(WidgetTester t, Finder field, int hour, [int minute = 0])
   await _tap(t, find.text('Done'));
 }
 
-/// Taps Choose PDFs: whatever files the stand-in holds are added.
+/// Taps Batch processing: whatever files the stand-in holds are added, and the batch is on.
 Future<void> _addFive(WidgetTester t) async {
-  await _tap(t, find.text('Choose PDFs'));
+  await _tap(t, find.text('Batch processing'));
+}
+
+/// Taps Choose PDF: whatever files the stand-in holds are added. Nothing turns the batch on; with two or more the screen asks.
+Future<void> _choosePdf(WidgetTester t) async {
+  await _tap(t, find.text('Choose PDF'));
+}
+
+const _yes = 'Yes, batch processing';
+const _no = 'No, I will set the dates';
+const _off = 'Off: you choose when each test opens and closes.';
+const _on = 'On: one test a day, starting tomorrow.';
+
+/// On the step for tests that are not in a batch: opens the card of [row] (an Opens or Closes row), picks the day [days] from today in
+/// the box that shows [field] ("Now" for an opening, "Day" for a closing) and taps Done. The time is the 6:00 pm the card offers,
+/// unless [hour] turns the wheels to another.
+Future<void> _chooseWhen(WidgetTester t, Finder row, String field, int days, {int? hour, int minute = 0}) async {
+  await _tap(t, row);
+  await _tap(t, find.text(field));
+  await _tap(t, find.text(f.dayTitle(_inDays(days))).last);
+  if (hour != null) {
+    await _tap(t, find.text(_clock(18)));
+    turnWheels(t, hour, minute);
+    await _pump(t, 100);
+    await _tap(t, find.text('Done').last);
+  }
+  await _tap(t, find.text('Done'));
+}
+
+/// What the stand-in server was sent as a paper's plan, as local days and hours.
+({DateTime? opens, DateTime closes}) _planSent(int i) {
+  final plan = _s.sent[i]['plan'] as Map<String, dynamic>;
+  return (
+    opens: plan['opens_at'] == null ? null : DateTime.parse(plan['opens_at'] as String).toLocal(),
+    closes: DateTime.parse(plan['closes_at'] as String).toLocal(),
+  );
 }
 
 final _names = ['Real Numbers test', 'Polynomials test', 'Pair of linear equations', 'Quadratic equations', 'Arithmetic progressions'];
+
+FakeSources _threeFiles() => FakeSources(pdfs: [
+      fakePdf('Real_Numbers test.pdf', 4),
+      fakePdf('Polynomials test.pdf', 3),
+      fakePdf('Pair of linear equations.PDF', 4),
+    ]);
 
 FakeSources _fiveFiles() => FakeSources(pdfs: [
       fakePdf('Real_Numbers test.pdf', 4),
@@ -154,16 +195,18 @@ void main() {
   // ---------------------------------------------------------------- adding the papers
 
   group('adding the papers', () {
-    testWidgets('an empty list offers PDFs, photos and AI, and cannot go on yet', (t) async {
+    testWidgets('an empty list offers a PDF, Batch processing, photos and AI, and cannot go on yet', (t) async {
       await _open(t, target: _maths);
       expect(find.text('Add the papers'), findsOneWidget);
       expect(find.text('10TH MATHS · STEP 2 OF 4'), findsOneWidget);
-      expect(find.text('Choose PDFs'), findsOneWidget);
+      expect(find.text('Choose PDF'), findsOneWidget);
+      expect(find.text('Batch processing'), findsOneWidget);
       expect(find.text('Add a paper from photos'), findsOneWidget);
       expect(find.text('No paper? Let AI write a test'), findsOneWidget);
       expect(find.text('Add at least one paper.'), findsOneWidget);
-      await _tap(t, find.text('Next: choose the days'), 200);
-      expect(find.text('Choose the days'), findsNothing, reason: 'there is nothing to choose days for');
+      await _tap(t, find.text('Next: choose the times'), 200);
+      expect(find.text('When does it open and close?'), findsNothing, reason: 'there is nothing to choose times for');
+      expect(find.text('Choose the days'), findsNothing);
     });
 
     testWidgets('several PDFs at once each become a paper, named from the file, with its pages', (t) async {
@@ -177,7 +220,7 @@ void main() {
       expect(find.text('5 pages'), findsOneWidget);
       expect(find.text('5 papers · 19 pages'), findsOneWidget);
       expect(find.text('Add another paper'), findsOneWidget);
-      expect(find.text('Each paper becomes its own test.'), findsOneWidget);
+      expect(find.text('Batch processing is on: one test a day, starting tomorrow. You can change any day next.'), findsOneWidget);
     });
 
     testWidgets('a paper can be taken out again', (t) async {
@@ -236,6 +279,292 @@ void main() {
     });
   });
 
+  // ---------------------------------------------------------------- batch processing, only by hand
+
+  group('batch processing is only ever turned on by the tutor', () {
+    testWidgets('one PDF is one test: the screen does not ask about a batch', (t) async {
+      await _open(t, target: _maths, sources: FakeSources(pdfs: [fakePdf('Reading.pdf', 2)]));
+      await _choosePdf(t);
+      expect(find.text('Make these a batch?'), findsNothing);
+      expect(find.text('Reading'), findsOneWidget);
+      expect(find.text('One test. You choose when it opens and when it closes next.'), findsOneWidget);
+      expect(find.text(_off), findsOneWidget);
+      expect(find.text('Next: choose the times'), findsOneWidget);
+    });
+
+    testWidgets('two or more PDFs make the screen ask, and nothing is a batch until the tutor says yes', (t) async {
+      await _open(t, target: _maths, sources: _threeFiles());
+      await _choosePdf(t);
+      expect(find.text('Make these a batch?'), findsOneWidget);
+      expect(find.textContaining('Batch processing makes one test a day, starting tomorrow'), findsOneWidget);
+      expect(find.text(_yes), findsOneWidget);
+      expect(find.text(_no), findsOneWidget);
+      expect(find.text(_off), findsOneWidget, reason: 'asking did not turn it on');
+      await _tap(t, find.text(_yes));
+      expect(find.text('Make these a batch?'), findsNothing);
+      expect(find.text(_on), findsOneWidget);
+      expect(find.text('Next: choose the days'), findsOneWidget);
+      await _tap(t, find.text('Next: choose the days'));
+      expect(find.text('Choose the days'), findsOneWidget);
+      expect(find.text('Read the 3 papers with AI'), findsOneWidget);
+    });
+
+    testWidgets('saying no keeps them separate tests, each with its own times to choose', (t) async {
+      await _open(t, target: _maths, sources: _threeFiles());
+      await _choosePdf(t);
+      await _tap(t, find.text(_no));
+      expect(find.text('Make these a batch?'), findsNothing);
+      expect(find.text(_off), findsOneWidget);
+      expect(find.text('Each paper is its own test. You choose when each one opens and closes next.'), findsOneWidget);
+      await _tap(t, find.text('Next: choose the times'));
+      expect(find.text('When do they open and close?'), findsOneWidget);
+      expect(find.text('10TH MATHS · STEP 3 OF 4'), findsOneWidget);
+      for (var i = 1; i <= 3; i++) {
+        expect(find.text('Test $i of 3'), findsOneWidget);
+      }
+      expect(find.text('Choose when it closes'), findsNWidgets(3));
+      expect(find.text('As soon as you post it'), findsNWidgets(3));
+      expect(find.text('Choose when test 1 closes.'), findsOneWidget, reason: 'the button says why it cannot go on');
+    });
+
+    testWidgets('closing the question without answering is no', (t) async {
+      await _open(t, target: _maths, sources: _threeFiles());
+      await _choosePdf(t);
+      await t.tapAt(const Offset(8, 8));
+      await _pump(t, 400);
+      expect(find.text('Make these a batch?'), findsNothing);
+      expect(find.text(_off), findsOneWidget);
+      expect(find.text('Next: choose the times'), findsOneWidget);
+    });
+
+    testWidgets('the question is asked once, not again when more PDFs are added', (t) async {
+      final sources = FakeSources(pdfs: [fakePdf('Real_Numbers test.pdf', 4), fakePdf('Polynomials test.pdf', 3)]);
+      await _open(t, target: _maths, sources: sources);
+      await _choosePdf(t);
+      await _tap(t, find.text(_no));
+      sources.pdfs = [fakePdf('Quadratic equations.pdf', 5)];
+      await _tap(t, find.text('Add another paper'));
+      await _tap(t, find.text('Choose PDFs'));
+      expect(find.text('Quadratic equations'), findsOneWidget);
+      expect(find.text('Make these a batch?'), findsNothing);
+      expect(find.text('3 papers · 12 pages'), findsOneWidget);
+      expect(find.text(_off), findsOneWidget);
+    });
+
+    testWidgets('a second paper from photos makes the screen ask too', (t) async {
+      final photos = FakeSources(photoSets: [
+        [Uint8List.fromList([1])],
+        [Uint8List.fromList([2])],
+      ]);
+      await _open(t, target: _maths, sources: photos);
+      await _tap(t, find.text('Add a paper from photos'));
+      expect(find.text('Make these a batch?'), findsNothing);
+      await _tap(t, find.text('Add another paper'));
+      await _tap(t, find.text('Photos of a paper'));
+      expect(find.text('Make these a batch?'), findsOneWidget);
+      await _tap(t, find.text(_no));
+      expect(find.text(_off), findsOneWidget);
+    });
+
+    testWidgets('the Batch processing button turns the batch on even for one PDF, without asking', (t) async {
+      await _open(t, target: _maths, sources: FakeSources(pdfs: [fakePdf('Reading.pdf', 2)]));
+      await _tap(t, find.text('Batch processing'));
+      expect(find.text('Make these a batch?'), findsNothing);
+      expect(find.text(_on), findsOneWidget);
+      expect(find.text('Next: choose the days'), findsOneWidget);
+      await _tap(t, find.text('Next: choose the days'));
+      expect(find.text('Choose the days'), findsOneWidget);
+      expect(find.text('First test on'), findsOneWidget);
+    });
+
+    testWidgets('the Batch processing switch turns the batch on and off by hand', (t) async {
+      await _open(t, target: _maths, sources: FakeSources(pdfs: [fakePdf('Reading.pdf', 2)]));
+      await _choosePdf(t);
+      expect(find.text(_off), findsOneWidget);
+      await _tap(t, find.text('Batch processing'));
+      expect(find.text(_on), findsOneWidget);
+      expect(find.text('Next: choose the days'), findsOneWidget);
+      await _tap(t, find.text('Batch processing'));
+      expect(find.text(_off), findsOneWidget);
+      expect(find.text('Next: choose the times'), findsOneWidget);
+    });
+
+    testWidgets('taking every paper out starts again: the batch is off and the question is asked again', (t) async {
+      final semantics = t.ensureSemantics();
+      await _open(t, target: _maths, sources: FakeSources(pdfs: [fakePdf('Real_Numbers test.pdf', 4), fakePdf('Polynomials test.pdf', 3)]));
+      await _choosePdf(t);
+      await _tap(t, find.text(_yes));
+      expect(find.text(_on), findsOneWidget);
+      await _tap(t, find.bySemanticsLabel('Remove Real Numbers test'));
+      await _tap(t, find.bySemanticsLabel('Remove Polynomials test'));
+      expect(find.text('Add at least one paper.'), findsOneWidget);
+      await _choosePdf(t);
+      expect(find.text('Make these a batch?'), findsOneWidget);
+      expect(find.text(_off), findsOneWidget);
+      semantics.dispose();
+    });
+  });
+
+  // ---------------------------------------------------------------- the times of tests that are not in a batch
+
+  group('choosing when tests that are not in a batch open and close', () {
+    Future<void> toTimes(WidgetTester t, FakeSources sources, {TestTarget? target}) async {
+      await _open(t, target: target ?? _maths, sources: sources);
+      await _choosePdf(t);
+      if (sources.pdfs.length > 1) await _tap(t, find.text(_no));
+      await _tap(t, find.text('Next: choose the times'));
+    }
+
+    FakeSources one() => FakeSources(pdfs: [fakePdf('Reading.pdf', 2)]);
+    FakeSources two() => FakeSources(pdfs: [fakePdf('Real_Numbers test.pdf', 4), fakePdf('Polynomials test.pdf', 3)]);
+
+    DateTime at(int days, int hour, [int minute = 0]) => DateTime(_inDays(days).year, _inDays(days).month, _inDays(days).day, hour, minute);
+
+    testWidgets('one PDF: its name, opening as soon as it is posted, and a closing time nobody has chosen yet', (t) async {
+      await toTimes(t, one());
+      expect(find.text('When does it open and close?'), findsOneWidget);
+      expect(find.text('10TH MATHS · STEP 3 OF 4'), findsOneWidget);
+      expect(t.widget<TextField>(find.byType(TextField)).controller!.text, 'Reading', reason: 'the name box holds the name from the file');
+      expect(find.text('As soon as you post it'), findsOneWidget);
+      expect(find.text('Choose when it closes'), findsOneWidget);
+      expect(find.text('Choose when the test closes.'), findsOneWidget);
+      await _tap(t, find.text('Read the paper with AI'), 200);
+      expect(find.text('Reading your papers'), findsNothing, reason: 'it cannot be read until a closing time is chosen');
+    });
+
+    testWidgets('any opening and closing day and time can be chosen, days apart, and the server is sent exactly that', (t) async {
+      await toTimes(t, one());
+      await _chooseWhen(t, find.text('As soon as you post it'), 'Now', 2);
+      expect(find.text('As soon as you post it'), findsNothing);
+      expect(find.text(f.whenTitle(at(2, 18))), findsOneWidget);
+      await _chooseWhen(t, find.text('Choose when it closes'), 'Day', 5, hour: 21, minute: 45);
+      expect(find.text(f.whenTitle(at(5, 21, 45))), findsOneWidget);
+      expect(find.text('Choose when the test closes.'), findsNothing);
+      await _tap(t, find.text('Read the paper with AI'));
+      await _until(t, () => _s.sent.length == 1);
+      final p = _planSent(0);
+      expect(p.opens, at(2, 18));
+      expect(p.closes, at(5, 21, 45));
+      expect((_s.sent[0]['plan'] as Map).containsKey('time_limit_min'), isFalse);
+      expect((_s.sent[0]['plan'] as Map)['shuffle'], true);
+      await _until(t, () => find.text('Ready to post').evaluate().isNotEmpty);
+    });
+
+    testWidgets('a closing time before the opening time is refused, and the button says so', (t) async {
+      await toTimes(t, one());
+      await _chooseWhen(t, find.text('As soon as you post it'), 'Now', 4);
+      await _chooseWhen(t, find.text('Choose when it closes'), 'Day', 3);
+      expect(find.text('The test has to close after it opens.'), findsOneWidget);
+      await _tap(t, find.text('Read the paper with AI'), 200);
+      expect(find.text('Reading your papers'), findsNothing);
+      await _chooseWhen(t, find.text(f.whenTitle(at(3, 18))), f.dayTitle(_inDays(3)), 6);
+      expect(find.text('The test has to close after it opens.'), findsNothing);
+      await _tap(t, find.text('Read the paper with AI'));
+      await _until(t, () => _s.sent.length == 1);
+      expect(_planSent(0).closes, at(6, 18));
+    });
+
+    testWidgets('a closing time that has passed is refused', (t) async {
+      await toTimes(t, one());
+      await _chooseWhen(t, find.text('Choose when it closes'), 'Day', 0, hour: 0, minute: 1);
+      expect(find.text('The closing time of the test has already passed. Choose a later one.'), findsOneWidget);
+      await _tap(t, find.text('Read the paper with AI'), 200);
+      expect(find.text('Reading your papers'), findsNothing);
+      // Closing at 12:01 am: in the first ten minutes of the day that closing time has not passed yet.
+    }, skip: DateTime.now().hour == 0 && DateTime.now().minute < 15);
+
+    testWidgets('several PDFs each have their own times, and the button names the test that has none', (t) async {
+      await toTimes(t, two());
+      expect(find.text('Test 1 of 2'), findsOneWidget);
+      expect(find.text('Test 2 of 2'), findsOneWidget);
+      expect(find.text('Choose when test 1 closes.'), findsOneWidget);
+      await _chooseWhen(t, find.text('Choose when it closes').first, 'Day', 3);
+      expect(find.text('Choose when test 2 closes.'), findsOneWidget);
+      await _chooseWhen(t, find.text('As soon as you post it').last, 'Now', 2);
+      await _chooseWhen(t, find.text('Choose when it closes'), 'Day', 8, hour: 9);
+      await t.enterText(find.byType(TextField).last, 'Polynomials, part 1');
+      await _pump(t, 100);
+      expect(find.text('Read the 2 papers with AI'), findsOneWidget);
+      await _tap(t, find.text('Read the 2 papers with AI'));
+      await _until(t, () => find.text('Ready to post').evaluate().isNotEmpty);
+      expect(_s.sent[0]['exam_name'], 'Real Numbers test');
+      expect(_s.sent[1]['exam_name'], 'Polynomials, part 1');
+      expect(_planSent(0).opens, isNull, reason: 'the first opens as soon as it is posted');
+      expect(_planSent(0).closes, at(3, 18));
+      expect(_planSent(1).opens, at(2, 18));
+      expect(_planSent(1).closes, at(8, 9));
+
+      expect(find.text('They go to the 12 students in 10th Maths.'), findsOneWidget);
+      expect(find.text('THE TESTS'), findsOneWidget);
+      expect(find.text('Opens'), findsNWidgets(2));
+      expect(find.text('Closes'), findsNWidgets(2));
+      await _tap(t, find.text('Post 2 tests'));
+      await _until(t, () => find.text('2 tests are set').evaluate().isNotEmpty);
+      expect(_s.testBodies.length, 2);
+      expect(_s.testBodies[0].containsKey('opens_at'), isFalse);
+      expect(DateTime.parse(_s.testBodies[0]['closes_at'] as String).toLocal(), at(3, 18));
+      expect(DateTime.parse(_s.testBodies[1]['opens_at'] as String).toLocal(), at(2, 18));
+      expect(DateTime.parse(_s.testBodies[1]['closes_at'] as String).toLocal(), at(8, 9));
+      expect(find.text('They open and close at the times you chose. You will find them under Coming up on Home.'), findsOneWidget);
+    });
+
+    testWidgets('the time limit and the order are chosen once and go with every test', (t) async {
+      await toTimes(t, two());
+      expect(find.text('Time limit, for every test'), findsOneWidget);
+      expect(find.text('Order of the questions, for every test'), findsOneWidget);
+      await _tap(t, find.text('1½ minutes a question'));
+      await _tap(t, find.text('45 min'));
+      await _tap(t, find.text('Same for all'));
+      await _chooseWhen(t, find.text('Choose when it closes').first, 'Day', 3);
+      await _chooseWhen(t, find.text('Choose when it closes'), 'Day', 4);
+      await _tap(t, find.text('Read the 2 papers with AI'));
+      await _until(t, () => _s.sent.length == 2);
+      for (final b in _s.sent) {
+        final plan = b['plan'] as Map<String, dynamic>;
+        expect(plan['time_limit_min'], 45);
+        expect(plan['shuffle'], false);
+      }
+      await _until(t, () => find.text('Ready to post').evaluate().isNotEmpty);
+    });
+
+    testWidgets('one test: ready and done say when it opens and when it closes', (t) async {
+      await toTimes(t, one());
+      await _chooseWhen(t, find.text('Choose when it closes'), 'Day', 4);
+      await _tap(t, find.text('Read the paper with AI'));
+      await _until(t, () => find.text('Ready to post').evaluate().isNotEmpty);
+      expect(find.text('It goes to the 12 students in 10th Maths.'), findsOneWidget);
+      expect(find.text('THE TEST'), findsOneWidget);
+      expect(find.text('Reading'), findsOneWidget);
+      expect(find.text('As soon as you post it'), findsOneWidget);
+      expect(find.text(f.whenTitle(at(4, 18))), findsOneWidget);
+      await _tap(t, find.text('Post 1 test'));
+      await _until(t, () => find.text('1 test is set').evaluate().isNotEmpty);
+      expect(find.text('It is open now and closes ${f.whenDate(at(4, 18))}. You will find it on Home.'), findsOneWidget);
+      final b = _s.testBodies.single;
+      expect(b.containsKey('opens_at'), isFalse);
+      expect(DateTime.parse(b['closes_at'] as String).toLocal(), at(4, 18));
+    });
+
+    testWidgets('Back from the times goes to the papers, which are still there', (t) async {
+      await toTimes(t, two());
+      await _tap(t, find.byIcon(Ph.arrowLeft));
+      expect(find.text('Add the papers'), findsOneWidget);
+      expect(find.text('2 papers · 7 pages'), findsOneWidget);
+      expect(find.text(_off), findsOneWidget);
+    });
+
+    testWidgets('leaving while AI reads says the paper is kept and its times are remembered', (t) async {
+      await toTimes(t, one());
+      await _chooseWhen(t, find.text('Choose when it closes'), 'Day', 3);
+      await _tap(t, find.text('Read the paper with AI'));
+      await _tap(t, find.byIcon(Ph.arrowLeft));
+      expect(find.textContaining('The paper is kept: open it from Home'), findsOneWidget);
+      expect(find.textContaining('Its times are remembered.'), findsOneWidget);
+      await _tap(t, find.text('Stay'));
+      await _until(t, () => find.text('Ready to post').evaluate().isNotEmpty);
+    });
+  });
+
   // ---------------------------------------------------------------- the days
 
   group('choosing the days', () {
@@ -280,6 +609,51 @@ void main() {
       await _tap(t, find.text(f.dayTitle(_inDays(2))).last);
       expect(find.text(_day(_inDays(9))), findsOneWidget, reason: 'the third paper stayed on its own day');
       expect(find.text(_day(_inDays(3))), findsOneWidget, reason: 'the second paper moved with the first');
+    });
+
+    testWidgets('moving a paper to a later day moves the ones after it too', (t) async {
+      await toDays(t);
+      await _tap(t, find.text(_day(_inDays(3))));
+      await _tap(t, find.text(f.dayTitle(_inDays(9))).last);
+      expect(find.text(_day(_inDays(1))), findsNWidgets(2), reason: 'the first two papers stay where they were');
+      expect(find.text(_day(_inDays(2))), findsOneWidget);
+      expect(find.text(_day(_inDays(9))), findsOneWidget);
+      expect(find.text(_day(_inDays(10))), findsOneWidget, reason: 'the fourth paper follows the third');
+      expect(find.text(_day(_inDays(11))), findsOneWidget, reason: 'and the fifth follows the fourth');
+      expect(find.text(_day(_inDays(4))), findsNothing);
+      expect(find.text(_day(_inDays(5))), findsNothing);
+    });
+
+    testWidgets('a day set by hand stays where it is when an earlier paper moves', (t) async {
+      await toDays(t);
+      await _tap(t, find.text(_day(_inDays(4))));
+      await _tap(t, find.text(f.dayTitle(_inDays(20))).last);
+      expect(find.text(_day(_inDays(21))), findsOneWidget, reason: 'the fifth follows the fourth');
+      await _tap(t, find.text(_day(_inDays(3))));
+      await _tap(t, find.text(f.dayTitle(_inDays(9))).last);
+      expect(find.text(_day(_inDays(9))), findsOneWidget);
+      expect(find.text(_day(_inDays(20))), findsOneWidget, reason: 'the fourth stayed on the day it was given');
+      expect(find.text(_day(_inDays(21))), findsOneWidget);
+      expect(find.text(_day(_inDays(10))), findsNothing);
+    });
+
+    testWidgets('choosing again the day a paper would follow anyway makes it follow again', (t) async {
+      await toDays(t);
+      await _tap(t, find.text(_day(_inDays(3))));
+      await _tap(t, find.text(f.dayTitle(_inDays(9))).last);
+      expect(find.text(_day(_inDays(10))), findsOneWidget);
+      await _tap(t, find.text(_day(_inDays(9))));
+      await _tap(t, find.text(f.dayTitle(_inDays(3))).last);
+      expect(find.text(_day(_inDays(3))), findsOneWidget);
+      expect(find.text(_day(_inDays(4))), findsOneWidget);
+      expect(find.text(_day(_inDays(5))), findsOneWidget);
+      expect(find.text(_day(_inDays(9))), findsNothing);
+      expect(find.text(_day(_inDays(10))), findsNothing);
+    });
+
+    testWidgets('the page says a moved test takes the ones after it along', (t) async {
+      await toDays(t);
+      expect(find.text('One test a day. Move a test to another day and the ones after it move too.'), findsOneWidget);
     });
 
     testWidgets('a test\'s own times show in its row, and "the same as the others" takes them back', (t) async {
@@ -437,7 +811,8 @@ void main() {
       ]);
       await _open(t, target: _maths, sources: photos);
       await _tap(t, find.text('Add a paper from photos'));
-      await _tap(t, find.text('Next: choose the days'));
+      await _tap(t, find.text('Next: choose the times'));
+      await _chooseWhen(t, find.text('Choose when it closes'), 'Day', 2);
       await _tap(t, find.text('Read the paper with AI'));
       await _until(t, () => _s.sent.length == 1);
       expect(_s.sent.first.containsKey('exam_name'), isFalse);

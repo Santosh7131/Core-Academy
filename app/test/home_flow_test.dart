@@ -154,7 +154,7 @@ void main() {
       await _tap(t, find.text('Next'));
       expect(find.text('Add the papers'), findsOneWidget);
       expect(find.text('9TH SCIENCE · STEP 2 OF 4'), findsOneWidget);
-      expect(find.text('Choose PDFs'), findsOneWidget);
+      expect(find.text('Choose PDF'), findsOneWidget);
       await t.pumpWidget(const SizedBox.shrink());
     });
 

@@ -20,9 +20,10 @@ import 'paper_runner.dart';
 import 'papers_screens.dart' show AiProgressCard, UploadPaperScreen;
 import 'pdf_pages.dart';
 
-/// Making tests from papers: one to ten papers at once, each becoming its own test on its own day. The tutor picks the class, adds
-/// the papers, chooses the days, AI reads every paper, and the tests that are ready are posted. Everything else (a paper that needs
-/// checking) waits on Home until the tutor has been through it.
+/// Making tests from papers. Each paper is its own test and opens and closes whenever the tutor says, any day and time. Only when the
+/// tutor turns Batch processing on, by hand (nothing turns it on by itself) do the papers become one test a day, each on a day the tutor
+/// can change. The tutor picks the class, adds the papers, chooses the times, AI reads every paper, and the tests that are ready are
+/// posted. Everything else (a paper that needs checking) waits on Home until the tutor has been through it.
 
 /// Ten papers at a time is the most: AI reads one paper after another, and a long queue is better made in two goes.
 const _maxPapers = 10;
@@ -94,6 +95,9 @@ String _range(_Times t) => '${_clock(t.opens)} to ${_clock(t.closes)}';
 
 String _limitWords(int? limit) => limit == null ? '1½ minutes a question' : '$limit min';
 
+/// The time limits offered in a list (the one already chosen is added to it).
+const _limitChoices = [10, 15, 20, 30, 45, 60, 90, 120, 180];
+
 /// A test planned for a paper, with its days worked out: what goes to the server with the paper.
 class _Planned {
   const _Planned({this.opens, required this.closes, this.limit, required this.shuffle});
@@ -126,6 +130,9 @@ enum _Stage { waiting, preparing, uploading, reading, read, failed }
 /// What a paper is to the tutor at this moment.
 enum _Status { working, failed, empty, check, ready, posted }
 
+/// What is wrong with the times of a paper that is not in a batch.
+enum _Bad { noClose, backwards, past }
+
 class _Item {
   _Item(this.key, {required this.name, required this.named, required this.pages, this.pdf, this.photos, this.note});
   final int key;
@@ -142,11 +149,31 @@ class _Item {
   /// "first 20 of 34 pages": said under a PDF that is longer than a paper can be.
   final String? note;
 
-  /// Its own day; null follows the first test's day, one day after the paper before.
+  /// Its own day, set by hand; null follows: the first test's day for the first paper, one day after the paper before for the rest.
   DateTime? day;
 
   /// Its own times and order; null follows the ones every test shares.
   _Times? own;
+
+  /// Outside a batch every paper opens and closes when the tutor says: any day and time. Opening null is "as soon as it is posted";
+  /// closing null is "not chosen yet", and the paper cannot be read until it is.
+  DateTime? opensAt;
+  DateTime? closesAt;
+
+  /// The box the tutor types the paper's name in outside a batch; made when it is first needed.
+  TextEditingController? _box;
+  TextEditingController get nameBox => _box ??= TextEditingController(text: name);
+
+  /// Shows the name the paper has now, which a batch's card may have changed since the box was made.
+  void syncBox() {
+    final box = _box;
+    if (box != null && box.text != name) box.text = name;
+  }
+
+  void disposeBox() {
+    _box?.dispose();
+    _box = null;
+  }
 
   _Planned? planned;
   String? id;
@@ -191,7 +218,17 @@ class _MakeTestsScreenState extends State<MakeTestsScreen> {
   final List<_Item> _items = [];
   int _keys = 0;
   late DateTime _first;
+
+  /// How a batch's tests run; outside a batch only its time limit and the order of its questions count.
   _Times _shared = const _Times();
+
+  /// Batch processing, one test a day. It is on only when the tutor turned it on (the Batch processing button, the question after
+  /// two or more papers, or the switch): nothing turns it on by itself, and the number of papers does not matter.
+  bool _batch = false;
+  bool get _isBatch => _batch;
+
+  /// The tutor has been asked about a batch, or turned it on or off, so the question is not asked again.
+  bool _batchAnswered = false;
 
   bool _adding = false;
   bool _running = false;
@@ -214,6 +251,9 @@ class _MakeTestsScreenState extends State<MakeTestsScreen> {
   @override
   void dispose() {
     _stopAll();
+    for (final it in _items) {
+      it.disposeBox();
+    }
     super.dispose();
   }
 
@@ -260,15 +300,64 @@ class _MakeTestsScreenState extends State<MakeTestsScreen> {
     return DateTime(n.year, n.month, n.day);
   }
 
-  DateTime _dayOf(int i) => _items[i].day ?? DateTime(_first.year, _first.month, _first.day + i);
+  /// The day paper [i] falls on when it has none of its own: the first test's day, then one day after the paper before. So moving a
+  /// paper to a later day moves the ones after it too, until one of them has a day set by hand.
+  DateTime _followDay(int i) {
+    if (i == 0) return _first;
+    final before = _dayOf(i - 1);
+    return DateTime(before.year, before.month, before.day + 1);
+  }
+
+  DateTime _dayOf(int i) {
+    final it = _items[i];
+    if (it.day != null) return it.day!;
+    if (!_isBatch) {
+      // Outside a batch there is no day to follow: the day it opens, or today when it opens as soon as it is posted.
+      final at = it.opensAt ?? DateTime.now();
+      return DateTime(at.year, at.month, at.day);
+    }
+    return _followDay(i);
+  }
 
   _Times _timesOf(int i) => _items[i].own ?? _shared;
 
   _Planned _plan(int i) {
+    if (!_isBatch) {
+      final it = _items[i];
+      final opens = it.opensAt;
+      return _Planned(opens: opens != null && opens.isAfter(DateTime.now()) ? opens : null, closes: it.closesAt!, limit: _shared.limit, shuffle: _shared.shuffle);
+    }
     final t = _timesOf(i);
     final day = _dayOf(i);
     final opens = _at(day, t.opens);
     return _Planned(opens: opens.isAfter(DateTime.now()) ? opens : null, closes: _at(day, t.closes), limit: t.limit, shuffle: t.shuffle);
+  }
+
+  /// What is wrong with the times of paper [i] outside a batch; null when they are fine.
+  _Bad? _whenProblem(int i) {
+    final it = _items[i];
+    final closes = it.closesAt;
+    if (closes == null) return _Bad.noClose;
+    final opens = it.opensAt;
+    if (opens != null && !closes.isAfter(opens)) return _Bad.backwards;
+    if (closes.isBefore(DateTime.now().add(const Duration(minutes: 5)))) return _Bad.past;
+    return null;
+  }
+
+  /// Why the papers cannot be read yet (outside a batch), in words for the tutor; null when they can.
+  String? _whenReason() {
+    for (var i = 0; i < _items.length; i++) {
+      final bad = _whenProblem(i);
+      if (bad == null) continue;
+      final who = _items.length == 1 ? 'The test' : 'Test ${i + 1}';
+      final lower = who.toLowerCase();
+      return switch (bad) {
+        _Bad.noClose => 'Choose when $lower closes.',
+        _Bad.backwards => '$who has to close after it opens.',
+        _Bad.past => 'The closing time of $lower has already passed. Choose a later one.',
+      };
+    }
+    return null;
   }
 
   /// Why test [i] cannot be made as planned, in words for the tutor; null when it can.
@@ -281,7 +370,9 @@ class _MakeTestsScreenState extends State<MakeTestsScreen> {
 
   // ---------------------------------------------------------------- adding papers
 
-  Future<void> _addPdfs() async {
+  /// Opens the file picker. [batch] is the Batch processing button: it turns the batch on, even for one PDF. Without it, nothing
+  /// turns the batch on by itself: two or more PDFs make the screen ask (see [_askBatch]).
+  Future<void> _addPdfs({bool batch = false}) async {
     final List<PickedPdf> picked;
     try {
       picked = await widget.sources.pickPdfs();
@@ -313,12 +404,17 @@ class _MakeTestsScreenState extends State<MakeTestsScreen> {
       }
     }
     if (!mounted) return;
+    if (batch && _items.isNotEmpty) {
+      _batch = true;
+      _batchAnswered = true;
+    }
     setState(() => _adding = false);
     final said = [
       if (unreadable.isNotEmpty) '${unreadable.length == 1 ? '"${unreadable.first}"' : '${unreadable.length} of the PDFs'} could not be opened. Try photographing the pages instead.',
       if (skipped > 0) 'Ten papers at a time is the most, so ${f.count(skipped, 'PDF')} ${skipped == 1 ? 'was' : 'were'} left out. Make those in a second go.',
     ];
     if (said.isNotEmpty) await showProblem(context, ApiException(0, 'pdf', said.join('\n')));
+    await _askBatch();
   }
 
   Future<void> _addPhotos() async {
@@ -328,6 +424,41 @@ class _MakeTestsScreenState extends State<MakeTestsScreen> {
     if (pages == null || pages.isEmpty || !mounted) return;
     final n = _items.where((i) => i.photos != null).length + 1;
     setState(() => _items.add(_Item(_keys++, name: 'Paper from photos $n', named: false, pages: pages.length, photos: pages)));
+    await _askBatch();
+  }
+
+  /// Two or more papers and no batch: asks whether they should be one, once. The answer is the tutor's: closing the card without
+  /// answering is No.
+  Future<void> _askBatch() async {
+    if (_batch || _batchAnswered || _items.length < 2 || !mounted) return;
+    _batchAnswered = true;
+    final yes = await showCentredCard<bool>(
+      context,
+      title: 'Make these a batch?',
+      builder: (ctx) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Fig('Batch processing makes one test a day, starting tomorrow, each open from ${_range(_shared)}. You can still move any day.', style: bodyStyle.copyWith(color: muted)),
+        const SizedBox(height: 8),
+        Fig('Or say no, and choose when each test opens and closes yourself.', style: bodyStyle.copyWith(color: muted)),
+        const SizedBox(height: 20),
+        PrimaryButton('Yes, batch processing', onTap: () => Navigator.of(ctx).pop(true)),
+        const SizedBox(height: 10),
+        SecondaryButton('No, I will set the dates', onTap: () => Navigator.of(ctx).pop(false)),
+      ]),
+    );
+    if (!mounted) return;
+    setState(() => _batch = yes == true);
+  }
+
+  /// The Batch processing switch on the papers step: the tutor turns the batch on or off by hand.
+  void _setBatch(bool on) => setState(() {
+        _batch = on;
+        _batchAnswered = true;
+      });
+
+  /// Takes a paper out of the list, and lets go of its name box once the screen has stopped using it.
+  void _drop(_Item it) {
+    _items.remove(it);
+    WidgetsBinding.instance.addPostFrameCallback((_) => it.disposeBox());
   }
 
   /// "Add another paper": PDFs or photos.
@@ -473,7 +604,7 @@ class _MakeTestsScreenState extends State<MakeTestsScreen> {
   Future<void> _leaveOut(_Item it) async {
     final id = it.id;
     it.runner?.stop();
-    setState(() => _items.remove(it));
+    setState(() => _drop(it));
     if (id != null) unawaited(api.delete('/teacher/papers/$id').then<void>((_) {}, onError: (_) {}));
   }
 
@@ -614,12 +745,15 @@ class _MakeTestsScreenState extends State<MakeTestsScreen> {
       Navigator.of(context).pop();
       return;
     }
+    final many = _isBatch || _items.length > 1;
+    final kept = many ? 'The papers are kept: open them' : 'The paper is kept: open it';
+    final remembered = _isBatch ? 'Their days are remembered.' : (many ? 'Their times are remembered.' : 'Its times are remembered.');
     final ok = await confirmCard(
       context,
       title: 'Leave this page?',
       body: _running
-          ? 'AI stops reading. The papers are kept: open them from Home, under Needs you, and AI carries on where it stopped. Their days are remembered.'
-          : 'The papers are kept: open them from Home, under Needs you, to check and post them. Their days are remembered.',
+          ? 'AI stops reading. $kept from Home, under Needs you, and AI carries on where it stopped. $remembered'
+          : '$kept from Home, under Needs you, to check and post ${many ? 'them' : 'it'}. $remembered',
       confirm: 'Leave',
       cancel: 'Stay',
     );
@@ -635,7 +769,7 @@ class _MakeTestsScreenState extends State<MakeTestsScreen> {
     final Widget page = switch (_step) {
       _Step.which => _whichStep(),
       _Step.papers => _papersStep(),
-      _Step.days => _daysStep(),
+      _Step.days => _isBatch ? _daysStep() : _whenStep(),
       _Step.work => switch (_phase) {
           _Phase.reading => _readingStep(),
           _Phase.check => _checkStep(),
@@ -716,6 +850,7 @@ class _MakeTestsScreenState extends State<MakeTestsScreen> {
     final n = _items.length;
     final pages = _items.fold<int>(0, (s, i) => s + i.pages);
     final big = _textScale(context) > 1.5;
+    final batch = _isBatch;
     return PushedPanel(
       kicker: _kicker(2),
       kickerLines: 2,
@@ -723,17 +858,35 @@ class _MakeTestsScreenState extends State<MakeTestsScreen> {
       onBack: _back,
       footer: _footer(
         PrimaryButton(
-          'Next: choose the days',
-          onTap: n == 0 || _adding ? null : () => setState(() => _step = _Step.days),
+          batch ? 'Next: choose the days' : 'Next: choose the times',
+          onTap: n == 0 || _adding
+              ? null
+              : () {
+                  for (final it in _items) {
+                    it.syncBox();
+                  }
+                  setState(() => _step = _Step.days);
+                },
           disabledReason: n == 0 ? 'Add at least one paper.' : null,
         ),
         n == 0 ? null : '${f.count(n, 'paper')} · ${f.count(pages, 'page')}',
       ),
       children: [
-        _head(2, line: n == 0 ? 'Pick all the PDFs at once. Each one becomes its own test. Put the answer key at the end of a paper if it has one.' : 'Each paper becomes its own test.'),
+        _head(
+          2,
+          line: n == 0
+              ? 'Choose a PDF for one test. To make several tests that open one a day, tap Batch processing. Put the answer key at the end of a paper if it has one.'
+              : batch
+                  ? 'Batch processing is on: one test a day, starting tomorrow. You can change any day next.'
+                  : n == 1
+                      ? 'One test. You choose when it opens and when it closes next.'
+                      : 'Each paper is its own test. You choose when each one opens and closes next.',
+        ),
         const SizedBox(height: 22),
         if (n == 0) ...[
-          PrimaryButton('Choose PDFs', leadingIcon: Ph.filePdf, busy: _adding, onTap: _addPdfs),
+          PrimaryButton('Choose PDF', leadingIcon: Ph.filePdf, busy: _adding, onTap: _addPdfs),
+          const SizedBox(height: 12),
+          SecondaryButton('Batch processing', icon: Ph.copy, onTap: _adding ? null : () => _addPdfs(batch: true)),
           const SizedBox(height: 12),
           SecondaryButton('Add a paper from photos', icon: Ph.camera, onTap: _adding ? null : _addPhotos),
           const SizedBox(height: 18),
@@ -747,7 +900,22 @@ class _MakeTestsScreenState extends State<MakeTestsScreen> {
               leading: big ? null : _FileTile(photos: it.photos != null),
               titleWidget: Fig(it.name, style: rowTitleStyle, maxLines: big ? 4 : 2),
               meta: [f.count(it.pages, 'page'), ?it.note].join(' · '),
-              trailing: CircleBtn(icon: Ph.x, size: 32, ground: fill, label: 'Remove ${it.name}', onTap: _adding ? null : () => setState(() => _items.remove(it))),
+              trailing: CircleBtn(
+                icon: Ph.x,
+                size: 32,
+                ground: fill,
+                label: 'Remove ${it.name}',
+                onTap: _adding
+                    ? null
+                    : () => setState(() {
+                          _drop(it);
+                          // Nothing left: start again, with the batch off and the question still to be asked.
+                          if (_items.isEmpty) {
+                            _batch = false;
+                            _batchAnswered = false;
+                          }
+                        }),
+              ),
             ),
           ],
           const SizedBox(height: 14),
@@ -755,6 +923,8 @@ class _MakeTestsScreenState extends State<MakeTestsScreen> {
             SecondaryButton('Add another paper', icon: Ph.plus, onTap: _adding ? null : _addMore)
           else
             Center(child: Fig('Ten papers at a time is the most.', style: labelStyle)),
+          const SizedBox(height: 22),
+          _BatchRow(on: batch, onChanged: _setBatch),
         ],
       ],
     );
@@ -784,8 +954,8 @@ class _MakeTestsScreenState extends State<MakeTestsScreen> {
     );
     if (c?.value == null) return;
     final day = DateTime(today.year, today.month, today.day + c!.value!);
-    final follows = DateTime(_first.year, _first.month, _first.day + i);
-    setState(() => _items[i].day = day == follows ? null : day);
+    // The day it would follow anyway is no day of its own, so the paper goes on following.
+    setState(() => _items[i].day = day == _followDay(i) ? null : day);
   }
 
   Future<void> _changeShared() async {
@@ -819,11 +989,104 @@ class _MakeTestsScreenState extends State<MakeTestsScreen> {
       } else if (r.times != null) {
         it.own = r.times == _shared ? null : r.times;
       }
-      if (r.day != null) {
-        final follows = DateTime(_first.year, _first.month, _first.day + i);
-        it.day = r.day == follows ? null : r.day;
-      }
+      if (r.day != null) it.day = r.day == _followDay(i) ? null : r.day;
     });
+  }
+
+  // ---------------------------------------------------------------- 3 choose the times of a paper alone
+
+  /// Changes a start or an end: its day and its time, chosen in a card, kept when Done is tapped.
+  Future<void> _changeWhen(String title, DateTime? value, ValueChanged<DateTime?> set, {String? noneLabel}) async {
+    var draft = value;
+    await showCentredCard<void>(
+      context,
+      title: title,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setCard) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          DayTimeChooser(value: draft, noneLabel: noneLabel, days: 30, onChanged: (v) => setCard(() => draft = v)),
+          const SizedBox(height: 20),
+          PrimaryButton('Done', onTap: () {
+            set(draft);
+            Navigator.of(ctx).pop();
+          }),
+        ]),
+      ),
+    );
+  }
+
+  Future<void> _pickSharedLimit() async {
+    final c = await showChoices<int>(
+      context,
+      title: 'Time limit',
+      options: [
+        const Choice(-1, 'Auto · 1½ minutes a question'),
+        for (final m in {..._limitChoices, ?_shared.limit}.toList()..sort()) Choice(m, '$m min'),
+      ],
+      selected: _shared.limit ?? -1,
+    );
+    if (c?.value != null && mounted) setState(() => _shared = _shared.withLimit(c!.value == -1 ? null : c.value));
+  }
+
+  /// The tutor typed a new name in a paper's name box: the paper takes it. An empty box leaves the name as it was.
+  void _rename(_Item it, String text) {
+    final name = text.trim();
+    if (name.isEmpty) return;
+    it
+      ..name = name
+      ..named = true;
+  }
+
+  /// Step 3 outside a batch: every paper is its own test. Each has its name and when it opens and closes, any day and time, chosen by
+  /// hand; the time limit and the order of the questions are the same for all.
+  Widget _whenStep() {
+    final n = _items.length;
+    final reason = _whenReason();
+    return PushedPanel(
+      kicker: _kicker(3),
+      kickerLines: 2,
+      title: n == 1 ? 'When does it open and close?' : 'When do they open and close?',
+      onBack: _back,
+      footer: _footer(
+        PrimaryButton(
+          n == 1 ? 'Read the paper with AI' : 'Read the $n papers with AI',
+          leadingIcon: Ph.scan,
+          onTap: reason == null ? _start : null,
+          disabledReason: reason,
+        ),
+        n == 1 ? 'AI reads the paper and looks for the answers.' : 'AI reads each paper and looks for the answers.',
+      ),
+      children: [
+        _head(3, line: n == 1 ? 'Students can start the test once it opens and hand it in until it closes.' : 'Students can start each test once it opens and hand it in until it closes.'),
+        const SizedBox(height: 20),
+        for (final (i, it) in _items.indexed) ...[
+          FormLabel(n > 1 ? 'Test ${i + 1} of $n' : 'Name', top: i == 0 ? 0 : 26),
+          GroupedInputs(children: [
+            BareField(controller: it.nameBox, placeholder: 'Name of the test', capitalization: TextCapitalization.sentences, maxLength: 80, onChanged: (v) => _rename(it, v)),
+          ]),
+          const SizedBox(height: 8),
+          _WhenRow(
+            label: 'Opens',
+            value: it.opensAt == null ? 'As soon as you post it' : f.whenTitle(it.opensAt!),
+            onTap: () => _changeWhen('Opens', it.opensAt, (v) => setState(() => it.opensAt = v), noneLabel: 'Now'),
+          ),
+          const SizedBox(height: 8),
+          _WhenRow(
+            label: 'Closes',
+            value: it.closesAt == null ? 'Choose when it closes' : f.whenTitle(it.closesAt!),
+            chosen: it.closesAt != null,
+            warn: _whenProblem(i) == _Bad.backwards || _whenProblem(i) == _Bad.past,
+            onTap: () => _changeWhen('Closes', it.closesAt, (v) => setState(() => it.closesAt = v)),
+          ),
+        ],
+        FormLabel(n > 1 ? 'Time limit, for every test' : 'Time limit', top: 26),
+        SelectField(value: _limitWords(_shared.limit), onTap: _pickSharedLimit),
+        FormLabel(n > 1 ? 'Order of the questions, for every test' : 'Order of the questions'),
+        Wrap(spacing: 8, runSpacing: 8, children: [
+          SegChip('Shuffled', selected: _shared.shuffle, onTap: () => setState(() => _shared = _shared.copyWith(shuffle: true))),
+          SegChip('Same for all', selected: !_shared.shuffle, onTap: () => setState(() => _shared = _shared.copyWith(shuffle: false))),
+        ]),
+      ],
+    );
   }
 
   Widget _daysStep() {
@@ -850,7 +1113,7 @@ class _MakeTestsScreenState extends State<MakeTestsScreen> {
         'AI reads each paper and looks for the answers.',
       ),
       children: [
-        _head(3, line: 'Each paper becomes a test on its own day.'),
+        _head(3, line: 'One test a day. Move a test to another day and the ones after it move too.'),
         const SizedBox(height: 20),
         if (big)
           Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -1011,6 +1274,7 @@ class _MakeTestsScreenState extends State<MakeTestsScreen> {
                   status: _statusOf(it),
                   facts: it.runner?.facts,
                   day: _dayOf(i),
+                  when: _opensWords(it),
                   onTap: () => _open(it),
                   onRetry: () => _retry(it),
                   onLeaveOut: () => _leaveOut(it),
@@ -1048,6 +1312,44 @@ class _MakeTestsScreenState extends State<MakeTestsScreen> {
     ];
   }
 
+  /// "opens now" or "opens Fri 13 Nov": what a paper outside a batch says under its name. Null in a batch, which says its day.
+  String? _opensWords(_Item it) {
+    final plan = it.planned;
+    if (_isBatch || plan == null) return null;
+    return plan.opens == null ? 'opens now' : 'opens ${f.shortDate(plan.opens!)}';
+  }
+
+  /// The tests made outside a batch: for each, how many questions, how long, and when it opens and closes.
+  List<Widget> _alone(Iterable<_Item> items) {
+    final list = items.toList();
+    return [
+      SectionRule(list.length == 1 ? 'The test' : 'The tests', count: list.length == 1 ? null : list.length, padding: const EdgeInsets.fromLTRB(0, 22, 0, 12)),
+      Surface(
+        shadow: e1,
+        child: Column(children: [
+          for (final (i, it) in list.indexed)
+            Container(
+              decoration: i == 0 ? null : BoxDecoration(border: Border(top: BorderSide(color: hairline))),
+              child: _aloneRow(it),
+            ),
+        ]),
+      ),
+    ];
+  }
+
+  Widget _aloneRow(_Item it) {
+    final plan = it.planned!;
+    final facts = it.runner?.facts;
+    final questions = it.questions ?? (facts == null ? 0 : (facts.ready + facts.saved));
+    final limit = it.limit ?? plan.limit ?? suggestedLimit(questions);
+    return _SingleRow(
+      title: _label(it),
+      details: '${f.count(questions, 'question')} · $limit min',
+      opens: plan.opens == null ? (it.posted ? 'As soon as you posted it' : 'As soon as you post it') : f.whenTitle(plan.opens!),
+      closes: f.whenTitle(plan.closes),
+    );
+  }
+
   /// "20 questions · 30 min · 8:00 am to 9:00 pm".
   String _detailsOf(_Item it) {
     final facts = it.runner?.facts;
@@ -1072,8 +1374,8 @@ class _MakeTestsScreenState extends State<MakeTestsScreen> {
         'You can change a test later from Home.',
       ),
       children: [
-        _head(4, line: 'Each test opens on its day for $_who.'),
-        ..._week(open),
+        _head(4, line: _isBatch ? 'Each test opens on its day for $_who.' : (n == 1 ? 'It goes to $_who.' : 'They go to $_who.')),
+        ..._isBatch || open.isEmpty ? _week(open) : _alone(open),
         const SizedBox(height: 16),
         if (_target!.size == 0)
           InlineNotice(
@@ -1094,9 +1396,16 @@ class _MakeTestsScreenState extends State<MakeTestsScreen> {
     final opens = [for (final it in done) (it.planned?.opens ?? it.planned?.closes ?? DateTime.now())]..sort();
     final first = opens.isEmpty ? null : opens.first;
     final last = opens.isEmpty ? null : opens.last;
-    final when = first == null
-        ? ''
-        : (f.shortDate(first) == f.shortDate(last!) ? 'They open on ${f.shortDate(first)}.' : 'They open on their days, from ${f.shortDate(first)} to ${f.shortDate(last)}.');
+    // Outside a batch every test opens and closes at times of its own: one test says both, several say where to see them.
+    final plans = _isBatch ? const <_Planned>[] : [for (final it in done) ?it.planned];
+    final alone = plans.length == 1 ? plans.first : null;
+    final when = alone != null
+        ? (alone.opens == null ? 'It is open now and closes ${f.whenDate(alone.closes)}.' : 'It opens ${f.whenDate(alone.opens!)} and closes ${f.whenDate(alone.closes)}.')
+        : plans.isNotEmpty
+            ? 'They open and close at the times you chose.'
+            : first == null
+                ? ''
+                : (f.shortDate(first) == f.shortDate(last!) ? 'They open on ${f.shortDate(first)}.' : 'They open on their days, from ${f.shortDate(first)} to ${f.shortDate(last)}.');
     final upcoming = done.any((i) => i.planned?.opens != null);
     return Scaffold(
       body: SafeArea(
@@ -1121,7 +1430,7 @@ class _MakeTestsScreenState extends State<MakeTestsScreen> {
                   InlineNotice('${f.count(_items.length - n, 'paper')} still ${_items.length - n == 1 ? 'needs' : 'need'} you. ${_items.length - n == 1 ? 'It is' : 'They are'} under Needs you on Home.', icon: Ph.info, tone: Tone.neutral),
                 ],
               ], scope: this, prefix: 'done', stepMs: 70),
-              ..._week(done),
+              ...plans.isNotEmpty ? _alone(done) : _week(done),
             ]),
           ),
           Padding(
@@ -1371,6 +1680,7 @@ class _CheckRow extends StatelessWidget {
     required this.status,
     required this.facts,
     required this.day,
+    this.when,
     required this.onTap,
     required this.onRetry,
     required this.onLeaveOut,
@@ -1380,6 +1690,9 @@ class _CheckRow extends StatelessWidget {
   final _Status status;
   final PaperFacts? facts;
   final DateTime day;
+
+  /// What a paper alone says instead of its day ("opens Fri 13 Nov").
+  final String? when;
   final VoidCallback onTap;
   final VoidCallback onRetry;
   final VoidCallback onLeaveOut;
@@ -1390,8 +1703,8 @@ class _CheckRow extends StatelessWidget {
     final detail = switch (status) {
       _Status.failed => item.error ?? 'This paper could not be read.',
       _Status.empty => 'No multiple-choice questions found',
-      _Status.posted => 'Posted · ${f.shortDate(item.planned?.opens ?? item.planned?.closes ?? day)}',
-      _ => '${f.count(questions, 'question')} · ${f.shortDate(day)}',
+      _Status.posted => 'Posted · ${when ?? f.shortDate(item.planned?.opens ?? item.planned?.closes ?? day)}',
+      _ => '${f.count(questions, 'question')} · ${when ?? f.shortDate(day)}',
     };
     final ring = switch (status) {
       _Status.ready || _Status.posted => _RingKind.done,
@@ -1430,6 +1743,106 @@ class _CheckRow extends StatelessWidget {
       ]),
     );
     return tappable ? Pressable(label: '$label. $detail', onTap: onTap, child: row) : row;
+  }
+}
+
+/// A start or an end on the step for a paper alone: its label, and the day and time chosen (or what it is until one is).
+class _WhenRow extends StatelessWidget {
+  const _WhenRow({required this.label, required this.value, required this.onTap, this.chosen = true, this.warn = false});
+  final String label;
+  final String value;
+  final VoidCallback onTap;
+
+  /// False while nothing has been chosen: the value is a faint prompt.
+  final bool chosen;
+
+  /// What was chosen cannot be used (it closes before it opens, or has passed): the value turns red.
+  final bool warn;
+
+  @override
+  Widget build(BuildContext context) => RowTile(
+        titleWidget: Fig(label, style: labelStyle.copyWith(fontSize: 11.5, fontWeight: FontWeight.w600)),
+        metaWidget: Fig(value, style: rowTitleStyle.copyWith(fontSize: 14.5, fontWeight: FontWeight.w600, color: warn ? danger : (chosen ? null : faint)), maxLines: 3),
+        chevron: true,
+        onTap: onTap,
+      );
+}
+
+/// The Batch processing switch under the papers: on or off, only by the tutor's hand.
+class _BatchRow extends StatelessWidget {
+  const _BatchRow({required this.on, required this.onChanged});
+  final bool on;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) => Pressable(
+        onTap: () => onChanged(!on),
+        label: 'Batch processing, ${on ? 'on' : 'off'}',
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(17, 14, 15, 14),
+          decoration: surface(radius: rCard, shadow: e1),
+          child: Row(children: [
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Fig('Batch processing', style: rowTitleStyle.copyWith(fontSize: 14.5, fontWeight: FontWeight.w600), maxLines: 3),
+                const SizedBox(height: 2),
+                Fig(on ? 'On: one test a day, starting tomorrow.' : 'Off: you choose when each test opens and closes.', style: labelStyle),
+              ]),
+            ),
+            const SizedBox(width: 12),
+            Container(
+              width: 46,
+              height: 28,
+              padding: const EdgeInsets.all(3),
+              alignment: on ? Alignment.centerRight : Alignment.centerLeft,
+              decoration: BoxDecoration(color: on ? success : faint, borderRadius: BorderRadius.circular(999)),
+              child: Container(
+                width: 22,
+                height: 22,
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                  boxShadow: [BoxShadow(color: Color(0x2E000000), blurRadius: 3, offset: Offset(0, 1))],
+                ),
+              ),
+            ),
+          ]),
+        ),
+      );
+}
+
+/// The test made from a paper alone: its name, how long it is, and when it opens and closes.
+class _SingleRow extends StatelessWidget {
+  const _SingleRow({required this.title, required this.details, required this.opens, required this.closes});
+  final String title;
+  final String details;
+  final String opens;
+  final String closes;
+
+  @override
+  Widget build(BuildContext context) {
+    final small = labelStyle.copyWith(fontSize: 11.5, fontWeight: FontWeight.w600);
+    final value = rowTitleStyle.copyWith(fontSize: 14.5, fontWeight: FontWeight.w600);
+    // The full width of the card, so every test's text starts at the same place and the line between tests runs edge to edge.
+    return SizedBox(
+      width: double.infinity,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(17, 14, 17, 14),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Fig(title, style: rowTitleStyle, maxLines: 4),
+          const SizedBox(height: 2),
+          Fig(details, style: labelStyle),
+          const SizedBox(height: 14),
+          Fig('Opens', style: small),
+          const SizedBox(height: 2),
+          Fig(opens, style: value, maxLines: 3),
+          const SizedBox(height: 10),
+          Fig('Closes', style: small),
+          const SizedBox(height: 2),
+          Fig(closes, style: value, maxLines: 3),
+        ]),
+      ),
+    );
   }
 }
 
@@ -1522,7 +1935,7 @@ class _TimesFormState extends State<_TimesForm> {
   late DateTime? _day = widget.day;
   late final TextEditingController _name = TextEditingController(text: widget.name ?? '');
 
-  static const _limits = [10, 15, 20, 30, 45, 60, 90, 120, 180];
+  static const _limits = _limitChoices;
 
   @override
   void dispose() {

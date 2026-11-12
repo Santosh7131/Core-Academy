@@ -8,7 +8,7 @@ import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:core_academy/core/api.dart';
-import 'package:core_academy/core/format.dart' show time;
+import 'package:core_academy/core/format.dart' show dayTitle, time;
 import 'package:core_academy/core/library.dart' show LibFile, LibraryEnv, UploadJob, UploadState;
 import 'package:core_academy/core/session.dart';
 import 'package:core_academy/core/updater.dart';
@@ -1051,7 +1051,7 @@ void main() {
 
     Widget inMaths() => MakeTestsScreen(target: maths, sources: files);
     Future<void> toDays(WidgetTester t) async {
-      await tapText(t, 'Choose PDFs');
+      await tapText(t, 'Batch processing');
       await tapText(t, 'Next: choose the days');
     }
 
@@ -1079,7 +1079,58 @@ void main() {
 
     await each('make-which', () => MakeTestsScreen(targets: classes, sources: files), (t) async {});
     await each('make-papers-empty', inMaths, (t) async {});
-    await each('make-papers', inMaths, (t) async => tapText(t, 'Choose PDFs'));
+    await each('make-papers', inMaths, (t) async => tapText(t, 'Batch processing'));
+
+    // Batch processing is only on when the tutor turns it on: one PDF is one test, and two or more make the screen ask. Without a batch,
+    // every test has its own opening and closing day and time.
+    final oneFile = FakeSources(pdfs: [fakePdf('Real Numbers test.pdf', 4)]);
+    final twoFiles = FakeSources(pdfs: [fakePdf('Real Numbers test.pdf', 4), fakePdf('Polynomials test.pdf', 3)]);
+    final threeFiles = FakeSources(pdfs: [fakePdf('Real Numbers test.pdf', 4), fakePdf('Polynomials test.pdf', 3), fakePdf('Pair of linear equations.pdf', 4)]);
+    Widget inMathsWith(FakeSources s) => MakeTestsScreen(target: maths, sources: s);
+
+    /// Opens the card of the [at]th box that shows [row], picks the day [days] from today in the field that shows [field], and taps Done.
+    Future<void> chooseWhen(WidgetTester t, String row, String field, int days, {int at = 0}) async {
+      final n = DateTime.now();
+      final box = find.text(row).at(at);
+      await t.ensureVisible(box);
+      await t.pump();
+      await t.tap(box);
+      await _settle(t);
+      await tapText(t, field);
+      await tapText(t, dayTitle(DateTime(n.year, n.month, n.day + days)), last: true);
+      await tapText(t, 'Done');
+    }
+
+    await each('make-papers-one', () => inMathsWith(oneFile), (t) async => tapText(t, 'Choose PDF'));
+    await each('make-ask', () => inMathsWith(threeFiles), (t) async => tapText(t, 'Choose PDF'));
+    await each('make-papers-off', () => inMathsWith(threeFiles), (t) async {
+      await tapText(t, 'Choose PDF');
+      await tapText(t, 'No, I will set the dates');
+    });
+    await each('make-times-one', () => inMathsWith(oneFile), (t) async {
+      await tapText(t, 'Choose PDF');
+      await tapText(t, 'Next: choose the times');
+      await chooseWhen(t, 'As soon as you post it', 'Now', 2);
+      await chooseWhen(t, 'Choose when it closes', 'Day', 5);
+    });
+    await each('make-times-three', () => inMathsWith(threeFiles), (t) async {
+      await tapText(t, 'Choose PDF');
+      await tapText(t, 'No, I will set the dates');
+      await tapText(t, 'Next: choose the times');
+      await chooseWhen(t, 'Choose when it closes', 'Day', 3);
+      await chooseWhen(t, 'Choose when it closes', 'Day', 9);
+      await chooseWhen(t, 'As soon as you post it', 'Now', 2, at: 1);
+    }, height: 3800);
+    await each('make-ready-alone', () => inMathsWith(twoFiles), (t) async {
+      await tapText(t, 'Choose PDF');
+      await tapText(t, 'No, I will set the dates');
+      await tapText(t, 'Next: choose the times');
+      await chooseWhen(t, 'Choose when it closes', 'Day', 3);
+      await chooseWhen(t, 'Choose when it closes', 'Day', 9);
+      await chooseWhen(t, 'As soon as you post it', 'Now', 2, at: 1);
+      await tapText(t, 'Read the 2 papers with AI');
+      await until(t, () => shows('Ready to post'));
+    });
     await each('make-days', inMaths, (t) async {
       await toDays(t);
       await ownTimes(t);
